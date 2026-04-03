@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(databricks bundle validate*)",
+      "Bash(databricks bundle summary*)",
+      "Bash(databricks bundle schema*)",
+      "Bash(databricks workspace list*)",
+      "Bash(databricks clusters list*)",
+      "Bash(databricks jobs list*)",
+      "Bash(databricks pipelines list*)",
+      "Bash(databricks unity-catalog *list*)",
+      "Bash(databricks unity-catalog *get*)",
+      "Bash(databricks auth *)",
+      "Bash(python -m pytest*)",
+      "Bash(ruff check*)",
+      "Bash(ruff format --check*)"
+    ],
+    "deny": [
+      "Bash(databricks bundle deploy*)",
+      "Bash(databricks bundle run*)",
+      "Bash(databricks bundle destroy*)",
+      "Bash(databricks clusters delete*)",
+      "Bash(databricks clusters start*)",
+      "Bash(databricks jobs run-now*)",
+      "Bash(databricks pipelines start*)"
+    ]
+  }
+}

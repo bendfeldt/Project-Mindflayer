@@ -1,0 +1,742 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# =============================================================================
+# Consultant Toolkit Installer
+# Cross-platform (macOS + Linux) — curl-installable or run from local checkout
+# =============================================================================
+
+VERSION="1.0.0"
+REPO_URL="https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main"
+
+# --- Defaults ----------------------------------------------------------------
+
+INSTALL_MODE=""
+SELECTED_TOOLS=""
+FORCE=0
+PROFILE=""
+LOCAL=""
+CLIENT_NAME=""
+CLIENT_PREFIX=""
+
+# --- Colors (with fallback for dumb terminals) -------------------------------
+
+if [ -t 1 ] && command -v tput >/dev/null 2>&1 && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
+    GREEN=$(tput setaf 2)
+    RED=$(tput setaf 1)
+    YELLOW=$(tput setaf 3)
+    BOLD=$(tput bold)
+    RESET=$(tput sgr0)
+else
+    GREEN="" RED="" YELLOW="" BOLD="" RESET=""
+fi
+
+# --- Helpers -----------------------------------------------------------------
+
+info()  { printf "%s\n" "$1"; }
+ok()    { printf "  %s✓%s %s\n" "$GREEN" "$RESET" "$1"; }
+warn()  { printf "  %s⚠%s %s\n" "$YELLOW" "$RESET" "$1"; }
+err()   { printf "  %s✗%s %s\n" "$RED" "$RESET" "$1"; }
+
+usage() {
+    cat <<'USAGE'
+Usage: install.sh [OPTIONS]
+
+Options:
+  --global              Install to user-level (~/.claude/, ~/.codex/, etc.)
+  --project             Install to current directory (default if --global not set)
+  --tools TOOLS         Comma-separated list of agents: claude,codex,gemini,cursor,copilot
+  --force               Overwrite existing files without prompting
+  --profile PROFILE     Platform profile: terraform, databricks, fabric, dagster
+  --local               Use local checkout instead of fetching from GitHub
+  --client NAME         Client name for project install (e.g., PostNord)
+  --prefix PREFIX       Resource prefix for project install (e.g., pn)
+  --help                Show this help
+
+Examples:
+  # Global install (interactive agent selection)
+  bash install.sh --global
+
+  # Global install via curl
+  bash <(curl -sL https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh) --global
+
+  # Project setup with profile
+  bash install.sh --profile terraform --tools claude,codex
+
+USAGE
+    exit 0
+}
+
+# --- Source resolution -------------------------------------------------------
+
+resolve_source() {
+    if [ -n "$LOCAL" ]; then
+        return
+    fi
+
+    # Detect if running from curl pipe (stdin is script, not a real file)
+    if [ -f "${BASH_SOURCE[0]:-}" ]; then
+        local script_path
+        script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        # Verify it looks like the repo (global/ dir exists)
+        if [ -d "$script_path/global" ]; then
+            LOCAL=1
+            SCRIPT_DIR="$script_path"
+            return
+        fi
+    fi
+
+    # Not local — use remote
+    LOCAL=0
+}
+
+TMPDIR_CLEANUP=""
+
+fetch_file() {
+    local rel_path="$1"
+    local dest="$2"
+
+    local dest_dir
+    dest_dir="$(dirname "$dest")"
+    mkdir -p "$dest_dir"
+
+    if [ "$LOCAL" = "1" ]; then
+        cp "$SCRIPT_DIR/$rel_path" "$dest"
+    else
+        if ! curl -sfL "${REPO_URL}/${rel_path}" -o "$dest"; then
+            err "Failed to fetch: $rel_path"
+            return 1
+        fi
+    fi
+}
+
+# Fetch a file to a temp location and print the path
+# Uses full relative path to avoid basename collisions (e.g., multiple SKILL.md)
+fetch_to_tmp() {
+    local rel_path="$1"
+    if [ -z "$TMPDIR_CLEANUP" ]; then
+        TMPDIR_CLEANUP="$(mktemp -d)"
+    fi
+    local tmp_file="$TMPDIR_CLEANUP/$rel_path"
+    mkdir -p "$(dirname "$tmp_file")"
+    fetch_file "$rel_path" "$tmp_file"
+    printf "%s" "$tmp_file"
+}
+
+cleanup_tmp() {
+    if [ -n "$TMPDIR_CLEANUP" ] && [ -d "$TMPDIR_CLEANUP" ]; then
+        rm -rf "$TMPDIR_CLEANUP"
+    fi
+}
+trap cleanup_tmp EXIT
+
+# --- Flag parsing ------------------------------------------------------------
+
+require_arg() {
+    if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" == --* ]]; then
+        err "$1 requires a value"
+        exit 1
+    fi
+}
+
+parse_args() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --global)   INSTALL_MODE="global" ;;
+            --project)  INSTALL_MODE="project" ;;
+            --tools)    require_arg "$1" "${2:-}"; shift; SELECTED_TOOLS="$1" ;;
+            --force)    FORCE=1 ;;
+            --profile)  require_arg "$1" "${2:-}"; shift; PROFILE="$1" ;;
+            --local)    LOCAL=1 ;;
+            --client)   require_arg "$1" "${2:-}"; shift; CLIENT_NAME="$1" ;;
+            --prefix)   require_arg "$1" "${2:-}"; shift; CLIENT_PREFIX="$1" ;;
+            --help|-h)  usage ;;
+            *)          err "Unknown option: $1"; usage ;;
+        esac
+        shift
+    done
+}
+
+# --- Agent detection ---------------------------------------------------------
+
+KNOWN_AGENTS=(claude codex gemini cursor copilot)
+DETECTED=()
+
+detect_agents() {
+    DETECTED=()
+    for agent in "${KNOWN_AGENTS[@]}"; do
+        case "$agent" in
+            copilot)
+                if command -v gh >/dev/null 2>&1; then
+                    DETECTED+=("copilot")
+                fi
+                ;;
+            *)
+                if command -v "$agent" >/dev/null 2>&1; then
+                    DETECTED+=("$agent")
+                fi
+                ;;
+        esac
+    done
+}
+
+is_detected() {
+    local needle="$1"
+    for d in ${DETECTED[@]+"${DETECTED[@]}"}; do
+        [ "$d" = "$needle" ] && return 0
+    done
+    return 1
+}
+
+# --- Agent selection prompt --------------------------------------------------
+
+AGENTS_TO_INSTALL=()
+
+prompt_agent_selection() {
+    if [ -n "$SELECTED_TOOLS" ]; then
+        IFS=',' read -ra AGENTS_TO_INSTALL <<< "$SELECTED_TOOLS"
+        return
+    fi
+
+    if ! [ -t 0 ]; then
+        err "Non-interactive shell detected. Use --tools to specify agents."
+        exit 1
+    fi
+
+    info ""
+    info "${BOLD}Detected coding agents:${RESET}"
+
+    local defaults=()
+    for i in "${!KNOWN_AGENTS[@]}"; do
+        local num=$((i + 1))
+        local agent="${KNOWN_AGENTS[$i]}"
+        if is_detected "$agent"; then
+            local note=""
+            [ "$agent" = "copilot" ] && note=" (via gh)"
+            printf "  [%d] %-10s %s✓ installed%s%s\n" "$num" "$agent" "$GREEN" "$RESET" "$note"
+            defaults+=("$num")
+        else
+            printf "  [%d] %-10s %s✗ not found%s\n" "$num" "$agent" "$RED" "$RESET"
+        fi
+    done
+
+    local default_str=""
+    if [ ${#defaults[@]} -gt 0 ]; then
+        default_str="$(IFS=','; echo "${defaults[*]}")"
+    fi
+
+    info ""
+    read -r -p "Select agents to configure [${default_str}]: " selection
+
+    if [ -z "$selection" ]; then
+        selection="$default_str"
+    fi
+
+    if [ -z "$selection" ]; then
+        err "No agents detected or selected. Install an agent CLI first, or use --tools."
+        exit 1
+    fi
+
+    AGENTS_TO_INSTALL=()
+    IFS=',' read -ra nums <<< "$selection"
+    for n in "${nums[@]}"; do
+        n="$(echo "$n" | tr -d ' ')"
+        if [ "$n" -ge 1 ] 2>/dev/null && [ "$n" -le 5 ] 2>/dev/null; then
+            AGENTS_TO_INSTALL+=("${KNOWN_AGENTS[$((n - 1))]}")
+        else
+            warn "Ignoring invalid selection: $n"
+        fi
+    done
+
+    if [ ${#AGENTS_TO_INSTALL[@]} -eq 0 ]; then
+        err "No agents selected. Exiting."
+        exit 1
+    fi
+
+    info ""
+    info "Configuring: ${BOLD}${AGENTS_TO_INSTALL[*]}${RESET}"
+}
+
+# --- Install mode prompt -----------------------------------------------------
+
+prompt_install_mode() {
+    if [ -n "$INSTALL_MODE" ]; then
+        return
+    fi
+
+    if ! [ -t 0 ]; then
+        err "Non-interactive shell. Use --global or --project to specify mode."
+        exit 1
+    fi
+
+    info ""
+    info "${BOLD}Install mode:${RESET}"
+    info "  [1] Global  — install skills, docs, settings to ~/  (run once)"
+    info "  [2] Project — set up AGENTS.md + settings in current repo"
+    info ""
+    read -r -p "Select mode [1]: " mode_choice
+
+    case "${mode_choice:-1}" in
+        1) INSTALL_MODE="global" ;;
+        2) INSTALL_MODE="project" ;;
+        *) err "Invalid choice"; exit 1 ;;
+    esac
+}
+
+# --- Safe copy with overwrite protection -------------------------------------
+
+safe_copy() {
+    local src="$1"
+    local dest="$2"
+
+    if [ -f "$dest" ] && [ "$FORCE" != "1" ]; then
+        if diff -q "$src" "$dest" >/dev/null 2>&1; then
+            ok "$(basename "$dest") (unchanged)"
+            return
+        fi
+        if ! [ -t 0 ]; then
+            warn "Skipped (exists, use --force): $dest"
+            return
+        fi
+        read -r -p "  Overwrite $dest? [y/N]: " answer
+        case "$answer" in
+            y|Y) ;;
+            *)   warn "Skipped: $dest"; return ;;
+        esac
+    fi
+
+    local dest_dir
+    dest_dir="$(dirname "$dest")"
+    mkdir -p "$dest_dir"
+    cp "$src" "$dest"
+    ok "$(basename "$dest")"
+}
+
+# --- File manifests ----------------------------------------------------------
+
+SKILL_FILES=(
+    "skills/adr/SKILL.md"
+    "skills/kimball-model/SKILL.md"
+    "skills/setup-repo/SKILL.md"
+    "skills/terraform-scaffold/SKILL.md"
+    "skills/terraform-scaffold/references/dagster.md"
+    "skills/terraform-scaffold/references/azure-devops-pipelines.md"
+    "skills/terraform-scaffold/references/fabric-modules.md"
+)
+
+DOC_FILES=(
+    "docs/terraform-patterns.md"
+    "docs/kimball-reference.md"
+)
+
+TEMPLATE_FILES=(
+    "templates/AGENTS-terraform.md"
+    "templates/AGENTS-databricks.md"
+    "templates/AGENTS-fabric.md"
+    "templates/AGENTS-dagster.md"
+)
+
+CLAUDE_SETTINGS_FILES=(
+    "settings/claude/settings-global.json"
+    "settings/claude/settings-terraform.json"
+    "settings/claude/settings-databricks.json"
+    "settings/claude/settings-fabric.json"
+    "settings/claude/settings-dagster.json"
+)
+
+CODEX_FILES=(
+    "settings/codex/config.toml"
+    "settings/codex/codex.md"
+)
+
+COPILOT_FILES=(
+    "settings/copilot/copilot-instructions.md"
+)
+
+SCRIPT_FILES=(
+    "scripts/check-template-update.sh"
+    "scripts/sync-global.sh"
+)
+
+# =============================================================================
+# GLOBAL INSTALL
+# =============================================================================
+
+install_global() {
+    info ""
+    info "${BOLD}=== Global Install ===${RESET}"
+    info ""
+
+    # --- Global config per agent ---
+    info "${BOLD}Global config:${RESET}"
+
+    local global_tmp
+    global_tmp="$(fetch_to_tmp "global/CLAUDE.md")"
+
+    for agent in "${AGENTS_TO_INSTALL[@]}"; do
+        case "$agent" in
+            claude)
+                if [ -f "$HOME/.claude/CLAUDE.md" ] && [ "$FORCE" != "1" ]; then
+                    local backup="$HOME/.claude/CLAUDE.md.bak.$(date +%Y%m%d%H%M%S)"
+                    cp "$HOME/.claude/CLAUDE.md" "$backup"
+                    info "  Backed up: $backup"
+                fi
+                mkdir -p "$HOME/.claude"
+                cp "$global_tmp" "$HOME/.claude/CLAUDE.md"
+                ok "~/.claude/CLAUDE.md"
+                ;;
+            codex)
+                mkdir -p "$HOME/.codex"
+                cp "$global_tmp" "$HOME/.codex/AGENTS.md"
+                ok "~/.codex/AGENTS.md"
+                ;;
+            gemini)
+                mkdir -p "$HOME/.gemini"
+                cp "$global_tmp" "$HOME/.gemini/GEMINI.md"
+                ok "~/.gemini/GEMINI.md"
+                ;;
+            cursor)
+                mkdir -p "$HOME/.cursor"
+                cp "$global_tmp" "$HOME/.cursor/rules.md"
+                ok "~/.cursor/rules.md"
+                ;;
+            copilot)
+                info "  copilot: global config is project-level only (skipped)"
+                ;;
+        esac
+    done
+
+    # --- Skills (Claude-specific, others access via SKILL.md at project level) ---
+    info ""
+    info "${BOLD}Skills:${RESET}"
+    for f in "${SKILL_FILES[@]}"; do
+        local dest="$HOME/.claude/$f"
+        local tmp
+        tmp="$(fetch_to_tmp "$f")"
+        mkdir -p "$(dirname "$dest")"
+        safe_copy "$tmp" "$dest"
+    done
+
+    # --- Reference docs ---
+    info ""
+    info "${BOLD}Reference docs:${RESET}"
+    for f in "${DOC_FILES[@]}"; do
+        local dest="$HOME/.claude/$f"
+        local tmp
+        tmp="$(fetch_to_tmp "$f")"
+        safe_copy "$tmp" "$dest"
+    done
+
+    # --- Repo templates ---
+    info ""
+    info "${BOLD}Repo templates:${RESET}"
+    for f in "${TEMPLATE_FILES[@]}"; do
+        local dest="$HOME/.claude/docs/repo-templates/$(basename "$f")"
+        local tmp
+        tmp="$(fetch_to_tmp "$f")"
+        safe_copy "$tmp" "$dest"
+    done
+
+    # --- Settings ---
+    info ""
+    info "${BOLD}Settings:${RESET}"
+
+    # Claude global settings — special handling for merge
+    install_claude_global_settings
+
+    # Claude per-profile settings templates
+    for f in "${CLAUDE_SETTINGS_FILES[@]}"; do
+        local basename_f
+        basename_f="$(basename "$f")"
+        [ "$basename_f" = "settings-global.json" ] && continue
+        local dest="$HOME/.claude/docs/repo-templates/settings/$basename_f"
+        local tmp
+        tmp="$(fetch_to_tmp "$f")"
+        safe_copy "$tmp" "$dest"
+    done
+
+    # Codex settings
+    for agent in "${AGENTS_TO_INSTALL[@]}"; do
+        if [ "$agent" = "codex" ]; then
+            for f in "${CODEX_FILES[@]}"; do
+                local dest="$HOME/.claude/docs/repo-templates/codex/$(basename "$f")"
+                local tmp
+                tmp="$(fetch_to_tmp "$f")"
+                safe_copy "$tmp" "$dest"
+            done
+        fi
+    done
+
+    # Copilot settings
+    for agent in "${AGENTS_TO_INSTALL[@]}"; do
+        if [ "$agent" = "copilot" ]; then
+            for f in "${COPILOT_FILES[@]}"; do
+                local dest="$HOME/.claude/docs/repo-templates/copilot/$(basename "$f")"
+                local tmp
+                tmp="$(fetch_to_tmp "$f")"
+                safe_copy "$tmp" "$dest"
+            done
+        fi
+    done
+
+    # --- Utility scripts ---
+    info ""
+    info "${BOLD}Scripts:${RESET}"
+    for f in "${SCRIPT_FILES[@]}"; do
+        local dest="$HOME/.claude/$(basename "$f")"
+        local tmp
+        tmp="$(fetch_to_tmp "$f")"
+        safe_copy "$tmp" "$dest"
+        chmod +x "$dest"
+    done
+
+    # --- Summary ---
+    info ""
+    info "${BOLD}=== Global Install Complete ===${RESET}"
+    info ""
+    info "Agents configured: ${AGENTS_TO_INSTALL[*]}"
+    info ""
+    info "Next steps:"
+    info "  1. Start Claude Code in any repo — it will detect missing AGENTS.md"
+    info "  2. Or run: ${BOLD}bash install.sh --project${RESET} from inside a repo"
+    info "  3. After editing ~/.claude/CLAUDE.md, run: ${BOLD}~/.claude/sync-global.sh${RESET}"
+    info ""
+}
+
+install_claude_global_settings() {
+    local settings_tmp
+    settings_tmp="$(fetch_to_tmp "settings/claude/settings-global.json")"
+    local dest="$HOME/.claude/settings.json"
+
+    if [ ! -f "$dest" ]; then
+        mkdir -p "$HOME/.claude"
+        cp "$settings_tmp" "$dest"
+        ok "settings.json (new)"
+        return
+    fi
+
+    if diff -q "$settings_tmp" "$dest" >/dev/null 2>&1; then
+        ok "settings.json (unchanged)"
+        return
+    fi
+
+    if [ "$FORCE" = "1" ]; then
+        local backup="$dest.bak.$(date +%Y%m%d%H%M%S)"
+        cp "$dest" "$backup"
+        cp "$settings_tmp" "$dest"
+        ok "settings.json (replaced, backup: $backup)"
+        return
+    fi
+
+    if ! [ -t 0 ]; then
+        warn "settings.json differs — use --force to replace"
+        return
+    fi
+
+    info ""
+    info "  Your ~/.claude/settings.json differs from the toolkit version."
+    diff --unified=3 "$dest" "$settings_tmp" || true
+    info ""
+    info "  [k] Keep current  [r] Replace (with backup)  [m] Show paths for manual merge"
+    read -r -p "  Choose [k]: " choice
+    case "$choice" in
+        r|R)
+            local backup="$dest.bak.$(date +%Y%m%d%H%M%S)"
+            cp "$dest" "$backup"
+            cp "$settings_tmp" "$dest"
+            ok "settings.json (replaced, backup: $backup)"
+            ;;
+        m|M)
+            info "  Current:  $dest"
+            info "  Toolkit:  $settings_tmp"
+            ;;
+        *)
+            ok "settings.json (kept)"
+            ;;
+    esac
+}
+
+# =============================================================================
+# PROJECT INSTALL
+# =============================================================================
+
+VALID_PROFILES=(terraform databricks fabric dagster)
+
+prompt_profile() {
+    if [ -n "$PROFILE" ]; then
+        # Validate
+        for p in "${VALID_PROFILES[@]}"; do
+            [ "$p" = "$PROFILE" ] && return
+        done
+        err "Invalid profile: $PROFILE (must be one of: ${VALID_PROFILES[*]})"
+        exit 1
+    fi
+
+    if ! [ -t 0 ]; then
+        err "Non-interactive shell. Use --profile to specify platform."
+        exit 1
+    fi
+
+    info ""
+    info "${BOLD}Select platform profile:${RESET}"
+    for i in "${!VALID_PROFILES[@]}"; do
+        printf "  [%d] %s\n" "$((i + 1))" "${VALID_PROFILES[$i]}"
+    done
+    info ""
+    read -r -p "Profile [1]: " choice
+    choice="${choice:-1}"
+
+    if [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le ${#VALID_PROFILES[@]} ] 2>/dev/null; then
+        PROFILE="${VALID_PROFILES[$((choice - 1))]}"
+    else
+        err "Invalid choice"
+        exit 1
+    fi
+}
+
+prompt_client_info() {
+    if [ -n "$CLIENT_NAME" ] && [ -n "$CLIENT_PREFIX" ]; then
+        return
+    fi
+
+    if ! [ -t 0 ]; then
+        err "Non-interactive shell. Client info requires interactive mode."
+        exit 1
+    fi
+
+    info ""
+    read -r -p "Client name (e.g., PostNord, KOMBIT): " CLIENT_NAME
+    read -r -p "Resource prefix (e.g., pn, kbt): " CLIENT_PREFIX
+
+    if [ -z "$CLIENT_NAME" ] || [ -z "$CLIENT_PREFIX" ]; then
+        err "Client name and prefix are required."
+        exit 1
+    fi
+}
+
+install_project() {
+    info ""
+    info "${BOLD}=== Project Install ===${RESET}"
+    info ""
+
+    prompt_profile
+    prompt_client_info
+
+    info ""
+    info "Setting up ${BOLD}${CLIENT_NAME}${RESET} (${PROFILE}) repo..."
+    info ""
+
+    # --- AGENTS.md ---
+    local template_tmp
+    template_tmp="$(fetch_to_tmp "templates/AGENTS-${PROFILE}.md")"
+
+    if [ -f "./AGENTS.md" ] && [ "$FORCE" != "1" ]; then
+        if ! [ -t 0 ]; then
+            warn "AGENTS.md exists — use --force to overwrite"
+            template_tmp=""
+        else
+            read -r -p "  AGENTS.md already exists. Overwrite? [y/N]: " answer
+            case "$answer" in
+                y|Y) ;;
+                *)   warn "Skipped AGENTS.md"; template_tmp="" ;;
+            esac
+        fi
+    fi
+
+    if [ -n "$template_tmp" ]; then
+        # Escape sed special characters in user input to prevent injection
+        local safe_name safe_prefix
+        safe_name="$(printf '%s' "$CLIENT_NAME" | sed 's/[&/\]/\\&/g')"
+        safe_prefix="$(printf '%s' "$CLIENT_PREFIX" | sed 's/[&/\]/\\&/g')"
+        sed "s/{CLIENT_NAME}/${safe_name}/g; s/{prefix}/${safe_prefix}/g" \
+            "$template_tmp" > ./AGENTS.md
+        ok "AGENTS.md (from ${PROFILE} template)"
+    fi
+
+    # --- Tool-specific project configs ---
+    for agent in "${AGENTS_TO_INSTALL[@]}"; do
+        case "$agent" in
+            claude)
+                local settings_tmp
+                settings_tmp="$(fetch_to_tmp "settings/claude/settings-${PROFILE}.json")"
+                mkdir -p .claude
+                safe_copy "$settings_tmp" ".claude/settings.json"
+                ;;
+            codex)
+                local codex_tmp
+                codex_tmp="$(fetch_to_tmp "settings/codex/codex.md")"
+                safe_copy "$codex_tmp" "./codex.md"
+                ;;
+            copilot)
+                mkdir -p .github
+                if [ ! -L ".github/copilot-instructions.md" ]; then
+                    ln -sf ../AGENTS.md .github/copilot-instructions.md
+                    ok "copilot-instructions.md (symlink to AGENTS.md)"
+                else
+                    ok "copilot-instructions.md (symlink exists)"
+                fi
+                ;;
+            gemini|cursor)
+                info "  $agent: project config handled via AGENTS.md"
+                ;;
+        esac
+    done
+
+    # --- Project directories ---
+    mkdir -p docs/adr
+    ok "docs/adr/"
+
+    # --- .gitignore ---
+    local gitignore_entries=(".claude/settings.local.json" "CLAUDE.local.md")
+    for entry in "${gitignore_entries[@]}"; do
+        if [ -f .gitignore ] && grep -qF "$entry" .gitignore; then
+            continue
+        fi
+        echo "$entry" >> .gitignore
+        ok ".gitignore += $entry"
+    done
+
+    # --- Summary ---
+    info ""
+    info "${BOLD}=== Project Setup Complete ===${RESET}"
+    info ""
+    info "Profile: ${PROFILE} | Client: ${CLIENT_NAME} (${CLIENT_PREFIX})"
+    info ""
+    info "Created files:"
+    [ -f ./AGENTS.md ] && info "  AGENTS.md"
+    [ -f .claude/settings.json ] && info "  .claude/settings.json"
+    [ -f ./codex.md ] && info "  codex.md"
+    [ -L .github/copilot-instructions.md ] && info "  .github/copilot-instructions.md -> AGENTS.md"
+    info "  docs/adr/"
+    info ""
+    info "${YELLOW}TODO:${RESET} Open AGENTS.md and fill in remaining {placeholders}."
+    info ""
+}
+
+# =============================================================================
+# MAIN
+# =============================================================================
+
+main() {
+    parse_args "$@"
+    resolve_source
+
+    # If local mode, ensure SCRIPT_DIR is set
+    if [ "$LOCAL" = "1" ] && [ -z "${SCRIPT_DIR:-}" ]; then
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    fi
+
+    info ""
+    info "${BOLD}=== Consultant Toolkit Installer v${VERSION} ===${RESET}"
+
+    detect_agents
+    prompt_install_mode
+    prompt_agent_selection
+
+    case "$INSTALL_MODE" in
+        global)  install_global ;;
+        project) install_project ;;
+    esac
+}
+
+main "$@"

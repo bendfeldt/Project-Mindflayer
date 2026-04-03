@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(az account show*)",
+      "Bash(az account list*)",
+      "Bash(python -m pytest*)",
+      "Bash(ruff check*)",
+      "Bash(ruff format --check*)",
+      "Bash(nbstripout*)",
+      "Bash(jupyter nbconvert --check*)"
+    ],
+    "deny": [
+      "Bash(az login*)",
+      "Bash(az rest --method POST*)",
+      "Bash(az rest --method PUT*)",
+      "Bash(az rest --method DELETE*)",
+      "Bash(az rest --method PATCH*)"
+    ]
+  }
+}

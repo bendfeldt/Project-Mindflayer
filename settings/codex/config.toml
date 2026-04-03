@@ -1,0 +1,14 @@
+# Codex CLI global config
+# Place at: ~/.codex/config.toml
+# Equivalent of ~/.claude/settings.json for Claude Code
+
+approval_policy = "on-request"
+
+# Profiles for different safety levels
+[profiles.safe]
+# For read-only / validation work — auto-approves safe commands
+approval_policy = "on-request"
+
+[profiles.careful]
+# For production-adjacent work — asks for everything
+approval_policy = "untrusted"

@@ -1,19 +1,19 @@
-# Claude Code Consultant Toolkit — How-To Guide
+# Consultant Toolkit — How-To Guide
 
-Version 1.0.0 | March 2026
+Version 2.0.0 | April 2026
 
 ---
 
 ## 1. Overview
 
-This toolkit gives you a portable Claude Code setup that works across all your client engagements. It separates what belongs to you (coding standards, architecture preferences, reusable skills) from what belongs to each project (client name, resource prefixes, build commands).
+This toolkit gives you a portable AI coding assistant setup that works across all your client engagements. It supports Claude Code, Codex, Gemini CLI, Cursor, and GitHub Copilot. It separates what belongs to you (coding standards, architecture preferences, reusable skills) from what belongs to each project (client name, resource prefixes, build commands).
 
 **What you get:**
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | Global CLAUDE.md | `~/.claude/CLAUDE.md` | Your identity, standards, stack preferences |
-| Skills (3) | `~/.claude/skills/` | ADR, Terraform scaffold, Kimball modeling |
+| Skills (4) | `~/.claude/skills/` | ADR, Terraform scaffold, Kimball modeling, Setup repo |
 | Reference docs | `~/.claude/docs/` | Quick-reference for Terraform + Kimball |
 | Repo templates (4) | `~/.claude/docs/repo-templates/` | Starter AGENTS.md for each repo type |
 | Update checker | `~/.claude/check-template-update.sh` | Diff repo files against templates |
@@ -32,18 +32,43 @@ When you start a session inside a repo, Claude Code loads:
 
 ## 2. Installation
 
+### One-liner (from GitHub)
+
 ```bash
-# Extract anywhere you like (e.g., ~/Downloads, ~/Desktop, ~/)
-tar xzf claude-code-setup.tar.gz
+# Global install — skills, docs, templates, settings to ~/
+bash <(curl -sL https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh) --global
 
-# Enter the extracted folder — the install script must run from here
-cd claude-code-setup
-
-# Run the installer — copies everything to ~/.claude/
-bash install.sh
+# Project install — AGENTS.md + tool configs in the current repo
+cd ~/repos/my-project
+bash <(curl -sL https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh)
 ```
 
-The script resolves all source paths relative to itself, so it doesn't matter where you extracted the archive. It copies everything to `~/.claude/`, which is an absolute path. If you already have a `~/.claude/CLAUDE.md`, the script backs it up with a timestamp before overwriting.
+### From local checkout
+
+```bash
+git clone https://github.com/bendfeldt/Project-Mindflayer.git
+cd Project-Mindflayer
+bash install.sh --global --local
+```
+
+### What the installer does
+
+1. **Detects** which coding agents are installed on your machine (Claude Code, Codex, Gemini CLI, Cursor, Copilot)
+2. **Prompts** you to select which agents to configure (defaults to all detected)
+3. **Installs** global config, skills, docs, templates, and settings to each agent's config directory
+
+Use `--tools claude,codex` to skip the interactive prompt. Use `--force` to overwrite without asking.
+
+| Flag | Description |
+|------|-------------|
+| `--global` | Install to user-level config directories |
+| `--project` | Set up current repo (default if --global not set) |
+| `--tools TOOLS` | Comma-separated list of agents to configure |
+| `--force` | Overwrite existing files without prompting |
+| `--profile PROFILE` | Platform profile: terraform, databricks, fabric, dagster |
+| `--local` | Use local checkout instead of fetching from GitHub |
+| `--client NAME` | Client name (skips interactive prompt) |
+| `--prefix PREFIX` | Resource prefix (skips interactive prompt) |
 
 After installation, verify in Claude Code:
 
@@ -53,10 +78,8 @@ claude
 
 # List available skills
 /skills
-# You should see: adr, terraform-scaffold, kimball-model
+# You should see: adr, terraform-scaffold, kimball-model, setup-repo
 ```
-
-You can delete the extracted `claude-code-setup/` folder after installation — everything lives in `~/.claude/` now.
 
 ---
 
@@ -78,7 +101,7 @@ The file at `~/.claude/CLAUDE.md` loads automatically at the start of every Clau
 
 ## 4. Skills
 
-Three skills are installed globally and available in every session. They can be invoked explicitly with a slash command, or Claude picks them up automatically based on your conversation.
+Four skills are installed globally and available in every session. They can be invoked explicitly with a slash command, or the agent picks them up automatically based on your conversation.
 
 ### 4.1 ADR — `/adr`
 
@@ -135,16 +158,18 @@ The installer places a `~/.claude/settings.json` with safe defaults — git comm
 
 ### Per-repo settings
 
-Each repo type has its own permission profile. When setting up a new repo, copy both the `AGENTS.md` template and the matching settings file:
+Each repo type has its own permission profile. The project installer handles this automatically:
 
 ```bash
-# Terraform repo — plan/validate auto, apply/destroy blocked
-cp ~/.claude/docs/repo-templates/settings/settings-terraform.json \
-   ~/repos/kombit-terraform/.claude/settings.json
+cd ~/repos/kombit-terraform
+bash install.sh --profile terraform --tools claude
+```
 
-# Databricks repo — bundle validate auto, deploy/run blocked
-cp ~/.claude/docs/repo-templates/settings/settings-databricks.json \
-   ~/repos/pandora-databricks/.claude/settings.json
+Or manually copy from the installed templates:
+
+```bash
+mkdir -p .claude
+cp ~/.claude/docs/repo-templates/settings/settings-terraform.json .claude/settings.json
 ```
 
 ### What's auto-approved vs. blocked per repo type
@@ -181,6 +206,22 @@ Claude detects there's no `AGENTS.md` and prompts you immediately:
 Answer the questions and Claude handles the rest — copies the right template, fills in what it can, creates `.claude/settings.json`, sets up `docs/adr/`, and updates `.gitignore`. It shows a summary with any remaining TODOs.
 
 You can also trigger it manually anytime with `/setup-repo`, or give it everything upfront: `"Set up this repo for PostNord Fabric"`.
+
+### The installer way
+
+Run the project installer from inside the repo:
+
+```bash
+cd ~/repos/postnord-fabric
+bash <(curl -sL https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh)
+# Select "Project" mode, pick "fabric" profile, enter client name
+```
+
+Or non-interactively:
+
+```bash
+bash install.sh --profile fabric --tools claude,codex,copilot
+```
 
 ### The manual way
 
@@ -379,7 +420,8 @@ For inspiration or direct use:
 
 | Task | Command |
 |------|---------|
-| Install the toolkit | `bash install.sh` |
+| Install the toolkit (global) | `bash <(curl -sL .../install.sh) --global` |
+| Set up a project | `bash <(curl -sL .../install.sh)` or `bash install.sh --local` |
 | Set up a new repo (easy) | `/setup-repo` (inside Claude Code, in the repo) |
 | Set up a new repo (manual) | `cp ~/.claude/docs/repo-templates/AGENTS-{type}.md ./AGENTS.md` |
 | Add repo permissions (manual) | `cp ~/.claude/docs/repo-templates/settings/settings-{type}.json .claude/settings.json` |

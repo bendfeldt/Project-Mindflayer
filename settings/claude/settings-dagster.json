@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dagster definitions validate*)",
+      "Bash(dagster asset list*)",
+      "Bash(dagster job list*)",
+      "Bash(dagster schedule list*)",
+      "Bash(dagster sensor list*)",
+      "Bash(python -m pytest*)",
+      "Bash(ruff check*)",
+      "Bash(ruff format --check*)",
+      "Bash(pip list*)",
+      "Bash(pip show*)"
+    ],
+    "deny": [
+      "Bash(dagster job execute*)",
+      "Bash(dagster asset materialize*)",
+      "Bash(dagster schedule start*)",
+      "Bash(dagster dev*)",
+      "Bash(helm upgrade*)",
+      "Bash(helm install*)",
+      "Bash(kubectl apply*)",
+      "Bash(kubectl delete*)",
+      "Bash(docker compose up*)"
+    ]
+  }
+}
