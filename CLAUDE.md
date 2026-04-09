@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Layered Configuration
 
-- **Global** (`~/.claude/CLAUDE.md`) — portable identity, coding standards, stack preferences, compliance awareness. Synced to Codex/Gemini/Cursor via `scripts/sync-global.sh`.
+- **Global** (`~/.claude/CLAUDE.md`) — portable identity, coding standards, stack preferences, compliance awareness. Synced to Codex/Gemini/Cursor via `tools/sync-global.sh`.
 - **Repo** (`AGENTS.md`) — client-specific: platform, build commands, branching rules, safety rules. Cross-platform standard.
 - **Skills** (`SKILL.md` open standard) — adapt to both layers automatically. Work across all supported agents.
 
@@ -22,7 +22,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Template Versioning
 
-Templates carry HTML comment version headers. `scripts/check-template-update.sh` detects drift.
+Templates carry HTML comment version headers. `tools/check-template-update.sh` detects drift.
 
 ## File Layout
 
@@ -30,13 +30,22 @@ Templates carry HTML comment version headers. `scripts/check-template-update.sh`
 install.sh              # Curl-installable cross-platform installer
 README.md               # GitHub README with install instructions
 how-to-guide.md         # Detailed usage documentation
-global/CLAUDE.md        # Source of truth for global config
-skills/                 # 4 skills: adr, kimball-model, setup-repo, terraform-scaffold
-docs/                   # Reference docs: terraform-patterns.md, kimball-reference.md
-templates/              # 4 repo templates: AGENTS-{terraform,databricks,fabric,dagster}.md
+global/CLAUDE.md        # Source of truth for global config (installed to ~/.claude/CLAUDE.md)
+skills/                 # Distribution source for skills (installed to ~/.claude/skills/)
+docs/                   # Reference docs, architecture overview, and ADRs
+  architecture.md       # System design: layered config model, distribution flow, multi-agent fan-out
+  decisions/            # Toolkit-level ADRs (design decisions for this repo itself)
+  terraform-patterns.md # Reference: Terraform patterns (installed to ~/.claude/docs/)
+  kimball-reference.md  # Reference: Kimball modeling (installed to ~/.claude/docs/)
+templates/              # Distribution source for repo templates (installed as AGENTS.md per client)
 settings/               # Tool-specific permission settings (claude/, codex/, copilot/)
-scripts/                # Utility scripts: check-template-update.sh, sync-global.sh
+tools/                  # Utility scripts: check-template-update.sh, sync-global.sh
 ```
+
+Note: `skills/` and `templates/` are *distribution sources* in this repo. Their install
+destinations are `~/.claude/skills/` and the project's `AGENTS.md` respectively. See
+`docs/architecture.md` for the full distribution flow. See `docs/decisions/0004-*.md`
+for why skills live at repo root rather than under `.claude/skills/`.
 
 ## Install Script (`install.sh`)
 

@@ -151,7 +151,7 @@ parse_args() {
             --client)   require_arg "$1" "${2:-}"; shift; CLIENT_NAME="$1" ;;
             --prefix)   require_arg "$1" "${2:-}"; shift; CLIENT_PREFIX="$1" ;;
             --help|-h)  usage ;;
-            *)          err "Unknown option: $1"; usage ;;
+            *)          err "Unknown option: $1"; exit 1 ;;
         esac
         shift
     done
@@ -354,8 +354,8 @@ COPILOT_FILES=(
 )
 
 SCRIPT_FILES=(
-    "scripts/check-template-update.sh"
-    "scripts/sync-global.sh"
+    "tools/check-template-update.sh"
+    "tools/sync-global.sh"
 )
 
 # =============================================================================
@@ -376,7 +376,7 @@ install_global() {
     for agent in "${AGENTS_TO_INSTALL[@]}"; do
         case "$agent" in
             claude)
-                if [ -f "$HOME/.claude/CLAUDE.md" ] && [ "$FORCE" != "1" ]; then
+                if [ -f "$HOME/.claude/CLAUDE.md" ]; then
                     local backup="$HOME/.claude/CLAUDE.md.bak.$(date +%Y%m%d%H%M%S)"
                     cp "$HOME/.claude/CLAUDE.md" "$backup"
                     info "  Backed up: $backup"
