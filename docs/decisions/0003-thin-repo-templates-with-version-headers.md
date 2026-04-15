@@ -59,5 +59,5 @@ source template to detect drift.
 
 ## References
 
-- `/templates/AGENTS-*.md` — the four platform templates
+- `/templates/AGENTS-*.md` — the three platform templates
 - `/tools/check-template-update.sh` — drift detection script

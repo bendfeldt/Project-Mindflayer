@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-TEMPLATE_DIR="$HOME/.claude/docs/repo-templates"
+TEMPLATE_DIR="$HOME/.ai-toolkit/templates"
 
 # Find the repo instruction file — prefer AGENTS.md, fall back to CLAUDE.md
 if [ -f "./AGENTS.md" ]; then

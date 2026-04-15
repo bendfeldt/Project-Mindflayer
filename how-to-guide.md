@@ -13,10 +13,10 @@ This toolkit gives you a portable AI coding assistant setup that works across al
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | Global CLAUDE.md | `~/.claude/CLAUDE.md` | Your identity, standards, stack preferences |
-| Skills (4) | `~/.claude/skills/` | ADR, Terraform scaffold, Kimball modeling, Setup repo |
-| Reference docs | `~/.claude/docs/` | Quick-reference for Terraform + Kimball |
-| Repo templates (4) | `~/.claude/docs/repo-templates/` | Starter AGENTS.md for each repo type |
-| Update checker | `~/.claude/check-template-update.sh` | Diff repo files against templates |
+| Skills (4) | `~/.ai-toolkit/skills/` | ADR, Terraform scaffold, Kimball modeling, Setup repo |
+| Reference docs | `~/.ai-toolkit/docs/` | Quick-reference for Terraform + Kimball |
+| Repo templates (4) | `~/.ai-toolkit/templates/` | Starter AGENTS.md for each repo type |
+| Update checker | `~/.ai-toolkit/check-template-update.sh` | Diff repo files against templates |
 
 **How merging works:**
 
@@ -24,7 +24,7 @@ When you start a session inside a repo, Claude Code loads:
 
 1. **`~/.claude/CLAUDE.md`** — your global standards (always loaded, every repo)
 2. **`{repo}/AGENTS.md`** — client and platform specifics (layered on top)
-3. **`~/.claude/skills/*`** — available everywhere, adapt to the repo context
+3. **`~/.claude/skills/*`** — available everywhere, adapt to the repo context (Claude also auto-discovers from `~/.ai-toolkit/skills/` via @-includes)
 
 > **Key principle:** Global = what travels with you. Repo = what's unique to this client + tool. Skills read both layers and adapt. No duplication between layers.
 
@@ -65,7 +65,7 @@ Use `--tools claude,codex` to skip the interactive prompt. Use `--force` to over
 | `--project` | Set up current repo (default if --global not set) |
 | `--tools TOOLS` | Comma-separated list of agents to configure |
 | `--force` | Overwrite existing files without prompting |
-| `--profile PROFILE` | Platform profile: terraform, databricks, fabric, dagster |
+| `--profile PROFILE` | Platform profile: terraform, databricks, fabric |
 | `--local` | Use local checkout instead of fetching from GitHub |
 | `--client NAME` | Client name (skips interactive prompt) |
 | `--prefix PREFIX` | Resource prefix (skips interactive prompt) |
@@ -89,7 +89,7 @@ The file at `~/.claude/CLAUDE.md` loads automatically at the start of every Clau
 
 - Your communication preferences (English for code, direct style, push back when needed)
 - Coding standards (naming, error handling, commit format, general principles)
-- Your technology stack (Databricks, Fabric, dbt, Terraform, Dagster, Trino, etc.)
+- Your technology stack (Databricks, Fabric, Terraform, SQL Server, etc.)
 - Architecture preferences (Kimball, medallion, environment parity, verb-based naming)
 - Compliance awareness (GDPR, NIS2, DS 484, ISO 27001)
 
@@ -112,7 +112,6 @@ Creates Architecture Decision Records. The skill provides a structured template 
 | `terraform` | Blast radius, state migration, provider lock-in, cost implications |
 | `databricks` | Grain, SCD type, compute choices, DLT vs. notebook |
 | `microsoft-fabric` | Lakehouse vs. Warehouse, DirectLake vs. Import, RLS strategy |
-| `dagster` | Asset vs. op, partition strategy, sensor vs. schedule, IO managers |
 
 ```bash
 # Explicit invocation
@@ -130,7 +129,6 @@ Bootstraps Terraform project structures with environment parity (dev/test/prod),
 
 The skill has three reference files that load on demand when relevant:
 
-- **`references/dagster.md`** — Dagster infra modules (PostgreSQL, Helm, K3s)
 - **`references/azure-devops-pipelines.md`** — CI/CD pipeline templates with approval gates
 - **`references/fabric-modules.md`** — Seven-workspace Fabric pattern as Terraform `for_each`
 
@@ -141,7 +139,7 @@ Guides dimensional model design through the Kimball four-step process (business 
 Platform resolution order:
 
 1. **Repo AGENTS.md** (preferred) — if it declares `platform: databricks`, output is Spark SQL with Unity Catalog namespaces
-2. **File detection** (fallback) — scans for `dbt_project.yml`, PySpark imports, Fabric artifacts, etc.
+2. **File detection** (fallback) — scans for PySpark imports, Fabric artifacts, T-SQL patterns, etc.
 3. **Asks you** — if neither resolves, asks before guessing
 
 ---
@@ -169,7 +167,7 @@ Or manually copy from the installed templates:
 
 ```bash
 mkdir -p .claude
-cp ~/.claude/docs/repo-templates/settings/settings-terraform.json .claude/settings.json
+cp ~/.ai-toolkit/templates/settings/settings-terraform.json .claude/settings.json
 ```
 
 ### What's auto-approved vs. blocked per repo type
@@ -179,7 +177,6 @@ cp ~/.claude/docs/repo-templates/settings/settings-terraform.json .claude/settin
 | **Terraform** | `init`, `validate`, `fmt`, `plan`, `show`, `state list/show` | `apply`, `destroy`, `import`, `state rm/mv` |
 | **Databricks** | `bundle validate/summary`, workspace/catalog list commands | `bundle deploy/run/destroy`, `clusters start/delete` |
 | **Fabric** | `az account show/list`, pytest, ruff, nbstripout | `az rest` with POST/PUT/DELETE/PATCH, `az login` |
-| **Dagster** | `definitions validate`, asset/job/schedule list commands | `job execute`, `asset materialize`, `helm upgrade`, `kubectl apply` |
 
 You can edit any `settings.json` to fit your needs. The format is straightforward — `allow` patterns auto-approve, `deny` patterns always block. Anything not matched still prompts for confirmation.
 
@@ -201,7 +198,7 @@ claude
 Claude detects there's no `AGENTS.md` and prompts you immediately:
 
 > "This repo doesn't have an AGENTS.md yet. Want me to set it up? I'll need to know the
-> platform (Terraform, Databricks, Fabric, or Dagster) and the client name."
+> platform (Terraform, Databricks, or Fabric) and the client name."
 
 Answer the questions and Claude handles the rest — copies the right template, fills in what it can, creates `.claude/settings.json`, sets up `docs/adr/`, and updates `.gitignore`. It shows a summary with any remaining TODOs.
 
@@ -229,9 +226,9 @@ If you prefer to do it yourself:
 
 ```bash
 # Copy template + settings
-cp ~/.claude/docs/repo-templates/AGENTS-fabric.md ./AGENTS.md
+cp ~/.ai-toolkit/templates/AGENTS-fabric.md ./AGENTS.md
 mkdir -p .claude
-cp ~/.claude/docs/repo-templates/settings/settings-fabric.json .claude/settings.json
+cp ~/.ai-toolkit/templates/settings/settings-fabric.json .claude/settings.json
 
 # Create ADR directory and gitignore entries
 mkdir -p docs/adr
@@ -258,7 +255,6 @@ Then open the file and fill in the `{placeholders}`:
 | `AGENTS-terraform.md` | IaC repos | Cloud provider, remote state, resource prefix, pipeline structure |
 | `AGENTS-databricks.md` | Databricks repos | Unity Catalog structure, DLT naming, compute choices, DAB commands |
 | `AGENTS-fabric.md` | Fabric repos | Workspace pattern, lakehouse/warehouse names, semantic model conventions |
-| `AGENTS-dagster.md` | Orchestration repos | Asset naming, project structure, deployment target, environment config |
 
 ---
 
@@ -268,14 +264,14 @@ Every repo template includes a version header:
 
 ```html
 <!-- template: AGENTS-fabric | version: 1.0.0 | updated: 2026-03-24 -->
-<!-- To check for updates: diff this file against ~/.claude/docs/repo-templates/AGENTS-fabric.md -->
+<!-- To check for updates: diff this file against ~/.ai-toolkit/templates/AGENTS-fabric.md -->
 ```
 
 When you copy a template into a repo, this header travels with it.
 
 ### When you update a template
 
-1. Edit the template in `~/.claude/docs/repo-templates/AGENTS-{type}.md`
+1. Edit the template in `~/.ai-toolkit/templates/AGENTS-{type}.md`
 2. Bump the version number in the header (e.g., `1.0.0` → `1.1.0`)
 3. New repos automatically get the latest version
 
@@ -284,7 +280,7 @@ When you copy a template into a repo, this header travels with it.
 From any repo root that has an AGENTS.md created from a template:
 
 ```bash
-~/.claude/check-template-update.sh
+~/.ai-toolkit/check-template-update.sh
 ```
 
 The script reads the version header, compares it against the current template version, and shows a diff if they've diverged. You decide what to pull in — new sections are worth adding, but your filled-in client values stay as they are.
@@ -297,7 +293,7 @@ Repo file: AGENTS.md
   Version:   1.0.0
 
 Current template:
-  Location:  ~/.claude/docs/repo-templates/AGENTS-fabric.md
+  Location:  ~/.ai-toolkit/templates/AGENTS-fabric.md
   Version:   1.0.0
 
 ✓ Versions match. No structural template updates available.
@@ -350,7 +346,7 @@ claude
 /adr
 
 # Or describe it naturally:
-"Document why we chose Iceberg over Delta for the gold layer"
+"Document why we chose Delta Lake for the curated layer"
 ```
 
 ### Scaffolding new infrastructure
@@ -369,9 +365,9 @@ claude
 ### Adding a new skill
 
 ```bash
-mkdir -p ~/.claude/skills/my-new-skill
+mkdir -p ~/.ai-toolkit/skills/my-new-skill
 
-cat > ~/.claude/skills/my-new-skill/SKILL.md << 'EOF'
+cat > ~/.ai-toolkit/skills/my-new-skill/SKILL.md << 'EOF'
 ---
 name: my-new-skill
 description: >
@@ -388,20 +384,20 @@ EOF
 ### Adding a reference doc
 
 ```bash
-vim ~/.claude/docs/my-reference.md
+vim ~/.ai-toolkit/docs/my-reference.md
 
 # Add @-include to global CLAUDE.md
-echo '@~/.claude/docs/my-reference.md' >> ~/.claude/CLAUDE.md
+echo '@~/.ai-toolkit/docs/my-reference.md' >> ~/.claude/CLAUDE.md
 ```
 
 ### Creating a new repo template
 
 ```bash
-cp ~/.claude/docs/repo-templates/AGENTS-databricks.md \
-   ~/.claude/docs/repo-templates/AGENTS-trino.md
+cp ~/.ai-toolkit/templates/AGENTS-databricks.md \
+   ~/.ai-toolkit/templates/AGENTS-sqlserver.md
 
 # Edit: change platform, adjust conventions, update version header
-vim ~/.claude/docs/repo-templates/AGENTS-trino.md
+vim ~/.ai-toolkit/templates/AGENTS-sqlserver.md
 ```
 
 ### Useful skill repositories
@@ -423,9 +419,9 @@ For inspiration or direct use:
 | Install the toolkit (global) | `bash <(curl -sL .../install.sh) --global` |
 | Set up a project | `bash <(curl -sL .../install.sh)` or `bash install.sh --local` |
 | Set up a new repo (easy) | `/setup-repo` (inside Claude Code, in the repo) |
-| Set up a new repo (manual) | `cp ~/.claude/docs/repo-templates/AGENTS-{type}.md ./AGENTS.md` |
-| Add repo permissions (manual) | `cp ~/.claude/docs/repo-templates/settings/settings-{type}.json .claude/settings.json` |
-| Check for template updates | `~/.claude/check-template-update.sh` |
+| Set up a new repo (manual) | `cp ~/.ai-toolkit/templates/AGENTS-{type}.md ./AGENTS.md` |
+| Add repo permissions (manual) | `cp ~/.ai-toolkit/templates/settings/settings-{type}.json .claude/settings.json` |
+| Check for template updates | `~/.ai-toolkit/check-template-update.sh` |
 | List available skills | `/skills` (inside Claude Code) |
 | Create an ADR | `/adr` (inside Claude Code) |
 | Scaffold Terraform project | `/terraform-scaffold` (inside Claude Code) |

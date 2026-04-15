@@ -36,25 +36,32 @@ supported agents, not Claude-specific.
 ```
 Project-Mindflayer (this repo)
 │
-├── global/CLAUDE.md        ──▶  ~/.claude/CLAUDE.md             (global layer)
+├── global/AGENTS.md        ──▶  ~/.claude/CLAUDE.md             (Claude global config, conditional)
+│                           ──▶  ~/.codex/AGENTS.md              (Codex global config, conditional)
+│                           ──▶  ~/.gemini/GEMINI.md             (Gemini global config, conditional)
+│                           ──▶  ~/.cursor/rules.md              (Cursor global config, conditional)
 │
-├── skills/*/SKILL.md       ──▶  ~/.claude/skills/*/SKILL.md     (global skills)
-│   (source at repo root)         (install destination)
+├── skills/*/SKILL.md       ──▶  ~/.ai-toolkit/skills/*/SKILL.md (agent-neutral, always)
+│   (source at repo root)   ──▶  ~/.claude/skills/*/SKILL.md     (Claude auto-discovery, if claude selected)
 │
-├── docs/*.md               ──▶  ~/.claude/docs/*.md             (reference docs)
+├── docs/*.md               ──▶  ~/.ai-toolkit/docs/*.md         (reference docs, always)
 │
-├── settings/claude/*.json  ──▶  ~/.claude/settings.json         (global permissions)
+├── docs/decisions/*.md     ──▶  ~/.ai-toolkit/docs/decisions/   (decision log, always)
+│
+├── settings/claude/*.json  ──▶  ~/.claude/settings.json         (global permissions, if claude selected)
 │                           ──▶  .claude/settings.json           (per-repo permissions)
 │
-├── settings/codex/         ──▶  ~/.codex/config.toml + AGENTS.md
+├── templates/AGENTS-*.md   ──▶  ~/.ai-toolkit/templates/        (repo templates, always)
+│                           ──▶  ./AGENTS.md                     (repo layer, per client)
 │
-├── settings/copilot/       ──▶  .github/copilot-instructions.md
+├── settings/codex/         ──▶  ~/.ai-toolkit/templates/codex/  (if codex selected)
 │
-└── templates/AGENTS-*.md   ──▶  ./AGENTS.md                     (repo layer, per client)
+└── settings/copilot/       ──▶  ~/.ai-toolkit/templates/copilot/ (if copilot selected)
+                            ──▶  .github/copilot-instructions.md
 ```
 
 The installer (`install.sh`) handles all of the above in two modes:
-- **`--global`**: installs global layer (CLAUDE.md, skills, docs, settings) to `~/`
+- **`--global`**: installs global layer — shared content always goes to `~/.ai-toolkit/`; agent-specific config only to selected agents' directories
 - **`--project`**: installs repo layer (AGENTS.md, per-repo settings) to the current directory
 
 ---
@@ -78,15 +85,19 @@ the corresponding array must be updated in `install.sh`.
 
 ## Multi-Agent Fan-Out
 
-One install pass writes to all detected agents:
+One install pass writes to all selected agents. Shared content always goes to `~/.ai-toolkit/`
+(agent-neutral); agent-specific directories are only created when the agent is selected.
 
-| Agent | Global config | Per-repo config |
-|---|---|---|
-| Claude Code | `~/.claude/CLAUDE.md` + `~/.claude/settings.json` | `.claude/settings.json` |
-| Codex | `~/.codex/config.toml` | `AGENTS.md` (shared with Claude) |
-| Gemini CLI | Sync via `tools/sync-global.sh` | `AGENTS.md` |
-| Cursor | Sync via `tools/sync-global.sh` | `AGENTS.md` |
-| Copilot | — | `.github/copilot-instructions.md` |
+| Agent | Global config | Shared toolkit | Per-repo config |
+|---|---|---|---|
+| Claude Code | `~/.claude/CLAUDE.md` + `~/.claude/settings.json` | `~/.ai-toolkit/` + `~/.claude/skills/` | `.claude/settings.json` |
+| Codex | `~/.codex/AGENTS.md` | `~/.ai-toolkit/` | `AGENTS.md` |
+| Gemini CLI | `~/.gemini/GEMINI.md` | `~/.ai-toolkit/` | `AGENTS.md` |
+| Cursor | `~/.cursor/rules.md` | `~/.ai-toolkit/` | `AGENTS.md` |
+| Copilot | — | `~/.ai-toolkit/` | `.github/copilot-instructions.md` |
+
+`~/.ai-toolkit/` is never agent-specific. `~/.claude/` is only created when Claude Code is
+among the selected agents.
 
 `AGENTS.md` is the universal repo instruction file — all agents read it, so safety rules
 and platform context are expressed there rather than in tool-specific files.
@@ -95,7 +106,7 @@ and platform context are expressed there rather than in tool-specific files.
 
 ## Platform Profiles
 
-Four platform profiles, each with a thin `AGENTS-*.md` template (~70 lines) and matching
+Three platform profiles, each with a thin `AGENTS-*.md` template (~70 lines) and matching
 `settings-*.json`:
 
 | Profile | Use case | Key auto-approved commands |
@@ -103,7 +114,6 @@ Four platform profiles, each with a thin `AGENTS-*.md` template (~70 lines) and 
 | `terraform` | IaC repos | `init`, `validate`, `fmt`, `plan` |
 | `databricks` | Databricks repos | `bundle validate`, `workspace list` |
 | `fabric` | Microsoft Fabric repos | `pytest`, `ruff`, `az account show` |
-| `dagster` | Orchestration repos | `definitions validate`, `asset list` |
 
 ---
 

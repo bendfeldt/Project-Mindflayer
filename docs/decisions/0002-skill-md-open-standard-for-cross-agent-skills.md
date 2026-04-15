@@ -16,8 +16,9 @@ of which agent is active in the repo.
 
 We will define skills using the `SKILL.md` open standard: a Markdown file with a YAML
 frontmatter block (`name`, `description`) followed by instructions the agent reads and
-executes. Skills are stored in `~/.claude/skills/<name>/SKILL.md` for Claude Code
-(loaded as slash commands) and referenced directly by other agents when the user
+executes. Skills are stored in `~/.ai-toolkit/skills/<name>/SKILL.md` (agent-neutral shared
+location) and also symlinked to `~/.claude/skills/<name>/SKILL.md` when Claude Code is
+selected (loaded as slash commands). Other agents reference them directly when the user
 asks to use them by name.
 
 ## Alternatives Considered

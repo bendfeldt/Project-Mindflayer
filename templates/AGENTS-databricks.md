@@ -1,7 +1,7 @@
 # Project Instructions
 
 <!-- template: AGENTS-databricks | version: 1.0.0 | updated: 2026-03-24 -->
-<!-- To check for updates: diff this file against ~/.claude/docs/repo-templates/AGENTS-databricks.md -->
+<!-- To check for updates: diff this file against ~/.ai-toolkit/templates/AGENTS-databricks.md -->
 
 ## Repo Identity
 
@@ -38,13 +38,6 @@ databricks bundle validate
 databricks bundle deploy -t {environment}
 databricks bundle run {pipeline_name} -t {environment}
 ```
-
-## dbt Integration
-
-{If applicable:}
-- Adapter: `dbt-databricks`
-- Profiles target matches environment name
-- Models target `gold` schema, sources from `bronze`/`silver`
 
 ## Branching
 

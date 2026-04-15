@@ -30,7 +30,7 @@ We will keep skills at the repo root under `skills/` rather than under `.claude/
 ### Positive
 - The separation between source (this repo) and destination (consumer's `~/.claude/`) is clear
 - Non-Claude agents reading this repo are not confused by a `.claude/`-centric layout
-- Installer code is easier to reason about: `skills/adr/SKILL.md` → `~/.claude/skills/adr/SKILL.md`
+- Installer code is easier to reason about: `skills/adr/SKILL.md` → `~/.ai-toolkit/skills/adr/SKILL.md` (+ `~/.claude/skills/` when Claude selected)
 
 ### Negative
 - A developer cloning this repo cannot invoke `/adr` in Claude Code without running the installer first
@@ -38,5 +38,5 @@ We will keep skills at the repo root under `skills/` rather than under `.claude/
 
 ## References
 
-- `/install.sh` — `SKILL_FILES` array shows the `skills/` → `~/.claude/skills/` mapping
+- `/install.sh` — `SKILL_FILES` array shows the `skills/` → `~/.ai-toolkit/skills/` mapping
 - ADR-0002 — context on the SKILL.md open standard and multi-agent portability requirement

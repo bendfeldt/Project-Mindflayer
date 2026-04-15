@@ -1,0 +1,15 @@
+# External stores — tracked with tools/check-stores.sh
+# These repos are monitored for new releases but never auto-downloaded.
+# To acknowledge a new version: update known_version below, then review
+# the release notes and adopt any relevant content manually.
+
+stores:
+  - id: everything-claude-code
+    repo: affaan-m/everything-claude-code
+    type: releases
+    known_version: v1.10.0
+
+  - id: power-bi-agentic-development
+    repo: data-goblin/power-bi-agentic-development
+    type: releases
+    known_version: v0.20.1

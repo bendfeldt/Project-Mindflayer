@@ -47,7 +47,7 @@ Options:
   --project             Install to current directory (default if --global not set)
   --tools TOOLS         Comma-separated list of agents: claude,codex,gemini,cursor,copilot
   --force               Overwrite existing files without prompting
-  --profile PROFILE     Platform profile: terraform, databricks, fabric, dagster
+  --profile PROFILE     Platform profile: terraform, databricks, fabric
   --local               Use local checkout instead of fetching from GitHub
   --client NAME         Client name for project install (e.g., PostNord)
   --prefix PREFIX       Resource prefix for project install (e.g., pn)
@@ -103,7 +103,7 @@ fetch_file() {
     if [ "$LOCAL" = "1" ]; then
         cp "$SCRIPT_DIR/$rel_path" "$dest"
     else
-        if ! curl -sfL "${REPO_URL}/${rel_path}" -o "$dest"; then
+        if ! curl -sfL --proto =https "${REPO_URL}/${rel_path}" -o "$dest"; then
             err "Failed to fetch: $rel_path"
             return 1
         fi
@@ -318,8 +318,9 @@ SKILL_FILES=(
     "skills/adr/SKILL.md"
     "skills/kimball-model/SKILL.md"
     "skills/setup-repo/SKILL.md"
+    "skills/smart-commit/SKILL.md"
+    "skills/smart-pr/SKILL.md"
     "skills/terraform-scaffold/SKILL.md"
-    "skills/terraform-scaffold/references/dagster.md"
     "skills/terraform-scaffold/references/azure-devops-pipelines.md"
     "skills/terraform-scaffold/references/fabric-modules.md"
 )
@@ -329,11 +330,23 @@ DOC_FILES=(
     "docs/kimball-reference.md"
 )
 
+DECISION_FILES=(
+    "docs/decisions/0001-agents-md-as-universal-repo-instruction-file.md"
+    "docs/decisions/0002-skill-md-open-standard-for-cross-agent-skills.md"
+    "docs/decisions/0003-thin-repo-templates-with-version-headers.md"
+    "docs/decisions/0004-skills-at-repo-root-not-dot-claude.md"
+    "docs/decisions/0005-entity-prefix-column-naming.md"
+    "docs/decisions/0006-surrogate-key-business-key-pair.md"
+    "docs/decisions/0007-scd2-audit-column-triplet.md"
+    "docs/decisions/0008-role-playing-dimension-fk-naming.md"
+    "docs/decisions/0009-five-layer-data-architecture.md"
+    "docs/decisions/0010-lowercase-snake-case-naming.md"
+)
+
 TEMPLATE_FILES=(
     "templates/AGENTS-terraform.md"
     "templates/AGENTS-databricks.md"
     "templates/AGENTS-fabric.md"
-    "templates/AGENTS-dagster.md"
 )
 
 CLAUDE_SETTINGS_FILES=(
@@ -341,7 +354,6 @@ CLAUDE_SETTINGS_FILES=(
     "settings/claude/settings-terraform.json"
     "settings/claude/settings-databricks.json"
     "settings/claude/settings-fabric.json"
-    "settings/claude/settings-dagster.json"
 )
 
 CODEX_FILES=(
@@ -353,14 +365,28 @@ COPILOT_FILES=(
     "settings/copilot/copilot-instructions.md"
 )
 
+GEMINI_FILES=(
+    "settings/gemini/settings.json"
+    "settings/gemini/gemini.md"
+)
+
+CURSOR_FILES=(
+    "settings/cursor/cursor.md"
+)
+
 SCRIPT_FILES=(
     "tools/check-template-update.sh"
+    "tools/check-stores.sh"
     "tools/sync-global.sh"
 )
 
 # =============================================================================
 # GLOBAL INSTALL
 # =============================================================================
+
+is_agent_selected() {
+    printf '%s\n' "${AGENTS_TO_INSTALL[@]}" | grep -qx "$1"
+}
 
 install_global() {
     info ""
@@ -371,7 +397,7 @@ install_global() {
     info "${BOLD}Global config:${RESET}"
 
     local global_tmp
-    global_tmp="$(fetch_to_tmp "global/CLAUDE.md")"
+    global_tmp="$(fetch_to_tmp "global/AGENTS.md")"
 
     for agent in "${AGENTS_TO_INSTALL[@]}"; do
         case "$agent" in
@@ -406,22 +432,41 @@ install_global() {
         esac
     done
 
-    # --- Skills (Claude-specific, others access via SKILL.md at project level) ---
+    local toolkit_home="$HOME/.ai-toolkit"
+
+    # --- Skills ---
+    # Always install to ~/.ai-toolkit/skills/ (agent-neutral shared location).
+    # Also install to ~/.claude/skills/ for Claude Code auto-discovery when claude is selected.
     info ""
     info "${BOLD}Skills:${RESET}"
     for f in "${SKILL_FILES[@]}"; do
-        local dest="$HOME/.claude/$f"
         local tmp
         tmp="$(fetch_to_tmp "$f")"
-        mkdir -p "$(dirname "$dest")"
-        safe_copy "$tmp" "$dest"
+        local toolkit_dest="$toolkit_home/$f"
+        mkdir -p "$(dirname "$toolkit_dest")"
+        safe_copy "$tmp" "$toolkit_dest"
+        if is_agent_selected claude; then
+            local claude_dest="$HOME/.claude/$f"
+            mkdir -p "$(dirname "$claude_dest")"
+            safe_copy "$tmp" "$claude_dest"
+        fi
     done
 
     # --- Reference docs ---
     info ""
     info "${BOLD}Reference docs:${RESET}"
     for f in "${DOC_FILES[@]}"; do
-        local dest="$HOME/.claude/$f"
+        local dest="$toolkit_home/$f"
+        local tmp
+        tmp="$(fetch_to_tmp "$f")"
+        safe_copy "$tmp" "$dest"
+    done
+
+    # --- Decision log ---
+    info ""
+    info "${BOLD}Decision log:${RESET}"
+    for f in "${DECISION_FILES[@]}"; do
+        local dest="$toolkit_home/$f"
         local tmp
         tmp="$(fetch_to_tmp "$f")"
         safe_copy "$tmp" "$dest"
@@ -431,7 +476,7 @@ install_global() {
     info ""
     info "${BOLD}Repo templates:${RESET}"
     for f in "${TEMPLATE_FILES[@]}"; do
-        local dest="$HOME/.claude/docs/repo-templates/$(basename "$f")"
+        local dest="$toolkit_home/templates/$(basename "$f")"
         local tmp
         tmp="$(fetch_to_tmp "$f")"
         safe_copy "$tmp" "$dest"
@@ -441,54 +486,79 @@ install_global() {
     info ""
     info "${BOLD}Settings:${RESET}"
 
-    # Claude global settings — special handling for merge
-    install_claude_global_settings
+    # Claude global settings — only when claude is selected
+    if is_agent_selected claude; then
+        install_claude_global_settings
+    fi
 
-    # Claude per-profile settings templates
+    # Per-profile settings templates (agent-neutral — used by all agents via project install)
     for f in "${CLAUDE_SETTINGS_FILES[@]}"; do
         local basename_f
         basename_f="$(basename "$f")"
         [ "$basename_f" = "settings-global.json" ] && continue
-        local dest="$HOME/.claude/docs/repo-templates/settings/$basename_f"
+        local dest="$toolkit_home/templates/settings/$basename_f"
         local tmp
         tmp="$(fetch_to_tmp "$f")"
         safe_copy "$tmp" "$dest"
     done
 
-    # Codex settings
-    for agent in "${AGENTS_TO_INSTALL[@]}"; do
-        if [ "$agent" = "codex" ]; then
-            for f in "${CODEX_FILES[@]}"; do
-                local dest="$HOME/.claude/docs/repo-templates/codex/$(basename "$f")"
-                local tmp
-                tmp="$(fetch_to_tmp "$f")"
-                safe_copy "$tmp" "$dest"
-            done
-        fi
-    done
+    # Codex templates
+    if is_agent_selected codex; then
+        for f in "${CODEX_FILES[@]}"; do
+            local dest="$toolkit_home/templates/codex/$(basename "$f")"
+            local tmp
+            tmp="$(fetch_to_tmp "$f")"
+            safe_copy "$tmp" "$dest"
+        done
+    fi
 
-    # Copilot settings
-    for agent in "${AGENTS_TO_INSTALL[@]}"; do
-        if [ "$agent" = "copilot" ]; then
-            for f in "${COPILOT_FILES[@]}"; do
-                local dest="$HOME/.claude/docs/repo-templates/copilot/$(basename "$f")"
-                local tmp
-                tmp="$(fetch_to_tmp "$f")"
-                safe_copy "$tmp" "$dest"
-            done
-        fi
-    done
+    # Copilot templates
+    if is_agent_selected copilot; then
+        for f in "${COPILOT_FILES[@]}"; do
+            local dest="$toolkit_home/templates/copilot/$(basename "$f")"
+            local tmp
+            tmp="$(fetch_to_tmp "$f")"
+            safe_copy "$tmp" "$dest"
+        done
+    fi
+
+    # Gemini templates
+    if is_agent_selected gemini; then
+        for f in "${GEMINI_FILES[@]}"; do
+            local dest="$toolkit_home/templates/gemini/$(basename "$f")"
+            local tmp
+            tmp="$(fetch_to_tmp "$f")"
+            safe_copy "$tmp" "$dest"
+        done
+    fi
+
+    # Cursor templates
+    if is_agent_selected cursor; then
+        for f in "${CURSOR_FILES[@]}"; do
+            local dest="$toolkit_home/templates/cursor/$(basename "$f")"
+            local tmp
+            tmp="$(fetch_to_tmp "$f")"
+            safe_copy "$tmp" "$dest"
+        done
+    fi
 
     # --- Utility scripts ---
     info ""
     info "${BOLD}Scripts:${RESET}"
     for f in "${SCRIPT_FILES[@]}"; do
-        local dest="$HOME/.claude/$(basename "$f")"
+        local dest="$toolkit_home/$(basename "$f")"
         local tmp
         tmp="$(fetch_to_tmp "$f")"
         safe_copy "$tmp" "$dest"
         chmod +x "$dest"
     done
+
+    # --- Stores registry ---
+    info ""
+    info "${BOLD}Stores registry:${RESET}"
+    local stores_tmp
+    stores_tmp="$(fetch_to_tmp "stores.yml")"
+    safe_copy "$stores_tmp" "$toolkit_home/stores.yml"
 
     # --- Summary ---
     info ""
@@ -499,7 +569,7 @@ install_global() {
     info "Next steps:"
     info "  1. Start Claude Code in any repo — it will detect missing AGENTS.md"
     info "  2. Or run: ${BOLD}bash install.sh --project${RESET} from inside a repo"
-    info "  3. After editing ~/.claude/CLAUDE.md, run: ${BOLD}~/.claude/sync-global.sh${RESET}"
+    info "  3. After editing ~/.claude/CLAUDE.md, run: ${BOLD}~/.ai-toolkit/sync-global.sh${RESET}"
     info ""
 }
 
@@ -560,7 +630,7 @@ install_claude_global_settings() {
 # PROJECT INSTALL
 # =============================================================================
 
-VALID_PROFILES=(terraform databricks fabric dagster)
+VALID_PROFILES=(terraform databricks fabric)
 
 prompt_profile() {
     if [ -n "$PROFILE" ]; then
@@ -676,8 +746,16 @@ install_project() {
                     ok "copilot-instructions.md (symlink exists)"
                 fi
                 ;;
-            gemini|cursor)
-                info "  $agent: project config handled via AGENTS.md"
+            gemini)
+                local gemini_tmp
+                gemini_tmp="$(fetch_to_tmp "settings/gemini/gemini.md")"
+                safe_copy "$gemini_tmp" "./gemini.md"
+                ;;
+            cursor)
+                mkdir -p .cursor/rules
+                local cursor_tmp
+                cursor_tmp="$(fetch_to_tmp "settings/cursor/cursor.md")"
+                safe_copy "$cursor_tmp" ".cursor/rules/project.md"
                 ;;
         esac
     done
@@ -706,6 +784,8 @@ install_project() {
     [ -f ./AGENTS.md ] && info "  AGENTS.md"
     [ -f .claude/settings.json ] && info "  .claude/settings.json"
     [ -f ./codex.md ] && info "  codex.md"
+    [ -f ./gemini.md ] && info "  gemini.md"
+    [ -f .cursor/rules/project.md ] && info "  .cursor/rules/project.md"
     [ -L .github/copilot-instructions.md ] && info "  .github/copilot-instructions.md -> AGENTS.md"
     info "  docs/adr/"
     info ""

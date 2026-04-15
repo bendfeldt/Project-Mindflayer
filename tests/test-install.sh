@@ -12,6 +12,7 @@ INSTALL_SCRIPT="$REPO_ROOT/install.sh"
 SH_FILES=(
     "$INSTALL_SCRIPT"
     "$REPO_ROOT/tools/check-template-update.sh"
+    "$REPO_ROOT/tools/check-stores.sh"
     "$REPO_ROOT/tools/sync-global.sh"
 )
 
@@ -193,7 +194,7 @@ test_manifests() {
         assert_file_exists "manifest: $f" "$REPO_ROOT/$f"
     done
 
-    assert_file_exists "global/CLAUDE.md" "$REPO_ROOT/global/CLAUDE.md"
+    assert_file_exists "global/AGENTS.md" "$REPO_ROOT/global/AGENTS.md"
 
     # Orphan check: skills
     while IFS= read -r f; do
@@ -296,19 +297,22 @@ test_global_install() {
     setup_sandbox
     run_installer --global --tools claude,codex,gemini,cursor,copilot --force --local >/dev/null 2>&1
 
-    # Skills
-    assert_file_exists "skill: adr" "$SANDBOX_HOME/.claude/skills/adr/SKILL.md"
-    assert_file_exists "skill: kimball-model" "$SANDBOX_HOME/.claude/skills/kimball-model/SKILL.md"
-    assert_file_exists "skill: setup-repo" "$SANDBOX_HOME/.claude/skills/setup-repo/SKILL.md"
-    assert_file_exists "skill: terraform-scaffold" "$SANDBOX_HOME/.claude/skills/terraform-scaffold/SKILL.md"
-    assert_file_exists "skill ref: dagster" "$SANDBOX_HOME/.claude/skills/terraform-scaffold/references/dagster.md"
-    assert_file_exists "skill ref: azure-devops" "$SANDBOX_HOME/.claude/skills/terraform-scaffold/references/azure-devops-pipelines.md"
-    assert_file_exists "skill ref: fabric" "$SANDBOX_HOME/.claude/skills/terraform-scaffold/references/fabric-modules.md"
+    # Skills in ~/.ai-toolkit/ (agent-neutral)
+    assert_file_exists "skill (toolkit): adr" "$SANDBOX_HOME/.ai-toolkit/skills/adr/SKILL.md"
+    assert_file_exists "skill (toolkit): kimball-model" "$SANDBOX_HOME/.ai-toolkit/skills/kimball-model/SKILL.md"
+    assert_file_exists "skill (toolkit): setup-repo" "$SANDBOX_HOME/.ai-toolkit/skills/setup-repo/SKILL.md"
+    assert_file_exists "skill (toolkit): terraform-scaffold" "$SANDBOX_HOME/.ai-toolkit/skills/terraform-scaffold/SKILL.md"
+    assert_file_exists "skill ref (toolkit): azure-devops" "$SANDBOX_HOME/.ai-toolkit/skills/terraform-scaffold/references/azure-devops-pipelines.md"
+    assert_file_exists "skill ref (toolkit): fabric" "$SANDBOX_HOME/.ai-toolkit/skills/terraform-scaffold/references/fabric-modules.md"
+
+    # Skills also in ~/.claude/skills/ for Claude auto-discovery (claude was selected)
+    assert_file_exists "skill (claude): adr" "$SANDBOX_HOME/.claude/skills/adr/SKILL.md"
+    assert_file_exists "skill (claude): kimball-model" "$SANDBOX_HOME/.claude/skills/kimball-model/SKILL.md"
 
     # Skills are distinct (not clobbered by basename collision)
     local adr_first kimball_first
-    adr_first="$(head -3 "$SANDBOX_HOME/.claude/skills/adr/SKILL.md")"
-    kimball_first="$(head -3 "$SANDBOX_HOME/.claude/skills/kimball-model/SKILL.md")"
+    adr_first="$(head -3 "$SANDBOX_HOME/.ai-toolkit/skills/adr/SKILL.md")"
+    kimball_first="$(head -3 "$SANDBOX_HOME/.ai-toolkit/skills/kimball-model/SKILL.md")"
     if [ "$adr_first" != "$kimball_first" ]; then
         PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m skills are distinct (no basename collision)\n"
     else
@@ -316,30 +320,38 @@ test_global_install() {
         printf "  \033[31mFAIL\033[0m skills are identical (basename collision bug)\n"
     fi
 
-    # Docs
-    assert_file_exists "doc: terraform-patterns" "$SANDBOX_HOME/.claude/docs/terraform-patterns.md"
-    assert_file_exists "doc: kimball-reference" "$SANDBOX_HOME/.claude/docs/kimball-reference.md"
+    # Docs (in ~/.ai-toolkit/)
+    assert_file_exists "doc: terraform-patterns" "$SANDBOX_HOME/.ai-toolkit/docs/terraform-patterns.md"
+    assert_file_exists "doc: kimball-reference" "$SANDBOX_HOME/.ai-toolkit/docs/kimball-reference.md"
 
-    # Templates
-    assert_file_exists "template: terraform" "$SANDBOX_HOME/.claude/docs/repo-templates/AGENTS-terraform.md"
-    assert_file_exists "template: databricks" "$SANDBOX_HOME/.claude/docs/repo-templates/AGENTS-databricks.md"
-    assert_file_exists "template: fabric" "$SANDBOX_HOME/.claude/docs/repo-templates/AGENTS-fabric.md"
-    assert_file_exists "template: dagster" "$SANDBOX_HOME/.claude/docs/repo-templates/AGENTS-dagster.md"
+    # Templates (in ~/.ai-toolkit/)
+    assert_file_exists "template: terraform" "$SANDBOX_HOME/.ai-toolkit/templates/AGENTS-terraform.md"
+    assert_file_exists "template: databricks" "$SANDBOX_HOME/.ai-toolkit/templates/AGENTS-databricks.md"
+    assert_file_exists "template: fabric" "$SANDBOX_HOME/.ai-toolkit/templates/AGENTS-fabric.md"
 
-    # Settings templates
-    assert_file_exists "settings tmpl: terraform" "$SANDBOX_HOME/.claude/docs/repo-templates/settings/settings-terraform.json"
-    assert_file_exists "settings tmpl: databricks" "$SANDBOX_HOME/.claude/docs/repo-templates/settings/settings-databricks.json"
-    assert_file_exists "settings tmpl: fabric" "$SANDBOX_HOME/.claude/docs/repo-templates/settings/settings-fabric.json"
-    assert_file_exists "settings tmpl: dagster" "$SANDBOX_HOME/.claude/docs/repo-templates/settings/settings-dagster.json"
+    # Settings templates (in ~/.ai-toolkit/)
+    assert_file_exists "settings tmpl: terraform" "$SANDBOX_HOME/.ai-toolkit/templates/settings/settings-terraform.json"
+    assert_file_exists "settings tmpl: databricks" "$SANDBOX_HOME/.ai-toolkit/templates/settings/settings-databricks.json"
+    assert_file_exists "settings tmpl: fabric" "$SANDBOX_HOME/.ai-toolkit/templates/settings/settings-fabric.json"
 
-    # Global settings.json
+    # Global settings.json (Claude-specific)
     assert_file_exists "settings.json" "$SANDBOX_HOME/.claude/settings.json"
 
-    # Scripts
-    assert_file_exists "script: check-template-update" "$SANDBOX_HOME/.claude/check-template-update.sh"
-    assert_file_exists "script: sync-global" "$SANDBOX_HOME/.claude/sync-global.sh"
-    assert_executable "check-template-update.sh +x" "$SANDBOX_HOME/.claude/check-template-update.sh"
-    assert_executable "sync-global.sh +x" "$SANDBOX_HOME/.claude/sync-global.sh"
+    # Scripts (in ~/.ai-toolkit/)
+    assert_file_exists "script: check-template-update" "$SANDBOX_HOME/.ai-toolkit/check-template-update.sh"
+    assert_file_exists "script: check-stores" "$SANDBOX_HOME/.ai-toolkit/check-stores.sh"
+    assert_file_exists "script: sync-global" "$SANDBOX_HOME/.ai-toolkit/sync-global.sh"
+    assert_executable "check-template-update.sh +x" "$SANDBOX_HOME/.ai-toolkit/check-template-update.sh"
+    assert_executable "check-stores.sh +x" "$SANDBOX_HOME/.ai-toolkit/check-stores.sh"
+    assert_executable "sync-global.sh +x" "$SANDBOX_HOME/.ai-toolkit/sync-global.sh"
+
+    # Stores registry (in ~/.ai-toolkit/)
+    assert_file_exists "stores.yml" "$SANDBOX_HOME/.ai-toolkit/stores.yml"
+
+    # Decision log (spot-check first, middle, last — in ~/.ai-toolkit/)
+    assert_file_exists "decision: 0001" "$SANDBOX_HOME/.ai-toolkit/docs/decisions/0001-agents-md-as-universal-repo-instruction-file.md"
+    assert_file_exists "decision: 0009" "$SANDBOX_HOME/.ai-toolkit/docs/decisions/0009-five-layer-data-architecture.md"
+    assert_file_exists "decision: 0010" "$SANDBOX_HOME/.ai-toolkit/docs/decisions/0010-lowercase-snake-case-naming.md"
 
     # Agent-specific global configs
     assert_file_exists "claude: CLAUDE.md" "$SANDBOX_HOME/.claude/CLAUDE.md"
@@ -347,10 +359,24 @@ test_global_install() {
     assert_file_exists "gemini: GEMINI.md" "$SANDBOX_HOME/.gemini/GEMINI.md"
     assert_file_exists "cursor: rules.md" "$SANDBOX_HOME/.cursor/rules.md"
 
-    # Codex + copilot templates
-    assert_file_exists "codex: config.toml" "$SANDBOX_HOME/.claude/docs/repo-templates/codex/config.toml"
-    assert_file_exists "codex: codex.md" "$SANDBOX_HOME/.claude/docs/repo-templates/codex/codex.md"
-    assert_file_exists "copilot: instructions" "$SANDBOX_HOME/.claude/docs/repo-templates/copilot/copilot-instructions.md"
+    # Codex + copilot templates (in ~/.ai-toolkit/)
+    assert_file_exists "codex: config.toml" "$SANDBOX_HOME/.ai-toolkit/templates/codex/config.toml"
+    assert_file_exists "codex: codex.md" "$SANDBOX_HOME/.ai-toolkit/templates/codex/codex.md"
+    assert_file_exists "copilot: instructions" "$SANDBOX_HOME/.ai-toolkit/templates/copilot/copilot-instructions.md"
+    assert_file_exists "gemini: settings.json" "$SANDBOX_HOME/.ai-toolkit/templates/gemini/settings.json"
+    assert_file_exists "gemini: gemini.md" "$SANDBOX_HOME/.ai-toolkit/templates/gemini/gemini.md"
+    assert_file_exists "cursor: cursor.md" "$SANDBOX_HOME/.ai-toolkit/templates/cursor/cursor.md"
+
+    # Codex-only install must NOT create ~/.claude/
+    teardown_sandbox
+    setup_sandbox
+    run_installer --global --tools codex --force --local >/dev/null 2>&1
+    if [ ! -d "$SANDBOX_HOME/.claude" ]; then
+        PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m codex-only: ~/.claude not created\n"
+    else
+        FAIL=$((FAIL + 1)); FAILURES+=("[$CURRENT_GROUP] codex-only install created ~/.claude/")
+        printf "  \033[31mFAIL\033[0m codex-only install created ~/.claude/\n"
+    fi
 
     teardown_sandbox
 }
@@ -362,10 +388,10 @@ test_global_install() {
 test_project_install() {
     group "6. Project Install Verification"
 
-    for profile in terraform databricks fabric dagster; do
+    for profile in terraform databricks fabric; do
         setup_sandbox
 
-        (cd "$SANDBOX_PROJECT" && run_installer --project --tools claude,codex,copilot --profile "$profile" --client "TestCorp" --prefix "tc" --force --local) >/dev/null 2>&1
+        (cd "$SANDBOX_PROJECT" && run_installer --project --tools claude,codex,copilot,gemini,cursor --profile "$profile" --client "TestCorp" --prefix "tc" --force --local) >/dev/null 2>&1
 
         assert_file_exists "[$profile] AGENTS.md" "$SANDBOX_PROJECT/AGENTS.md"
 
@@ -395,6 +421,8 @@ test_project_install() {
         fi
 
         assert_file_exists "[$profile] codex.md" "$SANDBOX_PROJECT/codex.md"
+        assert_file_exists "[$profile] gemini.md" "$SANDBOX_PROJECT/gemini.md"
+        assert_file_exists "[$profile] .cursor/rules/project.md" "$SANDBOX_PROJECT/.cursor/rules/project.md"
 
         teardown_sandbox
     done

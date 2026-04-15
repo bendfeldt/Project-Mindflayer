@@ -20,7 +20,7 @@ any agent used by any team member gets the same project context.
 
 ## Prerequisites
 
-Templates and settings must be installed at `~/.claude/docs/repo-templates/`. If they're
+Templates and settings must be installed at `~/.ai-toolkit/templates/`. If they're
 not found, tell the user to run the toolkit installer first.
 
 ## Setup Workflow
@@ -45,7 +45,6 @@ Ask the user for:
    - `terraform` — Infrastructure as Code
    - `databricks` — Databricks data platform
    - `microsoft-fabric` — Microsoft Fabric data platform
-   - `dagster` — Orchestration
 
 2. **Client name** — e.g., KOMBIT, PostNord, Pandora, Aller, Matas
 
@@ -56,7 +55,7 @@ for PostNord Fabric"), don't ask again — extract it from the request.
 
 ### Step 3: Copy and customize templates
 
-1. **Copy the AGENTS.md template** from `~/.claude/docs/repo-templates/AGENTS-{platform}.md`
+1. **Copy the AGENTS.md template** from `~/.ai-toolkit/templates/AGENTS-{platform}.md`
    to `./AGENTS.md` at the repo root.
 
 2. **Fill in known placeholders:**
@@ -70,16 +69,23 @@ for PostNord Fabric"), don't ask again — extract it from the request.
 
    **Claude Code:**
    - Create `.claude/` directory
-   - Copy `~/.claude/docs/repo-templates/settings/settings-{platform}.json` to `./.claude/settings.json`
+   - Copy `~/.ai-toolkit/templates/settings/settings-{platform}.json` to `./.claude/settings.json`
 
    **Codex CLI:**
-   - Copy `~/.claude/docs/repo-templates/codex/codex.md` to `./codex.md`
+   - Copy `~/.ai-toolkit/templates/codex/codex.md` to `./codex.md`
 
    **GitHub Copilot:**
    - Create `.github/` directory
    - Create `.github/copilot-instructions.md` as a symlink to `../AGENTS.md`
-     (or copy `~/.claude/docs/repo-templates/copilot/copilot-instructions.md` if
+     (or copy `~/.ai-toolkit/templates/copilot/copilot-instructions.md` if
      symlinks are problematic on the team's OS)
+
+   **Gemini CLI:**
+   - Copy `~/.ai-toolkit/templates/gemini/gemini.md` to `./gemini.md`
+
+   **Cursor:**
+   - Create `.cursor/rules/` directory
+   - Copy `~/.ai-toolkit/templates/cursor/cursor.md` to `./.cursor/rules/project.md`
 
 4. **Create `docs/adr/` directory** for Architecture Decision Records.
 
@@ -98,6 +104,8 @@ Repo initialized for {client_name} ({platform}):
   .claude/settings.json              ← Claude Code permissions (commit)
   .github/copilot-instructions.md    ← symlink to AGENTS.md for GitHub Copilot
   codex.md                           ← Codex-specific notes (commit)
+  gemini.md                          ← Gemini CLI notes (commit)
+  .cursor/rules/project.md           ← Cursor project rules (commit)
   docs/adr/                          ← architecture decision records
   .gitignore                         ← updated
 
@@ -132,10 +140,6 @@ Check for `databricks.yml` (DAB config). If missing, note it in the summary.
 ### Fabric repos
 
 No additional structure needed — Fabric repos are typically managed via Fabric Git integration.
-
-### Dagster repos
-
-Check for `pyproject.toml` and `dagster.yaml`. If missing, note them in the summary.
 
 ## Important
 

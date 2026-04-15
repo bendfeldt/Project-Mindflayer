@@ -50,4 +50,4 @@ including a pointer in the repo's `CLAUDE.md` file (`@AGENTS.md`).
 ## References
 
 - Codex documentation: `AGENTS.md` specification
-- `/templates/AGENTS-*.md` — the four platform templates this decision governs
+- `/templates/AGENTS-*.md` — the three platform templates this decision governs

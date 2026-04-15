@@ -53,9 +53,7 @@ I don't need basics explained, but do flag non-obvious gotchas.
 
 - **Databricks** — Unity Catalog, DLT/Spark Declarative Pipelines, PySpark, SQL
 - **Microsoft Fabric** — Lakehouses, Warehouses, Semantic Models, Pipelines
-- **dbt Core** — Kimball dimensional modeling, medallion architecture (bronze/silver/gold)
-- **Apache Iceberg** — table format for open lakehouse architectures
-- **Trino** — federated SQL query engine
+
 
 ### Infrastructure & DevOps
 
@@ -63,7 +61,6 @@ I don't need basics explained, but do flag non-obvious gotchas.
 - **Azure DevOps** — CI/CD pipelines (YAML), repos, boards
 - **GitHub Actions** — CI/CD for non-Azure contexts
 - **Docker / K3s** — containerized deployments, lightweight Kubernetes
-- **Dagster** — orchestration (preferred over Airflow)
 
 ### Cloud Platforms
 
@@ -73,8 +70,8 @@ I don't need basics explained, but do flag non-obvious gotchas.
 
 ### Languages
 
-- **Python** — PySpark, pandas, scripting, dbt
-- **SQL** — T-SQL, Spark SQL, Trino SQL, DuckDB
+- **Python** — PySpark, pandas, scripting
+- **SQL** — T-SQL, Spark SQL, DuckDB
 - **HCL** — Terraform
 - **PowerShell / Bash** — automation scripts
 - **DAX** — Power BI measures (not preferred but necessary)
@@ -129,7 +126,7 @@ at the repo root. If it does NOT, and the directory appears to be a git repo (ha
 immediately notify me:
 
 > "This repo doesn't have an AGENTS.md yet. Want me to set it up? I'll need to know the
-> platform (Terraform, Databricks, Fabric, or Dagster) and the client name."
+> platform (Terraform, Databricks, or Fabric) and the client name."
 
 Then use the `/setup-repo` skill to handle the rest. Do not proceed with other work until
 repo setup is resolved or I explicitly skip it.
@@ -144,7 +141,12 @@ repo setup is resolved or I explicitly skip it.
 | Architecture principles                | Client-specific compliance details     |
 | Commit message format                  | Team agreements & PR workflows         |
 
+## Decision Log
+
+Architecture and standards decisions are at `~/.ai-toolkit/docs/decisions/`.
+Consult them when generating DDL, choosing layer names, or advising on design patterns.
+
 ## Modular Docs (loaded via @-includes as needed)
 
-@~/.claude/docs/terraform-patterns.md
-@~/.claude/docs/kimball-reference.md
+@~/.ai-toolkit/docs/terraform-patterns.md
+@~/.ai-toolkit/docs/kimball-reference.md

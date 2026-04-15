@@ -30,20 +30,22 @@ Templates carry HTML comment version headers. `tools/check-template-update.sh` d
 install.sh              # Curl-installable cross-platform installer
 README.md               # GitHub README with install instructions
 how-to-guide.md         # Detailed usage documentation
-global/CLAUDE.md        # Source of truth for global config (installed to ~/.claude/CLAUDE.md)
-skills/                 # Distribution source for skills (installed to ~/.claude/skills/)
+global/AGENTS.md        # Source of truth for global config (installed to ~/.claude/CLAUDE.md)
+skills/                 # Distribution source for skills (installed to ~/.ai-toolkit/skills/ + ~/.claude/skills/ if Claude)
 docs/                   # Reference docs, architecture overview, and ADRs
   architecture.md       # System design: layered config model, distribution flow, multi-agent fan-out
   decisions/            # Toolkit-level ADRs (design decisions for this repo itself)
-  terraform-patterns.md # Reference: Terraform patterns (installed to ~/.claude/docs/)
-  kimball-reference.md  # Reference: Kimball modeling (installed to ~/.claude/docs/)
-templates/              # Distribution source for repo templates (installed as AGENTS.md per client)
-settings/               # Tool-specific permission settings (claude/, codex/, copilot/)
-tools/                  # Utility scripts: check-template-update.sh, sync-global.sh
+  terraform-patterns.md # Reference: Terraform patterns (installed to ~/.ai-toolkit/docs/)
+  kimball-reference.md  # Reference: Kimball modeling (installed to ~/.ai-toolkit/docs/)
+templates/              # Distribution source for repo templates (installed to ~/.ai-toolkit/templates/)
+settings/               # Tool-specific permission settings (claude/, codex/, copilot/, gemini/, cursor/)
+stores.yml              # External stores registry (installed to ~/.ai-toolkit/stores.yml)
+tools/                  # Utility scripts: check-template-update.sh, check-stores.sh, sync-global.sh
 ```
 
 Note: `skills/` and `templates/` are *distribution sources* in this repo. Their install
-destinations are `~/.claude/skills/` and the project's `AGENTS.md` respectively. See
+destinations are `~/.ai-toolkit/skills/` (all agents) and `~/.claude/skills/` (Claude only)
+for skills, and `~/.ai-toolkit/templates/` for repo templates. See
 `docs/architecture.md` for the full distribution flow. See `docs/decisions/0004-*.md`
 for why skills live at repo root rather than under `.claude/skills/`.
 
@@ -80,7 +82,7 @@ These are settled — do not revisit:
 
 ## What NOT to Change
 
-- Content of skills, templates, settings, and `global/CLAUDE.md` is finalized
+- Content of skills, templates, settings, and `global/AGENTS.md` is finalized
 - The `SKILL.md` format, `AGENTS.md` format, and cross-platform approach
 - The version header pattern for templates
 - The safety rules section in `AGENTS.md` templates

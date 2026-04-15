@@ -52,4 +52,4 @@ A single physical dimension referenced multiple times from a fact table with
 different meanings.
 
 Example: `dim_date` joined as `order_date_sk`, `ship_date_sk`, `delivery_date_sk`.
-In dbt, implement as separate views or aliases over the same underlying model.
+Implement as separate views or aliases over the same physical dimension table.

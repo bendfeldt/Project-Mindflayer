@@ -110,7 +110,7 @@ When the decision involves IaC, cloud resources, networking, or deployment topol
 
 **Example decision titles:** "Use Azure Storage for Terraform remote state",
 "Adopt microsoft/fabric provider for workspace provisioning",
-"Deploy Dagster on K3s instead of AKS"
+"Use GCS bucket for Terraform remote state on GCP"
 
 ### Kimball / Data Modeling Decisions
 
@@ -120,33 +120,15 @@ When the decision involves dimensional modeling, data warehouse design, or data 
   definition, query patterns and consumers (BI tool, API, ML pipeline), data volumes
 - **Alternatives should compare:** modeling approaches (Kimball vs. Data Vault vs. flat),
   SCD strategies per attribute, fact table types (transaction vs. periodic snapshot),
-  storage formats (Delta, Iceberg, Parquet)
+  storage formats (Delta, Parquet)
 - **Consequences should address:** query performance impact, historical analysis capability,
   ETL/ELT complexity, downstream semantic model / Power BI compatibility, reprocessing cost
 - **Compliance notes:** PII handling in dimensions (pseudonymization, right to erasure),
   data retention periods, cross-border data movement
 
 **Example decision titles:** "Use SCD Type 2 for customer address tracking",
-"Adopt Iceberg table format over Delta for gold layer",
+"Use Delta Lake over Parquet for the curated layer",
 "Implement bridge table for many-to-many customer-segment relationship"
-
-### Dagster / Orchestration Decisions
-
-When the decision involves pipeline orchestration, scheduling, or data lineage:
-
-- **Context should include:** current orchestration approach (manual, cron, ADF, Airflow),
-  number of pipelines/assets, team familiarity, deployment environment
-- **Alternatives should compare:** orchestrator choices (Dagster vs. Airflow vs. ADF vs.
-  Fabric Pipelines), deployment models (Docker vs. K8s vs. managed), asset-based vs.
-  task-based paradigms
-- **Consequences should address:** observability and debugging capability, retry/backfill
-  complexity, integration with dbt/Spark/Fabric, operational overhead, learning curve
-- **Compliance notes:** audit trail for data processing, scheduling SLA requirements,
-  pipeline failure notification and escalation
-
-**Example decision titles:** "Adopt Dagster over Airflow for asset-based orchestration",
-"Use Dagster sensors for event-driven ingestion instead of scheduled polling",
-"Run Dagster on K3s with Helm instead of Docker Compose"
 
 ### Azure DevOps / CI/CD Decisions
 
@@ -168,15 +150,15 @@ When the decision involves pipelines, branching strategy, or deployment automati
 
 ### Cross-Domain Decisions
 
-Some decisions span multiple domains (e.g., "how should we deploy our dbt models via
-Dagster on K3s with Terraform-managed infrastructure"). In these cases, merge the relevant
+Some decisions span multiple domains (e.g., "how should we implement SCD2 in Fabric
+with Terraform-managed infrastructure"). In these cases, merge the relevant
 prompts from each domain into a single ADR. The template structure stays the same — just
 make sure Context and Consequences cover all affected domains.
 
 ## File Naming & Location
 
 - Store ADRs in `docs/adr/` relative to the project root
-- File naming: `NNNN-short-kebab-title.md` (e.g. `0001-use-iceberg-table-format.md`)
+- File naming: `NNNN-short-kebab-title.md` (e.g. `0001-use-delta-lake-for-curated-layer.md`)
 - Number sequentially starting from 0001
 - Check existing ADRs before creating a new one to avoid duplicates or conflicts
 

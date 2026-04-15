@@ -216,7 +216,6 @@ Read the appropriate file before generating platform-specific code.
 
 | Context signal                                     | Load reference                  |
 |----------------------------------------------------|---------------------------------|
-| Dagster, orchestration, pipeline scheduling        | `references/dagster.md`         |
 | Azure DevOps, ADO pipelines, YAML pipelines        | `references/azure-devops-pipelines.md` |
 | Microsoft Fabric, Fabric workspaces, lakehouse, semantic model | `references/fabric-modules.md` |
 

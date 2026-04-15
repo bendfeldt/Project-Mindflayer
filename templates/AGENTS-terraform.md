@@ -1,7 +1,7 @@
 # Project Instructions
 
 <!-- template: AGENTS-terraform | version: 1.0.0 | updated: 2026-03-24 -->
-<!-- To check for updates: diff this file against ~/.claude/docs/repo-templates/AGENTS-terraform.md -->
+<!-- To check for updates: diff this file against ~/.ai-toolkit/templates/AGENTS-terraform.md -->
 
 ## Repo Identity
 

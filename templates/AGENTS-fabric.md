@@ -1,7 +1,7 @@
 # Project Instructions
 
 <!-- template: AGENTS-fabric | version: 1.0.0 | updated: 2026-03-24 -->
-<!-- To check for updates: diff this file against ~/.claude/docs/repo-templates/AGENTS-fabric.md -->
+<!-- To check for updates: diff this file against ~/.ai-toolkit/templates/AGENTS-fabric.md -->
 
 ## Repo Identity
 

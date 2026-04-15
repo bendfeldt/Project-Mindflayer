@@ -25,7 +25,7 @@ Configuration is layered — global standards travel with you, repo-level config
 |-------|------|-------|
 | **Global** | `~/.claude/CLAUDE.md` | Your identity, coding standards, stack preferences, compliance awareness |
 | **Repo** | `./AGENTS.md` | Client name, platform, build commands, branching rules, safety rules |
-| **Skills** | `~/.claude/skills/` | Reusable capabilities that adapt to both layers |
+| **Skills** | `~/.ai-toolkit/skills/` | Reusable capabilities that adapt to both layers |
 
 When you start a session, the agent loads global config + repo config + skills. No duplication between layers.
 
@@ -33,7 +33,7 @@ When you start a session, the agent loads global config + repo config + skills. 
 
 | Agent | Global Config | Project Config | Skills |
 |-------|:---:|:---:|:---:|
-| Claude Code | `~/.claude/CLAUDE.md` | `AGENTS.md` + `.claude/settings.json` | `~/.claude/skills/` |
+| Claude Code | `~/.claude/CLAUDE.md` | `AGENTS.md` + `.claude/settings.json` | `~/.ai-toolkit/skills/` + `~/.claude/skills/` |
 | Codex | `~/.codex/AGENTS.md` | `AGENTS.md` + `codex.md` | via SKILL.md standard |
 | Gemini CLI | `~/.gemini/GEMINI.md` | `AGENTS.md` | via SKILL.md standard |
 | Cursor | `~/.cursor/rules.md` | `AGENTS.md` | via SKILL.md standard |
@@ -47,7 +47,7 @@ When you start a session, the agent loads global config + repo config + skills. 
 | `--project` | Set up current repo (default if `--global` not set) |
 | `--tools claude,codex,gemini,cursor,copilot` | Skip agent selection prompt |
 | `--force` | Overwrite existing files without prompting |
-| `--profile terraform\|databricks\|fabric\|dagster` | Skip platform selection prompt |
+| `--profile terraform\|databricks\|fabric` | Skip platform selection prompt |
 | `--local` | Install from local checkout instead of GitHub |
 | `--client NAME` | Client name for project install (skips prompt) |
 | `--prefix PREFIX` | Resource prefix for project install (skips prompt) |
@@ -70,7 +70,6 @@ Each profile provides a repo template (`AGENTS.md`) and matching permission sett
 | **terraform** | `init`, `validate`, `fmt`, `plan` | `apply`, `destroy`, `import` |
 | **databricks** | `bundle validate/summary`, catalog list | `bundle deploy/run/destroy` |
 | **fabric** | `az account show/list`, pytest, ruff | `az rest` mutations, `az login` |
-| **dagster** | `definitions validate`, asset/job list | `job execute`, `helm upgrade` |
 
 ## Updating
 
@@ -83,7 +82,7 @@ bash <(curl -sL https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/m
 Check existing repos for template drift:
 
 ```bash
-~/.claude/check-template-update.sh
+~/.ai-toolkit/check-template-update.sh
 ```
 
 ## Detailed Guide
