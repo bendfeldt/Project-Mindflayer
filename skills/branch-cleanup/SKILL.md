@@ -63,7 +63,7 @@ These branches are always protected and never deleted, regardless of tracking st
 
 - `main`
 - `master`
-- `develop`
+- `development`
 - `release/*` and `releases/*` — any branch under these folders (e.g., `release/1.0`, `releases/2024-Q1`)
 - The currently checked-out branch
 
