@@ -60,6 +60,8 @@ When you start a session, the agent loads global config + repo config + skills. 
 | **Terraform Scaffold** | `/terraform-scaffold` | IaC project scaffolding with environment parity and module patterns |
 | **Kimball Model** | `/kimball-model` | Dimensional model design with platform-aware DDL output |
 | **Setup Repo** | `/setup-repo` | Auto-bootstrap repos with AGENTS.md + tool configs |
+| **Smart Commit** | `/commit` | Review changes and generate business-friendly commit messages |
+| **Smart PR** | `/pr` | Create pull requests with auto-complete for GitHub and Azure DevOps |
 
 ## Platform Profiles
 
@@ -73,6 +75,12 @@ Each profile provides a repo template (`AGENTS.md`) and matching permission sett
 
 ## Updating
 
+Check if a newer version of the toolkit is available:
+
+```bash
+~/.ai-toolkit/check-update.sh
+```
+
 Re-run the global install to get the latest skills, templates, and settings:
 
 ```bash
@@ -84,6 +92,26 @@ Check existing repos for template drift:
 ```bash
 ~/.ai-toolkit/check-template-update.sh
 ```
+
+## Uninstalling
+
+Remove the global toolkit install:
+
+```bash
+# Preview what would be removed (dry-run)
+~/.ai-toolkit/uninstall.sh --global
+
+# Actually remove
+~/.ai-toolkit/uninstall.sh --global --confirm
+```
+
+Remove project-level config from the current repo:
+
+```bash
+~/.ai-toolkit/uninstall.sh --project --confirm
+```
+
+The uninstaller is safe by default — it shows what would be removed without deleting anything. Use `--confirm` to actually remove files, and `--force` to also remove files you may have customized.
 
 ## Detailed Guide
 

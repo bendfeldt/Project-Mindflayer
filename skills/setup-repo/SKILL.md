@@ -53,6 +53,26 @@ Ask the user for:
 If the user provided this information in their initial request (e.g., "set up this repo
 for PostNord Fabric"), don't ask again — extract it from the request.
 
+4. **Detect installed agents** — run `command -v` checks to find what's available:
+   - `claude` → `command -v claude`
+   - `codex` → `command -v codex`
+   - `gemini` → `command -v gemini`
+   - `cursor` → `command -v cursor`
+   - `copilot` → `command -v gh` (Copilot runs via the GitHub CLI)
+
+   Show the results, defaulting the selection to detected agents (same UX as the installer):
+   ```
+   Detected agents:
+     [1] claude     ✓ installed
+     [2] codex      ✗ not found
+     [3] gemini     ✗ not found
+     [4] cursor     ✗ not found
+     [5] copilot    ✓ installed (via gh)
+
+   Configure agents [1,5]:
+   ```
+   Let the user add or remove agents before proceeding.
+
 ### Step 3: Copy and customize templates
 
 1. **Copy the AGENTS.md template** from `~/.ai-toolkit/templates/AGENTS-{platform}.md`
@@ -65,25 +85,25 @@ for PostNord Fabric"), don't ask again — extract it from the request.
    - Leave other placeholders like `{subscription_name_or_id}`, `{state_storage_account_name}`,
      `{connection_name}` as-is with a comment: `<!-- TODO: fill in -->`
 
-3. **Create tool-specific config directories and files:**
+3. **Create tool-specific config directories and files** — only for selected agents:
 
-   **Claude Code:**
+   **Claude Code** (always included — we're running inside Claude Code):
    - Create `.claude/` directory
    - Copy `~/.ai-toolkit/templates/settings/settings-{platform}.json` to `./.claude/settings.json`
 
-   **Codex CLI:**
+   **Codex CLI** (only if `codex` selected):
    - Copy `~/.ai-toolkit/templates/codex/codex.md` to `./codex.md`
 
-   **GitHub Copilot:**
+   **GitHub Copilot** (only if `copilot` selected):
    - Create `.github/` directory
    - Create `.github/copilot-instructions.md` as a symlink to `../AGENTS.md`
      (or copy `~/.ai-toolkit/templates/copilot/copilot-instructions.md` if
      symlinks are problematic on the team's OS)
 
-   **Gemini CLI:**
+   **Gemini CLI** (only if `gemini` selected):
    - Copy `~/.ai-toolkit/templates/gemini/gemini.md` to `./gemini.md`
 
-   **Cursor:**
+   **Cursor** (only if `cursor` selected):
    - Create `.cursor/rules/` directory
    - Copy `~/.ai-toolkit/templates/cursor/cursor.md` to `./.cursor/rules/project.md`
 
@@ -95,17 +115,14 @@ for PostNord Fabric"), don't ask again — extract it from the request.
 
 ### Step 4: Report what was created
 
-After setup, show a summary:
+After setup, show a summary listing only the files that were actually created:
 
 ```
 Repo initialized for {client_name} ({platform}):
 
   AGENTS.md                          ← project instructions — all agents read this (commit)
   .claude/settings.json              ← Claude Code permissions (commit)
-  .github/copilot-instructions.md    ← symlink to AGENTS.md for GitHub Copilot
-  codex.md                           ← Codex-specific notes (commit)
-  gemini.md                          ← Gemini CLI notes (commit)
-  .cursor/rules/project.md           ← Cursor project rules (commit)
+  {per-agent files created above}
   docs/adr/                          ← architecture decision records
   .gitignore                         ← updated
 

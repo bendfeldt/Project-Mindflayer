@@ -101,7 +101,7 @@ The file at `~/.claude/CLAUDE.md` loads automatically at the start of every Clau
 
 ## 4. Skills
 
-Four skills are installed globally and available in every session. They can be invoked explicitly with a slash command, or the agent picks them up automatically based on your conversation.
+Six skills are installed globally and available in every session. They can be invoked explicitly with a slash command, or the agent picks them up automatically based on your conversation.
 
 ### 4.1 ADR — `/adr`
 
@@ -141,6 +141,36 @@ Platform resolution order:
 1. **Repo AGENTS.md** (preferred) — if it declares `platform: databricks`, output is Spark SQL with Unity Catalog namespaces
 2. **File detection** (fallback) — scans for PySpark imports, Fabric artifacts, T-SQL patterns, etc.
 3. **Asks you** — if neither resolves, asks before guessing
+
+### 4.4 Smart Commit — `/commit`
+
+Reviews your staged and unstaged changes, understands what they mean for the project, and generates a business-friendly commit message. Stages files, commits, and optionally pushes.
+
+```bash
+# Explicit invocation
+/commit
+
+# Or just describe what you want
+"commit my changes"
+"save my work and push"
+```
+
+The skill follows Conventional Commits format (`type(scope): description`) and runs safety checks before every commit — verifying no secrets, tokens, or sensitive data are staged.
+
+### 4.5 Smart PR — `/pr`
+
+Reviews all commits and file changes in your current branch, writes a clear PR title and description, creates the PR, and sets auto-complete so it merges once policies pass. Works for both GitHub (`gh`) and Azure DevOps (`az repos`) repos.
+
+```bash
+# Explicit invocation
+/pr
+
+# Or describe it naturally
+"create a pull request for this branch"
+"raise a PR to main"
+```
+
+The PR description is structured with a summary, what changed, and why — written so a non-technical stakeholder can understand the business value.
 
 ---
 
@@ -260,6 +290,22 @@ Then open the file and fill in the `{placeholders}`:
 
 ## 7. Keeping Repos Up to Date
 
+### Checking for toolkit updates
+
+The toolkit stamps its version at install time. To check if a newer release is available:
+
+```bash
+~/.ai-toolkit/check-update.sh
+```
+
+This compares your installed version against the latest GitHub release. If an update is available, it shows the update command. To update:
+
+```bash
+bash <(curl -sL https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh) --global --force
+```
+
+### Checking repos for template drift
+
 Every repo template includes a version header:
 
 ```html
@@ -309,6 +355,31 @@ Structural diff (ignoring filled-in values is up to you):
 (diff output shown here)
 ---
 ```
+
+---
+
+### Uninstalling
+
+To remove the toolkit entirely:
+
+```bash
+# Preview what would be removed
+~/.ai-toolkit/uninstall.sh --global
+
+# Actually remove global install
+~/.ai-toolkit/uninstall.sh --global --confirm
+
+# Also remove user-modified files (CLAUDE.md, settings.json)
+~/.ai-toolkit/uninstall.sh --global --confirm --force
+```
+
+To remove project-level config from the current repo:
+
+```bash
+~/.ai-toolkit/uninstall.sh --project --confirm
+```
+
+The uninstaller preserves user content — `docs/adr/`, `.gitignore` entries, and files you've customized are not touched unless you pass `--force` (which creates backups first).
 
 ---
 
@@ -430,3 +501,6 @@ For inspiration or direct use:
 | Edit global permissions | `vim ~/.claude/settings.json` |
 | Edit repo permissions | `vim .claude/settings.json` |
 | Add instructions during session | Press `#` (inside Claude Code) |
+| Check for toolkit updates | `~/.ai-toolkit/check-update.sh` |
+| Uninstall (preview) | `~/.ai-toolkit/uninstall.sh --global` |
+| Uninstall (execute) | `~/.ai-toolkit/uninstall.sh --global --confirm` |

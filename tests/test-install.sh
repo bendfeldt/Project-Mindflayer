@@ -14,6 +14,8 @@ SH_FILES=(
     "$REPO_ROOT/tools/check-template-update.sh"
     "$REPO_ROOT/tools/check-stores.sh"
     "$REPO_ROOT/tools/sync-global.sh"
+    "$REPO_ROOT/tools/check-update.sh"
+    "$REPO_ROOT/tools/uninstall.sh"
 )
 
 # --- Harness -----------------------------------------------------------------
@@ -309,6 +311,17 @@ test_global_install() {
     assert_file_exists "skill (claude): adr" "$SANDBOX_HOME/.claude/skills/adr/SKILL.md"
     assert_file_exists "skill (claude): kimball-model" "$SANDBOX_HOME/.claude/skills/kimball-model/SKILL.md"
 
+    # Smart skills installed
+    assert_file_exists "skill (toolkit): smart-commit" "$SANDBOX_HOME/.ai-toolkit/skills/smart-commit/SKILL.md"
+    assert_file_exists "skill (toolkit): smart-pr" "$SANDBOX_HOME/.ai-toolkit/skills/smart-pr/SKILL.md"
+
+    # Skills content validation — verify YAML frontmatter and correct skill identity
+    local adr_content kimball_content
+    adr_content="$(head -3 "$SANDBOX_HOME/.ai-toolkit/skills/adr/SKILL.md")"
+    assert_contains "skill content: adr has frontmatter" "$adr_content" "name: adr"
+    kimball_content="$(head -3 "$SANDBOX_HOME/.ai-toolkit/skills/kimball-model/SKILL.md")"
+    assert_contains "skill content: kimball has frontmatter" "$kimball_content" "name: kimball-model"
+
     # Skills are distinct (not clobbered by basename collision)
     local adr_first kimball_first
     adr_first="$(head -3 "$SANDBOX_HOME/.ai-toolkit/skills/adr/SKILL.md")"
@@ -321,6 +334,7 @@ test_global_install() {
     fi
 
     # Docs (in ~/.ai-toolkit/)
+    assert_file_exists "doc: architecture" "$SANDBOX_HOME/.ai-toolkit/docs/architecture.md"
     assert_file_exists "doc: terraform-patterns" "$SANDBOX_HOME/.ai-toolkit/docs/terraform-patterns.md"
     assert_file_exists "doc: kimball-reference" "$SANDBOX_HOME/.ai-toolkit/docs/kimball-reference.md"
 
@@ -337,16 +351,34 @@ test_global_install() {
     # Global settings.json (Claude-specific)
     assert_file_exists "settings.json" "$SANDBOX_HOME/.claude/settings.json"
 
+    # Settings content validation — verify it's valid JSON with permissions
+    if python3 -c "import json; json.load(open('$SANDBOX_HOME/.claude/settings.json'))" 2>/dev/null; then
+        PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m settings.json is valid JSON\n"
+    else
+        FAIL=$((FAIL + 1)); FAILURES+=("[$CURRENT_GROUP] settings.json is not valid JSON")
+        printf "  \033[31mFAIL\033[0m settings.json is not valid JSON\n"
+    fi
+
     # Scripts (in ~/.ai-toolkit/)
     assert_file_exists "script: check-template-update" "$SANDBOX_HOME/.ai-toolkit/check-template-update.sh"
     assert_file_exists "script: check-stores" "$SANDBOX_HOME/.ai-toolkit/check-stores.sh"
     assert_file_exists "script: sync-global" "$SANDBOX_HOME/.ai-toolkit/sync-global.sh"
+    assert_file_exists "script: check-update" "$SANDBOX_HOME/.ai-toolkit/check-update.sh"
+    assert_file_exists "script: uninstall" "$SANDBOX_HOME/.ai-toolkit/uninstall.sh"
     assert_executable "check-template-update.sh +x" "$SANDBOX_HOME/.ai-toolkit/check-template-update.sh"
     assert_executable "check-stores.sh +x" "$SANDBOX_HOME/.ai-toolkit/check-stores.sh"
     assert_executable "sync-global.sh +x" "$SANDBOX_HOME/.ai-toolkit/sync-global.sh"
+    assert_executable "check-update.sh +x" "$SANDBOX_HOME/.ai-toolkit/check-update.sh"
+    assert_executable "uninstall.sh +x" "$SANDBOX_HOME/.ai-toolkit/uninstall.sh"
 
     # Stores registry (in ~/.ai-toolkit/)
     assert_file_exists "stores.yml" "$SANDBOX_HOME/.ai-toolkit/stores.yml"
+
+    # Version stamp (in ~/.ai-toolkit/)
+    assert_file_exists "version stamp" "$SANDBOX_HOME/.ai-toolkit/version"
+    local installed_version
+    installed_version="$(cat "$SANDBOX_HOME/.ai-toolkit/version")"
+    assert_eq "version matches installer VERSION" "1.0.0" "$installed_version"
 
     # Decision log (spot-check first, middle, last — in ~/.ai-toolkit/)
     assert_file_exists "decision: 0001" "$SANDBOX_HOME/.ai-toolkit/docs/decisions/0001-agents-md-as-universal-repo-instruction-file.md"
@@ -358,6 +390,13 @@ test_global_install() {
     assert_file_exists "codex: AGENTS.md" "$SANDBOX_HOME/.codex/AGENTS.md"
     assert_file_exists "gemini: GEMINI.md" "$SANDBOX_HOME/.gemini/GEMINI.md"
     assert_file_exists "cursor: rules.md" "$SANDBOX_HOME/.cursor/rules.md"
+
+    # Global config content validation — all agents get the same source content
+    local claude_heading codex_heading
+    claude_heading="$(head -1 "$SANDBOX_HOME/.claude/CLAUDE.md")"
+    assert_eq "claude CLAUDE.md has correct heading" "# Global Instructions" "$claude_heading"
+    codex_heading="$(head -1 "$SANDBOX_HOME/.codex/AGENTS.md")"
+    assert_eq "codex AGENTS.md has correct heading" "# Global Instructions" "$codex_heading"
 
     # Codex + copilot templates (in ~/.ai-toolkit/)
     assert_file_exists "codex: config.toml" "$SANDBOX_HOME/.ai-toolkit/templates/codex/config.toml"
@@ -585,6 +624,131 @@ test_cross_platform() {
 }
 
 # =============================================================================
+# Category 10: Uninstaller
+# =============================================================================
+
+test_uninstall() {
+    group "10. Uninstaller"
+
+    local UNINSTALL_SCRIPT="$REPO_ROOT/tools/uninstall.sh"
+
+    # --- Dry-run produces no deletions ---
+    setup_sandbox
+    run_installer --global --tools claude,codex,gemini,cursor --force --local >/dev/null 2>&1
+
+    local pre_count
+    pre_count="$(find "$SANDBOX_HOME/.ai-toolkit" -type f 2>/dev/null | wc -l | tr -d ' ')"
+
+    bash "$UNINSTALL_SCRIPT" --global >/dev/null 2>&1
+    local post_count
+    post_count="$(find "$SANDBOX_HOME/.ai-toolkit" -type f 2>/dev/null | wc -l | tr -d ' ')"
+    assert_eq "dry-run: no files deleted" "$pre_count" "$post_count"
+    teardown_sandbox
+
+    # --- Global --confirm removes ~/.ai-toolkit/ ---
+    setup_sandbox
+    run_installer --global --tools claude,codex,gemini,cursor --force --local >/dev/null 2>&1
+    assert_file_exists "pre-uninstall: toolkit exists" "$SANDBOX_HOME/.ai-toolkit/version"
+
+    bash "$UNINSTALL_SCRIPT" --global --confirm >/dev/null 2>&1
+    if [ ! -d "$SANDBOX_HOME/.ai-toolkit" ]; then
+        PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m global --confirm: ~/.ai-toolkit/ removed\n"
+    else
+        FAIL=$((FAIL + 1)); FAILURES+=("[$CURRENT_GROUP] ~/.ai-toolkit/ still exists after --confirm")
+        printf "  \033[31mFAIL\033[0m global --confirm: ~/.ai-toolkit/ still exists\n"
+    fi
+
+    # Codex/Gemini/Cursor agent files removed
+    if [ ! -f "$SANDBOX_HOME/.codex/AGENTS.md" ]; then
+        PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m global --confirm: codex AGENTS.md removed\n"
+    else
+        FAIL=$((FAIL + 1)); FAILURES+=("[$CURRENT_GROUP] codex AGENTS.md still exists")
+        printf "  \033[31mFAIL\033[0m global --confirm: codex AGENTS.md still exists\n"
+    fi
+
+    # Claude CLAUDE.md preserved without --force (user-modified)
+    assert_file_exists "global --confirm: CLAUDE.md preserved (user-modified)" "$SANDBOX_HOME/.claude/CLAUDE.md"
+
+    # Claude skills removed
+    if [ ! -d "$SANDBOX_HOME/.claude/skills/adr" ]; then
+        PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m global --confirm: claude skill adr removed\n"
+    else
+        FAIL=$((FAIL + 1)); FAILURES+=("[$CURRENT_GROUP] claude skill adr still exists")
+        printf "  \033[31mFAIL\033[0m global --confirm: claude skill adr still exists\n"
+    fi
+    teardown_sandbox
+
+    # --- Global --confirm --force removes user-modified files ---
+    setup_sandbox
+    run_installer --global --tools claude --force --local >/dev/null 2>&1
+    bash "$UNINSTALL_SCRIPT" --global --confirm --force >/dev/null 2>&1
+
+    if [ ! -f "$SANDBOX_HOME/.claude/CLAUDE.md" ]; then
+        PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m global --force: CLAUDE.md removed\n"
+    else
+        FAIL=$((FAIL + 1)); FAILURES+=("[$CURRENT_GROUP] CLAUDE.md still exists with --force")
+        printf "  \033[31mFAIL\033[0m global --force: CLAUDE.md still exists\n"
+    fi
+
+    # Backup created for user-modified files
+    local backup_count
+    backup_count="$(find "$SANDBOX_HOME/.claude" -name "CLAUDE.md.bak" 2>/dev/null | wc -l | tr -d ' ')"
+    if [ "$backup_count" -ge 1 ]; then
+        PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m global --force: CLAUDE.md backup created\n"
+    else
+        FAIL=$((FAIL + 1)); FAILURES+=("[$CURRENT_GROUP] no CLAUDE.md backup on --force")
+        printf "  \033[31mFAIL\033[0m global --force: no CLAUDE.md backup\n"
+    fi
+    teardown_sandbox
+
+    # --- Project --confirm removes project files ---
+    setup_sandbox
+    (cd "$SANDBOX_PROJECT" && run_installer --project --tools claude,codex,gemini,cursor,copilot --profile terraform --client X --prefix x --force --local) >/dev/null 2>&1
+
+    (cd "$SANDBOX_PROJECT" && bash "$UNINSTALL_SCRIPT" --project --confirm) >/dev/null 2>&1
+
+    # Generated files removed
+    if [ ! -f "$SANDBOX_PROJECT/.claude/settings.json" ]; then
+        PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m project --confirm: .claude/settings.json removed\n"
+    else
+        FAIL=$((FAIL + 1)); FAILURES+=("[$CURRENT_GROUP] .claude/settings.json still exists")
+        printf "  \033[31mFAIL\033[0m project --confirm: .claude/settings.json still exists\n"
+    fi
+
+    if [ ! -f "$SANDBOX_PROJECT/codex.md" ]; then
+        PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m project --confirm: codex.md removed\n"
+    else
+        FAIL=$((FAIL + 1)); FAILURES+=("[$CURRENT_GROUP] codex.md still exists")
+        printf "  \033[31mFAIL\033[0m project --confirm: codex.md still exists\n"
+    fi
+
+    # Copilot symlink removed
+    if [ ! -L "$SANDBOX_PROJECT/.github/copilot-instructions.md" ]; then
+        PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m project --confirm: copilot symlink removed\n"
+    else
+        FAIL=$((FAIL + 1)); FAILURES+=("[$CURRENT_GROUP] copilot symlink still exists")
+        printf "  \033[31mFAIL\033[0m project --confirm: copilot symlink still exists\n"
+    fi
+
+    # AGENTS.md preserved (user-modified) without --force
+    assert_file_exists "project --confirm: AGENTS.md preserved (user-modified)" "$SANDBOX_PROJECT/AGENTS.md"
+
+    # docs/adr/ preserved (user content)
+    assert_file_exists "project --confirm: docs/adr/ preserved" "$SANDBOX_PROJECT/docs/adr"
+    teardown_sandbox
+
+    # --- Must specify --global or --project ---
+    local rc=0
+    bash "$UNINSTALL_SCRIPT" >/dev/null 2>&1 || rc=$?
+    assert_rc "no mode flag exits 1" "1" "$rc"
+
+    # --- --global and --project are mutually exclusive ---
+    rc=0
+    bash "$UNINSTALL_SCRIPT" --global --project >/dev/null 2>&1 || rc=$?
+    assert_rc "mutual exclusion exits 1" "1" "$rc"
+}
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -601,6 +765,7 @@ main() {
     test_safety
     test_edge_cases
     test_cross_platform
+    test_uninstall
 
     printf "\n=== Summary ===\n"
     printf "  PASS: %d\n" "$PASS"

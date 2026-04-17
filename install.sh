@@ -326,6 +326,7 @@ SKILL_FILES=(
 )
 
 DOC_FILES=(
+    "docs/architecture.md"
     "docs/terraform-patterns.md"
     "docs/kimball-reference.md"
 )
@@ -378,6 +379,8 @@ SCRIPT_FILES=(
     "tools/check-template-update.sh"
     "tools/check-stores.sh"
     "tools/sync-global.sh"
+    "tools/check-update.sh"
+    "tools/uninstall.sh"
 )
 
 # =============================================================================
@@ -559,6 +562,12 @@ install_global() {
     local stores_tmp
     stores_tmp="$(fetch_to_tmp "stores.yml")"
     safe_copy "$stores_tmp" "$toolkit_home/stores.yml"
+
+    # --- Version stamp ---
+    info ""
+    info "${BOLD}Version stamp:${RESET}"
+    printf "%s\n" "$VERSION" > "$toolkit_home/version"
+    ok "version ($VERSION)"
 
     # --- Summary ---
     info ""
@@ -804,6 +813,12 @@ main() {
     # If local mode, ensure SCRIPT_DIR is set
     if [ "$LOCAL" = "1" ] && [ -z "${SCRIPT_DIR:-}" ]; then
         SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    fi
+
+    # Remote mode requires curl
+    if [ "$LOCAL" != "1" ] && ! command -v curl >/dev/null 2>&1; then
+        err "curl is required for remote install. Install curl or use --local."
+        exit 1
     fi
 
     info ""

@@ -40,7 +40,7 @@ docs/                   # Reference docs, architecture overview, and ADRs
 templates/              # Distribution source for repo templates (installed to ~/.ai-toolkit/templates/)
 settings/               # Tool-specific permission settings (claude/, codex/, copilot/, gemini/, cursor/)
 stores.yml              # External stores registry (installed to ~/.ai-toolkit/stores.yml)
-tools/                  # Utility scripts: check-template-update.sh, check-stores.sh, sync-global.sh
+tools/                  # Utility scripts: check-template-update.sh, check-stores.sh, check-update.sh, sync-global.sh, uninstall.sh
 ```
 
 Note: `skills/` and `templates/` are *distribution sources* in this repo. Their install
