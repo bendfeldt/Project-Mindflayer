@@ -314,6 +314,7 @@ test_global_install() {
     # Smart skills installed
     assert_file_exists "skill (toolkit): smart-commit" "$SANDBOX_HOME/.ai-toolkit/skills/smart-commit/SKILL.md"
     assert_file_exists "skill (toolkit): smart-pr" "$SANDBOX_HOME/.ai-toolkit/skills/smart-pr/SKILL.md"
+    assert_file_exists "skill (toolkit): branch-cleanup" "$SANDBOX_HOME/.ai-toolkit/skills/branch-cleanup/SKILL.md"
 
     # Skills content validation — verify YAML frontmatter and correct skill identity
     local adr_content kimball_content
@@ -321,6 +322,9 @@ test_global_install() {
     assert_contains "skill content: adr has frontmatter" "$adr_content" "name: adr"
     kimball_content="$(head -3 "$SANDBOX_HOME/.ai-toolkit/skills/kimball-model/SKILL.md")"
     assert_contains "skill content: kimball has frontmatter" "$kimball_content" "name: kimball-model"
+    local cleanup_content
+    cleanup_content="$(head -3 "$SANDBOX_HOME/.ai-toolkit/skills/branch-cleanup/SKILL.md")"
+    assert_contains "skill content: branch-cleanup has frontmatter" "$cleanup_content" "name: branch-cleanup"
 
     # Skills are distinct (not clobbered by basename collision)
     local adr_first kimball_first

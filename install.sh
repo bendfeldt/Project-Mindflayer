@@ -316,6 +316,7 @@ safe_copy() {
 
 SKILL_FILES=(
     "skills/adr/SKILL.md"
+    "skills/branch-cleanup/SKILL.md"
     "skills/kimball-model/SKILL.md"
     "skills/setup-repo/SKILL.md"
     "skills/smart-commit/SKILL.md"

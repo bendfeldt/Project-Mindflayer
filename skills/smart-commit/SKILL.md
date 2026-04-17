@@ -47,6 +47,15 @@ Follow these steps every time:
    - Ask: "Push to origin/[branch]?" — never auto-push
    - Only push if the user explicitly confirms
 
+7. **Clean up stale branches (after push)**
+   - Only runs if the user confirmed the push in step 6
+   - Run `git fetch --prune origin` — remove stale remote tracking refs
+   - Check for local branches whose upstream is gone: `git branch -vv | grep ': gone]' | awk '{print $1}'`
+   - Exclude protected branches: `main`, `master`, `develop`, `release/*`, `releases/*`, and the current branch
+   - If stale branches found, show them and delete with `git branch -d` (safe — refuses unmerged)
+   - Report: "Cleaned up N stale branch(es)." or "No stale branches to clean up."
+   - If any branch fails to delete (unmerged), report it but don't error out
+
 ---
 
 ## Commit Message Standard

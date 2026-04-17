@@ -62,6 +62,7 @@ When you start a session, the agent loads global config + repo config + skills. 
 | **Setup Repo** | `/setup-repo` | Auto-bootstrap repos with AGENTS.md + tool configs |
 | **Smart Commit** | `/commit` | Review changes and generate business-friendly commit messages |
 | **Smart PR** | `/pr` | Create pull requests with auto-complete for GitHub and Azure DevOps |
+| **Branch Cleanup** | `/prune` | Prune stale local branches whose upstream was deleted from origin |
 
 ## Platform Profiles
 

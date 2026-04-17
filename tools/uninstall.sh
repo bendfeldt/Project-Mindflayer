@@ -227,7 +227,7 @@ uninstall_global() {
     remove_dir "$HOME/.ai-toolkit"
 
     # 2. Claude skills (toolkit-managed only)
-    local TOOLKIT_SKILLS="adr kimball-model setup-repo smart-commit smart-pr terraform-scaffold"
+    local TOOLKIT_SKILLS="adr branch-cleanup kimball-model setup-repo smart-commit smart-pr terraform-scaffold"
     for skill in $TOOLKIT_SKILLS; do
         remove_if_toolkit_skill "$HOME/.claude/skills/$skill"
     done

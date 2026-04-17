@@ -101,7 +101,7 @@ The file at `~/.claude/CLAUDE.md` loads automatically at the start of every Clau
 
 ## 4. Skills
 
-Six skills are installed globally and available in every session. They can be invoked explicitly with a slash command, or the agent picks them up automatically based on your conversation.
+Seven skills are installed globally and available in every session. They can be invoked explicitly with a slash command, or the agent picks them up automatically based on your conversation.
 
 ### 4.1 ADR — `/adr`
 
@@ -171,6 +171,21 @@ Reviews all commits and file changes in your current branch, writes a clear PR t
 ```
 
 The PR description is structured with a summary, what changed, and why — written so a non-technical stakeholder can understand the business value.
+
+### 4.6 Branch Cleanup — `/prune`
+
+Prunes stale local branches whose remote tracking branch has been deleted from origin. Runs automatically after every push via smart-commit, or invoke manually.
+
+```bash
+# Explicit invocation
+/prune
+
+# Or describe it naturally
+"clean up old branches"
+"delete stale branches"
+```
+
+The skill runs `git fetch --prune`, identifies branches showing `: gone]` in tracking status, and deletes them with `git branch -d` (safe — refuses unmerged branches). Protected branches (main, master, develop, current branch) are never touched.
 
 ---
 
