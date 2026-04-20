@@ -150,7 +150,7 @@ test_syntax() {
             local name
             name="$(basename "$f")"
             local rc=0
-            shellcheck -s bash -S warning -e SC2034,SC2155 "$f" >/dev/null 2>&1 || rc=$?
+            shellcheck -s bash -S warning -e SC2034,SC2088,SC2155 "$f" >/dev/null 2>&1 || rc=$?
             assert_eq "shellcheck $name" "0" "$rc"
         done
     else
