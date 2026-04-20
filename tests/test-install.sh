@@ -197,6 +197,12 @@ test_manifests() {
     done
 
     assert_file_exists "global/AGENTS.md" "$REPO_ROOT/global/AGENTS.md"
+    assert_file_exists "repo-root AGENTS.md (ADR-0001)" "$REPO_ROOT/AGENTS.md"
+    assert_file_exists "repo-root CLAUDE.md pointer" "$REPO_ROOT/CLAUDE.md"
+    local claude_pointer
+    claude_pointer="$(grep -c "@AGENTS.md" "$REPO_ROOT/CLAUDE.md" || true)"
+    [ "$claude_pointer" -ge 1 ] && claude_pointer=1 || claude_pointer=0
+    assert_eq "CLAUDE.md contains @AGENTS.md pointer" "1" "$claude_pointer"
 
     # Orphan check: skills
     while IFS= read -r f; do
