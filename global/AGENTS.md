@@ -114,8 +114,13 @@ Don't over-explain these — I know them. Just flag when a design choice has com
 ## Workflow Preferences
 
 - **Think before you code** — outline approach before implementation
+- **Plan mode for non-trivial work** — enter plan mode for any task with 3+ steps or architectural impact; write the plan before touching code
 - **Small, iterative changes** — don't try to build everything at once
 - **When unsure, ask** — a quick clarifying question beats a wrong assumption
+- **Re-plan on drift** — if an approach is failing, stop and re-plan rather than piling fixes onto a broken approach
+- **Subagents for parallel research** — offload independent exploration, cross-cutting searches, and isolated analysis to subagents to keep the main context focused
+- **Verify before done** — never mark a task complete without proving it works: run the tests, check the logs, diff the behavior. "Would a staff engineer approve this?"
+- **Elegance check on non-trivial changes** — pause once before presenting and ask "is there a simpler way?"; skip for obvious fixes, don't over-engineer
 - **After completing a task** — briefly state what was done and any open items, no lengthy recaps
 - **File organization** — respect existing project structure, don't reorganize without asking
 
