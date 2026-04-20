@@ -511,13 +511,98 @@ For inspiration or direct use:
 
 ---
 
-## 10. Quick Reference
+## 10. Team Lifecycle — Onboarding and Offboarding
+
+Mindflayer is designed for teams where multiple people work on the same client
+repo. The layered architecture (global = personal, project = team-shared) makes
+this work cleanly:
+
+| Layer | Where it lives | Owned by |
+|---|---|---|
+| Global config | `~/.claude/CLAUDE.md`, `~/.ai-toolkit/` | Each developer (personal) |
+| Project config | `AGENTS.md`, `.claude/settings.json`, `docs/adr/` | The repo (committed, team-shared) |
+| Personal overrides | `.claude/settings.local.json`, `CLAUDE.local.md` | Each developer (gitignored) |
+
+### Onboarding a new teammate
+
+When a new developer joins a project where Mindflayer is already set up:
+
+1. **Install Mindflayer globally on the new machine** (one-time, per machine):
+   ```bash
+   bash <(curl -sL https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh) --global
+   ```
+   Pick the agents this developer uses (Claude Code, Codex, Gemini, Cursor, Copilot).
+
+2. **Clone the repo and open the coding agent.** `AGENTS.md` loads automatically
+   — the new developer immediately gets the same project context as everyone
+   else. `.claude/settings.json` (committed) applies the same team permissions.
+
+3. **Only run `/setup-repo` if a config file your agent needs is missing.**
+   The skill auto-detects the state and switches to **join mode**:
+   - Never rewrites `AGENTS.md`.
+   - Infers the profile from the template header.
+   - Only creates files that are absent (e.g., the new teammate uses Cursor
+     but the repo never had `.cursor/rules/project.md` committed).
+   - Runs `check-template-update.sh` at the end to surface any template
+     drift as an informational note.
+
+4. **Check for toolkit drift** (optional):
+   ```bash
+   ~/.ai-toolkit/check-template-update.sh
+   ```
+   If the repo's `AGENTS.md` was generated from an older template than what
+   the new machine has installed, this flags it. Fixing drift is always a
+   team decision — never automatic.
+
+**What the new teammate does NOT need to do:**
+- Recreate `AGENTS.md` — it's already correct and committed.
+- Ask anyone for shared secrets — project config never contains secrets.
+- Copy anyone's `CLAUDE.local.md` or `settings.local.json` — those are
+  personal overrides, not team config.
+
+### Offboarding a departing teammate
+
+When a teammate leaves the project, almost nothing needs to happen in the repo:
+
+1. **Nothing to remove from the repo.** The committed team config
+   (`AGENTS.md`, `.claude/settings.json`, `docs/adr/`, `.gitignore`) belongs
+   to the team and stays. Other developers keep using it unchanged.
+
+2. **Personal local overrides stay on the departing dev's machine.** Because
+   `.claude/settings.local.json` and `CLAUDE.local.md` are gitignored, they
+   were never shared. No secrets or personal notes leak through the repo.
+
+3. **Promote useful local overrides before leaving (optional).** If the
+   departing dev had local-only settings or notes that the team should
+   inherit, move the content into the committed equivalents before they
+   leave:
+   - Content in `CLAUDE.local.md` that is team-relevant → merge into
+     `AGENTS.md` (via PR).
+   - Permissions in `.claude/settings.local.json` that should be team-wide
+     → merge into `.claude/settings.json` (via PR).
+
+4. **On the departing dev's personal machine (optional).** They can remove
+   Mindflayer entirely if they're no longer using any of their clients' repos:
+   ```bash
+   ~/.ai-toolkit/uninstall.sh --global --confirm
+   ```
+   This is purely personal hygiene — it doesn't affect the repo or any
+   remaining teammates.
+
+5. **Revoke access to the repo** (out of Mindflayer's scope — this is GitHub /
+   Azure DevOps / etc. access management).
+
+---
+
+## 11. Quick Reference
 
 | Task | Command |
 |------|---------|
 | Install the toolkit (global) | `bash <(curl -sL .../install.sh) --global` |
 | Set up a project | `bash <(curl -sL .../install.sh)` or `bash install.sh --local` |
 | Set up a new repo (easy) | `/setup-repo` (inside Claude Code, in the repo) |
+| Onboard new teammate | Install globally, clone repo, open agent — `AGENTS.md` loads automatically |
+| Offboard a teammate | Nothing to remove from the repo; optionally `~/.ai-toolkit/uninstall.sh --global --confirm` on their machine |
 | Set up a new repo (manual) | `cp ~/.ai-toolkit/templates/AGENTS-{type}.md ./AGENTS.md` |
 | Add repo permissions (manual) | `cp ~/.ai-toolkit/templates/settings/settings-{type}.json .claude/settings.json` |
 | Check for template updates | `~/.ai-toolkit/check-template-update.sh` |

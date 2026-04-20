@@ -59,7 +59,7 @@ When you start a session, the agent loads global config + repo config + skills. 
 | **ADR** | `/adr` | Architecture Decision Records with domain-specific prompts per platform |
 | **Terraform Scaffold** | `/terraform-scaffold` | IaC project scaffolding with environment parity and module patterns |
 | **Kimball Model** | `/kimball-model` | Dimensional model design with platform-aware DDL output |
-| **Setup Repo** | `/setup-repo` | Auto-bootstrap repos with AGENTS.md + tool configs |
+| **Setup Repo** | `/setup-repo` | Auto-bootstrap repos with AGENTS.md + tool configs. Idempotent — safe to run on existing Mindflayer repos (switches to join mode for new teammates). |
 | **Smart Commit** | `/commit` | Review changes and generate business-friendly commit messages |
 | **Smart PR** | `/pr` | Create pull requests with auto-complete for GitHub and Azure DevOps |
 | **Branch Cleanup** | `/prune` | Prune stale local branches whose upstream was deleted from origin |

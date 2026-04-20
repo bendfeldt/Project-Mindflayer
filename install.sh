@@ -702,27 +702,52 @@ install_project() {
     info "${BOLD}=== Project Install ===${RESET}"
     info ""
 
+    # --- Join-mode detection ----------------------------------------
+    # If AGENTS.md already exists and carries a toolkit template header,
+    # this repo was bootstrapped by Mindflayer already. Switch to
+    # "join mode": never touch AGENTS.md, only add agent-specific files
+    # the current user is missing. This is the new-teammate path.
+    local JOIN_MODE=0
+    if [ -f "./AGENTS.md" ] && grep -q '<!-- template:' "./AGENTS.md" 2>/dev/null; then
+        JOIN_MODE=1
+        info "${BOLD}Detected existing Mindflayer-managed repo${RESET} — join mode."
+        info "AGENTS.md will be preserved. Only your agent-specific files will be added."
+        info ""
+        # Infer profile from AGENTS.md template header so we don't need
+        # to ask the joining teammate for client details.
+        if [ -z "${PROFILE:-}" ]; then
+            local inferred
+            inferred="$(sed -n 's/.*template: AGENTS-\([a-z-]*\).*/\1/p' ./AGENTS.md | head -1)"
+            if [ -n "$inferred" ]; then
+                PROFILE="$inferred"
+                info "  Inferred profile from AGENTS.md: ${BOLD}${PROFILE}${RESET}"
+            fi
+        fi
+    fi
+
     prompt_profile
-    prompt_client_info
+    if [ "$JOIN_MODE" != "1" ]; then
+        prompt_client_info
+    fi
 
     info ""
     info "Setting up ${BOLD}${CLIENT_NAME}${RESET} (${PROFILE}) repo..."
     info ""
 
     # --- AGENTS.md ---
-    local template_tmp
-    template_tmp="$(fetch_to_tmp "templates/AGENTS-${PROFILE}.md")"
+    local template_tmp=""
+    if [ "$JOIN_MODE" = "1" ]; then
+        ok "AGENTS.md (preserved — join mode)"
+    else
+        template_tmp="$(fetch_to_tmp "templates/AGENTS-${PROFILE}.md")"
 
-    if [ -f "./AGENTS.md" ] && [ "$FORCE" != "1" ]; then
-        if ! [ -t 0 ]; then
-            warn "AGENTS.md exists — use --force to overwrite"
+        if [ -f "./AGENTS.md" ] && [ "$FORCE" != "1" ]; then
+            # Safe default: preserve existing AGENTS.md unless --force.
+            # Previously this prompted "overwrite? [y/N]" which was a
+            # footgun — a casual 'y' clobbered a teammate's filled
+            # template. Now require explicit --force to overwrite.
+            warn "AGENTS.md exists — preserved. Use --force to overwrite."
             template_tmp=""
-        else
-            read -r -p "  AGENTS.md already exists. Overwrite? [y/N]: " answer
-            case "$answer" in
-                y|Y) ;;
-                *)   warn "Skipped AGENTS.md"; template_tmp="" ;;
-            esac
         fi
     fi
 
@@ -789,9 +814,17 @@ install_project() {
 
     # --- Summary ---
     info ""
-    info "${BOLD}=== Project Setup Complete ===${RESET}"
+    if [ "$JOIN_MODE" = "1" ]; then
+        info "${BOLD}=== Joined Existing Project ===${RESET}"
+    else
+        info "${BOLD}=== Project Setup Complete ===${RESET}"
+    fi
     info ""
-    info "Profile: ${PROFILE} | Client: ${CLIENT_NAME} (${CLIENT_PREFIX})"
+    if [ "$JOIN_MODE" = "1" ]; then
+        info "Profile: ${PROFILE} (inferred from AGENTS.md)"
+    else
+        info "Profile: ${PROFILE} | Client: ${CLIENT_NAME} (${CLIENT_PREFIX})"
+    fi
     info ""
     info "Created files:"
     [ -f ./AGENTS.md ] && info "  AGENTS.md"
@@ -802,8 +835,17 @@ install_project() {
     [ -L .github/copilot-instructions.md ] && info "  .github/copilot-instructions.md -> AGENTS.md"
     info "  docs/adr/"
     info ""
-    info "${YELLOW}TODO:${RESET} Open AGENTS.md and fill in remaining {placeholders}."
-    info ""
+    if [ "$JOIN_MODE" != "1" ]; then
+        info "${YELLOW}TODO:${RESET} Open AGENTS.md and fill in remaining {placeholders}."
+        info ""
+    fi
+
+    # --- Template drift check (informational) -----------------------
+    if [ -x "$HOME/.ai-toolkit/check-template-update.sh" ] && [ -f ./AGENTS.md ]; then
+        info "${BOLD}Template version check:${RESET}"
+        bash "$HOME/.ai-toolkit/check-template-update.sh" 2>&1 | sed 's/^/  /' || true
+        info ""
+    fi
 }
 
 # =============================================================================

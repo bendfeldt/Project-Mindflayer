@@ -1,12 +1,14 @@
 ---
 name: setup-repo
 description: >
-  Bootstrap a new client repo with AGENTS.md, .claude/settings.json, and folder
-  structure. Triggers automatically at session start when the global CLAUDE.md
-  detects the repo has no AGENTS.md yet. Can also be invoked manually with
-  /setup-repo. Use when the user says "set up this repo", "initialize repo",
-  "new client repo", "bootstrap repo", or accepts the automatic prompt to
-  configure a new project.
+  Bootstrap a new client repo OR safely onboard a new teammate to an existing
+  Mindflayer-managed repo. Auto-detects state: fresh (full setup), join
+  (additive-only — never clobbers AGENTS.md), or legacy (offers CLAUDE.md
+  migration). Triggers automatically at session start when the global
+  instructions detect a missing or incomplete setup. Can also be invoked
+  manually with /setup-repo. Use when the user says "set up this repo",
+  "initialize repo", "new client repo", "bootstrap repo", "I just joined this
+  project", or accepts the automatic prompt to configure a project.
 ---
 
 # Repo Setup
@@ -20,22 +22,74 @@ any agent used by any team member gets the same project context.
 
 ## Prerequisites
 
-Templates and settings must be installed at `~/.ai-toolkit/templates/`. If they're
-not found, tell the user to run the toolkit installer first.
+Templates and settings must be installed at `~/.ai-toolkit/templates/`. Before
+anything else, verify that directory exists:
+
+```bash
+[ -d "$HOME/.ai-toolkit/templates" ] && echo "ok" || echo "missing"
+```
+
+If it prints `missing`, Mindflayer is not installed on this machine. Stop and
+tell the user:
+
+> Mindflayer is not installed globally on this machine. Install it first:
+> `curl -sL https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh | bash -s -- --global`
+
+Do not try to continue without the templates — the fallback would produce a
+broken setup.
 
 ## Setup Workflow
 
-### Step 1: Check current state
+### Step 1: Detect repo state and branch
 
-Before doing anything, check what already exists in the repo:
+Before doing anything else, determine which of three states the repo is in:
 
-- Does `AGENTS.md` exist at the repo root?
-- Does `CLAUDE.md` exist at the repo root? (legacy — offer to migrate to AGENTS.md)
-- Does `.claude/settings.json` exist?
-- Does `docs/adr/` exist?
+1. **Mindflayer-managed already** — `AGENTS.md` exists AND contains a
+   `<!-- template: AGENTS-<profile> | version: ... -->` header comment.
+   → **Join mode** (additive only). Go to [Step 1a: Join mode](#step-1a-join-mode).
 
-If any exist, inform the user and ask whether to overwrite or skip each one.
-If a `CLAUDE.md` exists but no `AGENTS.md`, offer to rename it to `AGENTS.md`.
+2. **Legacy repo** — `CLAUDE.md` exists at the repo root but no `AGENTS.md`.
+   → Offer to rename `CLAUDE.md` → `AGENTS.md` first (ADR-0001 alignment),
+   then proceed as **fresh-setup mode**.
+
+3. **Fresh repo** — neither `AGENTS.md` nor `CLAUDE.md` exists.
+   → **Fresh-setup mode**. Go to [Step 2: Gather information](#step-2-gather-information).
+
+Picking the right branch is the whole reason this skill is safe to run on any
+repo. Do not skip it.
+
+### Step 1a: Join mode
+
+You are onboarding a new teammate to a repo that already has Mindflayer
+configured. The team-shared config (`AGENTS.md`, committed settings) is already
+correct — do not touch it.
+
+1. **Do not rewrite `AGENTS.md`.** It belongs to the team; re-running the
+   template generator would clobber client-filled placeholders.
+
+2. **Infer the profile** from the template header in `AGENTS.md`:
+   ```bash
+   sed -n 's/.*template: AGENTS-\([a-z-]*\).*/\1/p' ./AGENTS.md | head -1
+   ```
+
+3. **Detect the user's installed agents** (same as fresh mode — see Step 2.4).
+
+4. **For each selected agent, create only files that are missing.** Use
+   `safe_copy`-style logic: if a file exists and matches the template, leave
+   it; if it exists and is different, leave it (teammate customization); only
+   create files that are absent entirely. Never prompt for overwrite.
+
+5. **Skip client-info prompts.** The client name/prefix are already baked
+   into `AGENTS.md`.
+
+6. **Run the drift checker** at the end:
+   ```bash
+   bash ~/.ai-toolkit/check-template-update.sh
+   ```
+   Report any drift as an informational note. Do not auto-rewrite.
+
+7. **Print a "Joined" summary** listing which agent-specific files you
+   created (often none — which is a success, not a failure).
 
 ### Step 2: Gather information
 
@@ -160,10 +214,13 @@ No additional structure needed — Fabric repos are typically managed via Fabric
 
 ## Important
 
+- **Idempotency first.** Running `/setup-repo` twice on the same repo must be
+  safe. Join mode enforces this: never rewrites `AGENTS.md`, only adds missing
+  agent-specific files.
 - Never overwrite existing files without explicit confirmation
 - Always show what will be created before doing it
 - The AGENTS.md template version header must be preserved — it's used by the
-  update checker script
+  update checker script and by join-mode detection
 - Settings files should be committed to git (they're team-shared permissions)
 - `settings.local.json` and `CLAUDE.local.md` are gitignored (personal overrides)
 - AGENTS.md is the cross-tool standard; `.claude/settings.json` is Claude Code-specific

@@ -574,6 +574,29 @@ test_safety() {
     second_md="$(cat "$SANDBOX_HOME/.claude/CLAUDE.md")"
     assert_eq "idempotent global install" "$first_md" "$second_md"
     teardown_sandbox
+
+    # Join mode: existing Mindflayer-managed AGENTS.md is preserved without --force
+    setup_sandbox
+    (cd "$SANDBOX_PROJECT" && run_installer --project --tools claude --profile terraform --client OriginalCorp --prefix oc --force --local) >/dev/null 2>&1
+    # Simulate a new teammate running setup again (no --force) on the same repo
+    local before_agents
+    before_agents="$(cat "$SANDBOX_PROJECT/AGENTS.md")"
+    (cd "$SANDBOX_PROJECT" && run_installer --project --tools claude,cursor --profile terraform --client NewTeammate --prefix nt --local) >/dev/null 2>&1
+    local after_agents
+    after_agents="$(cat "$SANDBOX_PROJECT/AGENTS.md")"
+    assert_eq "join mode: AGENTS.md preserved (teammate re-run)" "$before_agents" "$after_agents"
+    assert_contains "join mode: original client preserved" "$after_agents" "OriginalCorp"
+    assert_not_contains "join mode: new teammate's client NOT injected" "$after_agents" "NewTeammate"
+    teardown_sandbox
+
+    # Join mode: additive — adds missing agent-specific file for new teammate
+    setup_sandbox
+    (cd "$SANDBOX_PROJECT" && run_installer --project --tools claude --profile terraform --client OriginalCorp --prefix oc --force --local) >/dev/null 2>&1
+    # New teammate uses Cursor too — the cursor file wasn't in the initial commit
+    [ ! -f "$SANDBOX_PROJECT/.cursor/rules/project.md" ] || rm -f "$SANDBOX_PROJECT/.cursor/rules/project.md"
+    (cd "$SANDBOX_PROJECT" && run_installer --project --tools claude,cursor --profile terraform --client Ignored --prefix x --local) >/dev/null 2>&1
+    assert_file_exists "join mode: cursor file added for new teammate" "$SANDBOX_PROJECT/.cursor/rules/project.md"
+    teardown_sandbox
 }
 
 # =============================================================================
