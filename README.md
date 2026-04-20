@@ -37,7 +37,7 @@ When you start a session, the agent loads global config + repo config + skills. 
 | Codex | `~/.codex/AGENTS.md` | `AGENTS.md` + `codex.md` | via SKILL.md standard |
 | Gemini CLI | `~/.gemini/GEMINI.md` | `AGENTS.md` | via SKILL.md standard |
 | Cursor | `~/.cursor/rules.md` | `AGENTS.md` | via SKILL.md standard |
-| Copilot | project-level only | `.github/copilot-instructions.md` -> `AGENTS.md` | via AGENTS.md |
+| Copilot | `~/.copilot/copilot-instructions.md` | `.github/copilot-instructions.md` -> `AGENTS.md` | via AGENTS.md |
 
 ## Installer Options
 

@@ -240,6 +240,7 @@ uninstall_global() {
     remove_file "$HOME/.codex/AGENTS.md"
     remove_file "$HOME/.gemini/GEMINI.md"
     remove_file "$HOME/.cursor/rules.md"
+    remove_file "$HOME/.copilot/copilot-instructions.md"
 }
 
 # --- Project uninstall -------------------------------------------------------

@@ -31,5 +31,10 @@ if [ -d ~/.cursor ]; then
     echo "Synced: ~/.cursor/rules.md"
 fi
 
+# GitHub Copilot CLI
+mkdir -p ~/.copilot
+cp "$SOURCE" ~/.copilot/copilot-instructions.md
+echo "Synced: ~/.copilot/copilot-instructions.md"
+
 echo ""
 echo "All agent tools updated."

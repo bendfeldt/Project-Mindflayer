@@ -432,7 +432,9 @@ install_global() {
                 ok "~/.cursor/rules.md"
                 ;;
             copilot)
-                info "  copilot: global config is project-level only (skipped)"
+                mkdir -p "$HOME/.copilot"
+                cp "$global_tmp" "$HOME/.copilot/copilot-instructions.md"
+                ok "~/.copilot/copilot-instructions.md"
                 ;;
         esac
     done

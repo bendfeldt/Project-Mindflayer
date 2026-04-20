@@ -404,6 +404,7 @@ test_global_install() {
     assert_file_exists "codex: AGENTS.md" "$SANDBOX_HOME/.codex/AGENTS.md"
     assert_file_exists "gemini: GEMINI.md" "$SANDBOX_HOME/.gemini/GEMINI.md"
     assert_file_exists "cursor: rules.md" "$SANDBOX_HOME/.cursor/rules.md"
+    assert_file_exists "copilot: global copilot-instructions.md" "$SANDBOX_HOME/.copilot/copilot-instructions.md"
 
     # Global config content validation — all agents get the same source content
     local claude_heading codex_heading
@@ -411,6 +412,9 @@ test_global_install() {
     assert_eq "claude CLAUDE.md has correct heading" "# Global Instructions" "$claude_heading"
     codex_heading="$(head -1 "$SANDBOX_HOME/.codex/AGENTS.md")"
     assert_eq "codex AGENTS.md has correct heading" "# Global Instructions" "$codex_heading"
+    local copilot_heading
+    copilot_heading="$(head -1 "$SANDBOX_HOME/.copilot/copilot-instructions.md")"
+    assert_eq "copilot global instructions has correct heading" "# Global Instructions" "$copilot_heading"
 
     # Hard Rules section enforced in global config
     local claude_body
