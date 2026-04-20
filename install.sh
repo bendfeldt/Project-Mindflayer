@@ -318,6 +318,7 @@ SKILL_FILES=(
     "skills/adr/SKILL.md"
     "skills/branch-cleanup/SKILL.md"
     "skills/kimball-model/SKILL.md"
+    "skills/promote-adr/SKILL.md"
     "skills/setup-repo/SKILL.md"
     "skills/smart-commit/SKILL.md"
     "skills/smart-pr/SKILL.md"

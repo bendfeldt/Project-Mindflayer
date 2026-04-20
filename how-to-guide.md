@@ -13,7 +13,7 @@ This toolkit gives you a portable AI coding assistant setup that works across al
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | Global CLAUDE.md | `~/.claude/CLAUDE.md` | Your identity, standards, stack preferences |
-| Skills (4) | `~/.ai-toolkit/skills/` | ADR, Terraform scaffold, Kimball modeling, Setup repo |
+| Skills (8) | `~/.ai-toolkit/skills/` | ADR, Terraform scaffold, Kimball modeling, Setup repo, Smart commit, Smart PR, Branch cleanup, Promote ADR |
 | Reference docs | `~/.ai-toolkit/docs/` | Quick-reference for Terraform + Kimball |
 | Repo templates (4) | `~/.ai-toolkit/templates/` | Starter AGENTS.md for each repo type |
 | Update checker | `~/.ai-toolkit/check-template-update.sh` | Diff repo files against templates |
@@ -101,7 +101,7 @@ The file at `~/.claude/CLAUDE.md` loads automatically at the start of every Clau
 
 ## 4. Skills
 
-Seven skills are installed globally and available in every session. They can be invoked explicitly with a slash command, or the agent picks them up automatically based on your conversation.
+Eight skills are installed globally and available in every session. They can be invoked explicitly with a slash command, or the agent picks them up automatically based on your conversation.
 
 ### 4.1 ADR — `/adr`
 
@@ -186,6 +186,19 @@ Prunes stale local branches whose remote tracking branch has been deleted from o
 ```
 
 The skill runs `git fetch --prune`, identifies branches showing `: gone]` in tracking status, and deletes them with `git branch -d` (safe — refuses unmerged branches). Protected branches (main, master, develop, current branch) are never touched.
+
+### 4.7 Promote ADR — `/promote-adr`
+
+Lift a client-repo ADR into the Project-Mindflayer toolkit as a global standard so it applies to every future engagement. Use when a decision you made in one project turns out to be broadly reusable.
+
+```
+"promote this ADR"
+"elevate this decision to the toolkit"
+"/promote-adr"
+"this should be a global ADR"
+```
+
+The skill reviews the source ADR for client-specific markers (names, paths, compliance scope), generalizes the language, assigns the next toolkit ADR number, and writes it to `~/repos/Bendfeldt/Project-Mindflayer/docs/decisions/`. It never auto-commits — it hands off to `/commit` in each repo. It also offers to replace the source ADR with a pointer to the canonical toolkit version.
 
 ---
 
