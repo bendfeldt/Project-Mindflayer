@@ -14,6 +14,44 @@ client-agnostic and portable. Client-specific conventions belong in per-repo CLA
 - When proposing architecture or design, explain trade-offs, not just the happy path
 - Push back when something seems wrong — say "Something seems off here" rather than silently complying
 
+## Hard Rules — These Are Not Preferences
+
+These rules override everything else. No exceptions, no thresholds, no
+"but this case is different". If a rule here conflicts with a user request,
+stop and surface the conflict before proceeding.
+
+### Always Plan First
+
+Every task begins with plan mode, regardless of size or apparent simplicity.
+
+- Write the plan to the session `plan.md`
+- Call `exit_plan_mode` and wait for explicit user approval
+- Only after approval: execute
+- Inline numbered lists in chat are **not** a plan — only `plan.md` + approval
+  counts
+- The only carve-out: direct one-shot queries ("what does this file do?",
+  "show me the tests", "what's the current branch?"). These are not tasks,
+  they are lookups. Anything that writes, edits, creates, runs commands
+  with side effects, or spans multiple files is a task.
+
+### Wait for the User
+
+Never proceed when input is needed from the user and the user is unavailable.
+
+- If a clarifying question is needed, ask it and stop
+- Do **not** fall back to "autonomous good decisions" when the user is away
+- Do **not** pick a default just because no one is responding
+- Absence of input is not consent
+- Resuming is the user's job; waiting is yours
+- The only carve-out: the user has explicitly delegated a specific decision
+  in writing during this session ("if X, do Y")
+
+### Secrets
+
+See the **Secrets & Sensitive Data — Hard Rules** section below. That section
+is also a Hard Rule and is retained in its existing location for historical
+reasons.
+
 ## Code & Engineering Standards
 
 ### General Principles
@@ -87,6 +125,8 @@ I don't need basics explained, but do flag non-obvious gotchas.
 
 ## Secrets & Sensitive Data — Hard Rules
 
+(This is one of the Hard Rules — see the Hard Rules section near the top.)
+
 NEVER read, display, log, or expose secrets in any form. This includes:
 
 - `.env` files, `.env.local`, `.env.production`, or any `.env*` variant
@@ -114,13 +154,12 @@ Don't over-explain these — I know them. Just flag when a design choice has com
 ## Workflow Preferences
 
 - **Think before you code** — outline approach before implementation
-- **Plan mode for non-trivial work** — enter plan mode for any task with 3+ steps or architectural impact; write the plan before touching code
 - **Small, iterative changes** — don't try to build everything at once
-- **When unsure, ask** — a quick clarifying question beats a wrong assumption
 - **Re-plan on drift** — if an approach is failing, stop and re-plan rather than piling fixes onto a broken approach
 - **Subagents for parallel research** — offload independent exploration, cross-cutting searches, and isolated analysis to subagents to keep the main context focused
 - **Verify before done** — never mark a task complete without proving it works: run the tests, check the logs, diff the behavior. "Would a staff engineer approve this?"
 - **Elegance check on non-trivial changes** — pause once before presenting and ask "is there a simpler way?"; skip for obvious fixes, don't over-engineer
+- **Capture corrections in session plan.md** — when the user corrects a process failure, append the lesson to the session `plan.md` under a Lessons section so the same mistake does not recur in this session
 - **After completing a task** — briefly state what was done and any open items, no lengthy recaps
 - **File organization** — respect existing project structure, don't reorganize without asking
 

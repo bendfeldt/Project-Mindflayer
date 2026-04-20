@@ -412,6 +412,13 @@ test_global_install() {
     codex_heading="$(head -1 "$SANDBOX_HOME/.codex/AGENTS.md")"
     assert_eq "codex AGENTS.md has correct heading" "# Global Instructions" "$codex_heading"
 
+    # Hard Rules section enforced in global config
+    local claude_body
+    claude_body="$(cat "$SANDBOX_HOME/.claude/CLAUDE.md")"
+    assert_contains "global config: Hard Rules section" "$claude_body" "Hard Rules"
+    assert_contains "global config: Always Plan First rule" "$claude_body" "Always Plan First"
+    assert_contains "global config: Wait for the User rule" "$claude_body" "Wait for the User"
+
     # Codex + copilot templates (in ~/.ai-toolkit/)
     assert_file_exists "codex: config.toml" "$SANDBOX_HOME/.ai-toolkit/templates/codex/config.toml"
     assert_file_exists "codex: codex.md" "$SANDBOX_HOME/.ai-toolkit/templates/codex/codex.md"
