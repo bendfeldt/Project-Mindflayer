@@ -332,6 +332,12 @@ test_global_install() {
     local cleanup_content
     cleanup_content="$(head -3 "$SANDBOX_HOME/.ai-toolkit/skills/branch-cleanup/SKILL.md")"
     assert_contains "skill content: branch-cleanup has frontmatter" "$cleanup_content" "name: branch-cleanup"
+
+    # Regression: protected-branch list and multi-remote fetch
+    local cleanup_full
+    cleanup_full="$(cat "$SANDBOX_HOME/.ai-toolkit/skills/branch-cleanup/SKILL.md")"
+    assert_contains "skill: branch-cleanup protects develop" "$cleanup_full" "\`develop\`"
+    assert_contains "skill: branch-cleanup fetches all remotes" "$cleanup_full" "git fetch --all --prune"
     local promote_content
     promote_content="$(head -3 "$SANDBOX_HOME/.ai-toolkit/skills/promote-adr/SKILL.md")"
     assert_contains "skill content: promote-adr has frontmatter" "$promote_content" "name: promote-adr"

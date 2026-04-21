@@ -18,7 +18,7 @@ deletes local branches — it never modifies or deletes anything on the remote.
 Follow these steps every time:
 
 1. **Fetch and prune remote tracking branches**
-   - Run `git fetch --prune origin` — updates remote refs, removes tracking branches for deleted remote branches
+   - Run `git fetch --all --prune` — updates refs from all remotes, removes tracking branches for deleted remote branches
    - Run `git branch -vv` — show all local branches with their tracking status
 
 2. **Identify stale branches**
@@ -63,6 +63,7 @@ These branches are always protected and never deleted, regardless of tracking st
 
 - `main`
 - `master`
+- `develop`
 - `development`
 - `release/*` and `releases/*` — any branch under these folders (e.g., `release/1.0`, `releases/2024-Q1`)
 - The currently checked-out branch
