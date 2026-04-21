@@ -344,12 +344,21 @@ DECISION_FILES=(
     "docs/decisions/0008-role-playing-dimension-fk-naming.md"
     "docs/decisions/0009-five-layer-data-architecture.md"
     "docs/decisions/0010-lowercase-snake-case-naming.md"
+    "docs/decisions/0011-tech-stack-conventions-as-adrs.md"
+    "docs/decisions/platform/0011-safety-rules-for-all-agents.md"
+    "docs/decisions/platform/0012-fabric-medallion-layers.md"
+    "docs/decisions/platform/0013-fabric-semantic-model-design.md"
+    "docs/decisions/platform/0014-fabric-git-integration-policy.md"
+    "docs/decisions/platform/0015-fabric-adr-triggers.md"
+    "docs/decisions/platform/0016-databricks-unity-catalog-structure.md"
+    "docs/decisions/platform/0017-databricks-compute-defaults.md"
+    "docs/decisions/platform/0018-databricks-adr-triggers.md"
+    "docs/decisions/platform/0019-terraform-module-structure.md"
+    "docs/decisions/platform/0020-terraform-adr-triggers.md"
 )
 
 TEMPLATE_FILES=(
-    "templates/AGENTS-terraform.md"
-    "templates/AGENTS-databricks.md"
-    "templates/AGENTS-fabric.md"
+    "templates/AGENTS.md"
 )
 
 CLAUDE_SETTINGS_FILES=(
@@ -713,11 +722,18 @@ install_project() {
         info "${BOLD}Detected existing Mindflayer-managed repo${RESET} — join mode."
         info "AGENTS.md will be preserved. Only your agent-specific files will be added."
         info ""
-        # Infer profile from AGENTS.md template header so we don't need
-        # to ask the joining teammate for client details.
+        # Infer profile from AGENTS.md body (the **platform:** line).
+        # Before v2.0.0 the template name encoded the platform (e.g. AGENTS-fabric);
+        # from v2.0.0 there is a single AGENTS.md template and platform lives in the body.
+        # Try the body-line approach first, then fall back to the legacy header for
+        # backwards compatibility with v1 repos.
         if [ -z "${PROFILE:-}" ]; then
             local inferred
-            inferred="$(sed -n 's/.*template: AGENTS-\([a-z-]*\).*/\1/p' ./AGENTS.md | head -1)"
+            inferred="$(sed -n 's/^[[:space:]]*-[[:space:]]*\*\*platform:\*\*[[:space:]]*\([a-z0-9-]*\).*/\1/p' ./AGENTS.md | head -1)"
+            if [ -z "$inferred" ]; then
+                # Legacy v1 fallback: platform encoded in header comment as AGENTS-<platform>
+                inferred="$(sed -n 's/.*template: AGENTS-\([a-z-]*\).*/\1/p' ./AGENTS.md | head -1)"
+            fi
             if [ -n "$inferred" ]; then
                 PROFILE="$inferred"
                 info "  Inferred profile from AGENTS.md: ${BOLD}${PROFILE}${RESET}"
@@ -739,13 +755,10 @@ install_project() {
     if [ "$JOIN_MODE" = "1" ]; then
         ok "AGENTS.md (preserved — join mode)"
     else
-        template_tmp="$(fetch_to_tmp "templates/AGENTS-${PROFILE}.md")"
+        template_tmp="$(fetch_to_tmp "templates/AGENTS.md")"
 
         if [ -f "./AGENTS.md" ] && [ "$FORCE" != "1" ]; then
             # Safe default: preserve existing AGENTS.md unless --force.
-            # Previously this prompted "overwrite? [y/N]" which was a
-            # footgun — a casual 'y' clobbered a teammate's filled
-            # template. Now require explicit --force to overwrite.
             warn "AGENTS.md exists — preserved. Use --force to overwrite."
             template_tmp=""
         fi
@@ -756,9 +769,61 @@ install_project() {
         local safe_name safe_prefix
         safe_name="$(printf '%s' "$CLIENT_NAME" | sed 's/[&/\]/\\&/g')"
         safe_prefix="$(printf '%s' "$CLIENT_PREFIX" | sed 's/[&/\]/\\&/g')"
-        sed "s/{CLIENT_NAME}/${safe_name}/g; s/{prefix}/${safe_prefix}/g" \
-            "$template_tmp" > ./AGENTS.md
-        ok "AGENTS.md (from ${PROFILE} template)"
+
+        # Per-platform repo_type
+        local repo_type
+        case "$PROFILE" in
+            fabric|databricks) repo_type="data-platform" ;;
+            terraform)         repo_type="infrastructure" ;;
+            *)                 repo_type="unknown" ;;
+        esac
+
+        # Per-platform ADR list — injected into {ADR_LIST}
+        # Uses a newline-delimited list rendered with awk to avoid sed newline issues.
+        local adr_list
+        case "$PROFILE" in
+            fabric)
+                adr_list="- ADR-0012: Fabric Medallion Layers
+- ADR-0013: Fabric Semantic Model Design
+- ADR-0014: Fabric Git Integration Policy
+- ADR-0015: Fabric ADR Triggers"
+                ;;
+            databricks)
+                adr_list="- ADR-0016: Databricks Unity Catalog Structure
+- ADR-0017: Databricks Compute Defaults
+- ADR-0018: Databricks ADR Triggers"
+                ;;
+            terraform)
+                adr_list="- ADR-0019: Terraform Module Structure
+- ADR-0020: Terraform ADR Triggers"
+                ;;
+            *)
+                adr_list="- (no platform ADRs registered for profile '${PROFILE}')"
+                ;;
+        esac
+
+        # Substitute identity tokens first via sed, then inject ADR list via awk.
+        # awk's -v cannot safely carry newlines; write the ADR list to a temp
+        # file and have awk splice it in at the {ADR_LIST} marker.
+        local adr_list_file
+        adr_list_file="$(mktemp)"
+        printf '%s\n' "$adr_list" > "$adr_list_file"
+
+        sed "s/{CLIENT_NAME}/${safe_name}/g; s/{PLATFORM}/${PROFILE}/g; s/{REPO_TYPE}/${repo_type}/g; s/{prefix}/${safe_prefix}/g" \
+            "$template_tmp" | \
+        awk -v listfile="$adr_list_file" '
+            BEGIN {
+                list = ""
+                while ((getline line < listfile) > 0) {
+                    list = list (list == "" ? "" : "\n") line
+                }
+                close(listfile)
+            }
+            /\{ADR_LIST\}/ { print list; next }
+            { print }
+        ' > ./AGENTS.md
+        rm -f "$adr_list_file"
+        ok "AGENTS.md (universal template, profile: ${PROFILE})"
     fi
 
     # --- Tool-specific project configs ---

@@ -51,8 +51,10 @@ Project-Mindflayer (this repo)
 ├── settings/claude/*.json  ──▶  ~/.claude/settings.json         (global permissions, if claude selected)
 │                           ──▶  .claude/settings.json           (per-repo permissions)
 │
-├── templates/AGENTS-*.md   ──▶  ~/.ai-toolkit/templates/        (repo templates, always)
+├── templates/AGENTS.md      ──▶  ~/.ai-toolkit/templates/        (repo template, always)
 │                           ──▶  ./AGENTS.md                     (repo layer, per client)
+│
+├── docs/decisions/platform/ ──▶  ~/.ai-toolkit/docs/decisions/platform/ (platform conventions as ADRs)
 │
 ├── settings/codex/         ──▶  ~/.ai-toolkit/templates/codex/  (if codex selected)
 │
@@ -106,14 +108,24 @@ and platform context are expressed there rather than in tool-specific files.
 
 ## Platform Profiles
 
-Three platform profiles, each with a thin `AGENTS-*.md` template (~70 lines) and matching
-`settings-*.json`:
+Three platform profiles, each with matching `settings-*.json`:
 
 | Profile | Use case | Key auto-approved commands |
 |---|---|---|
 | `terraform` | IaC repos | `init`, `validate`, `fmt`, `plan` |
 | `databricks` | Databricks repos | `bundle validate`, `workspace list` |
 | `fabric` | Microsoft Fabric repos | `pytest`, `ruff`, `az account show` |
+
+### Platform Conventions as ADRs (v2.0.0)
+
+Platform-specific conventions (Fabric medallion layers, Databricks Unity Catalog structure, Terraform module structure, etc.) are expressed as ADRs in `docs/decisions/platform/`:
+
+- **0011**: Safety rules (cross-platform)
+- **0012-0015**: Fabric conventions
+- **0016-0018**: Databricks conventions
+- **0019-0020**: Terraform conventions
+
+The universal `templates/AGENTS.md` (v2.0.0) is installed with a platform-specific ADR list injected by `install.sh`. Legacy v1 repos (with per-platform templates) are still supported but deprecated.
 
 ---
 
@@ -127,10 +139,10 @@ Three platform profiles, each with a thin `AGENTS-*.md` template (~70 lines) and
 
 ## Template Versioning
 
-Each `AGENTS-*.md` template carries an HTML comment header:
+The universal `AGENTS.md` template carries an HTML comment header:
 
 ```
-<!-- template: AGENTS-fabric | version: 1.0.0 | updated: 2026-03-24 -->
+<!-- template: AGENTS | version: 2.0.0 | updated: 2026-03-30 -->
 ```
 
 `tools/check-template-update.sh` compares the installed template's version against the

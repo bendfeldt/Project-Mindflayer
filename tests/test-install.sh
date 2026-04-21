@@ -74,6 +74,18 @@ assert_file_exists() {
     fi
 }
 
+assert_not_exists() {
+    local description="$1" filepath="$2"
+    if [ ! -e "$filepath" ]; then
+        PASS=$((PASS + 1))
+        printf "  \033[32mPASS\033[0m %s\n" "$description"
+    else
+        FAIL=$((FAIL + 1))
+        FAILURES+=("[$CURRENT_GROUP] $description ($filepath unexpectedly exists)")
+        printf "  \033[31mFAIL\033[0m %s (%s unexpectedly exists)\n" "$description" "$filepath"
+    fi
+}
+
 assert_executable() {
     local description="$1" filepath="$2"
     if [ -x "$filepath" ]; then
@@ -222,7 +234,7 @@ test_manifests() {
             [ "$m" = "$rel" ] && found=1 && break
         done
         assert_eq "template in manifest: $rel" "1" "$found"
-    done < <(find "$REPO_ROOT/templates" -name "AGENTS-*.md" 2>/dev/null)
+    done < <(find "$REPO_ROOT/templates" -name "AGENTS*.md" 2>/dev/null)
 }
 
 # =============================================================================
@@ -358,10 +370,20 @@ test_global_install() {
     assert_file_exists "doc: terraform-patterns" "$SANDBOX_HOME/.ai-toolkit/docs/terraform-patterns.md"
     assert_file_exists "doc: kimball-reference" "$SANDBOX_HOME/.ai-toolkit/docs/kimball-reference.md"
 
-    # Templates (in ~/.ai-toolkit/)
-    assert_file_exists "template: terraform" "$SANDBOX_HOME/.ai-toolkit/templates/AGENTS-terraform.md"
-    assert_file_exists "template: databricks" "$SANDBOX_HOME/.ai-toolkit/templates/AGENTS-databricks.md"
-    assert_file_exists "template: fabric" "$SANDBOX_HOME/.ai-toolkit/templates/AGENTS-fabric.md"
+    # Templates (in ~/.ai-toolkit/) — v2.0.0: one universal template
+    assert_file_exists "template: universal AGENTS.md" "$SANDBOX_HOME/.ai-toolkit/templates/AGENTS.md"
+    assert_not_exists "template: no legacy AGENTS-terraform.md" "$SANDBOX_HOME/.ai-toolkit/templates/AGENTS-terraform.md"
+    assert_not_exists "template: no legacy AGENTS-databricks.md" "$SANDBOX_HOME/.ai-toolkit/templates/AGENTS-databricks.md"
+    assert_not_exists "template: no legacy AGENTS-fabric.md" "$SANDBOX_HOME/.ai-toolkit/templates/AGENTS-fabric.md"
+
+    # Platform ADRs (in ~/.ai-toolkit/docs/decisions/platform/)
+    assert_file_exists "platform ADR: 0011 safety" "$SANDBOX_HOME/.ai-toolkit/docs/decisions/platform/0011-safety-rules-for-all-agents.md"
+    assert_file_exists "platform ADR: 0012 fabric medallion" "$SANDBOX_HOME/.ai-toolkit/docs/decisions/platform/0012-fabric-medallion-layers.md"
+    assert_file_exists "platform ADR: 0016 databricks uc" "$SANDBOX_HOME/.ai-toolkit/docs/decisions/platform/0016-databricks-unity-catalog-structure.md"
+    assert_file_exists "platform ADR: 0019 terraform modules" "$SANDBOX_HOME/.ai-toolkit/docs/decisions/platform/0019-terraform-module-structure.md"
+
+    # Toolkit meta-ADR for the refactor
+    assert_file_exists "toolkit ADR: 0011 tech-stack as ADRs" "$SANDBOX_HOME/.ai-toolkit/docs/decisions/0011-tech-stack-conventions-as-adrs.md"
 
     # Settings templates (in ~/.ai-toolkit/)
     assert_file_exists "settings tmpl: terraform" "$SANDBOX_HOME/.ai-toolkit/templates/settings/settings-terraform.json"
@@ -603,6 +625,36 @@ test_safety() {
     (cd "$SANDBOX_PROJECT" && run_installer --project --tools claude,cursor --profile terraform --client Ignored --prefix x --local) >/dev/null 2>&1
     assert_file_exists "join mode: cursor file added for new teammate" "$SANDBOX_PROJECT/.cursor/rules/project.md"
     teardown_sandbox
+
+    # Join mode: legacy v1 header fallback — old repo with AGENTS-fabric header
+    # should still have its platform inferred (backwards compatibility).
+    setup_sandbox
+    cat > "$SANDBOX_PROJECT/AGENTS.md" <<'LEGACY_AGENTS'
+# Project Instructions
+
+<!-- template: AGENTS-fabric | version: 1.0.0 | updated: 2026-03-24 -->
+
+## Repo Identity
+- **client:** LegacyCorp
+- **platform:** microsoft-fabric
+
+LEGACY_AGENTS
+    # No --profile passed on purpose — installer must infer it from header
+    local legacy_out
+    legacy_out="$(cd "$SANDBOX_PROJECT" && run_installer --project --tools claude --client LegacyCorp --prefix lc --local 2>&1)"
+    assert_contains "join mode: legacy v1 header inferred as fabric" "$legacy_out" "fabric"
+    # AGENTS.md must still be preserved (join mode)
+    assert_contains "join mode: legacy AGENTS.md preserved" "$(cat "$SANDBOX_PROJECT/AGENTS.md")" "template: AGENTS-fabric"
+    teardown_sandbox
+
+    # Join mode: v2 body **platform:** inference
+    setup_sandbox
+    (cd "$SANDBOX_PROJECT" && run_installer --project --tools claude --profile fabric --client FabricCorp --prefix fc --force --local) >/dev/null 2>&1
+    # Re-run without --profile — installer must infer from body **platform:** line
+    local v2_out
+    v2_out="$(cd "$SANDBOX_PROJECT" && run_installer --project --tools claude,cursor --client Ignored --prefix x --local 2>&1)"
+    assert_contains "join mode: v2 body platform inferred as fabric" "$v2_out" "fabric"
+    teardown_sandbox
 }
 
 # =============================================================================
@@ -627,25 +679,31 @@ test_edge_cases() {
     fi
     teardown_sandbox
 
-    # Template version header parsing (same sed as check-template-update.sh)
+    # Template version header parsing (v2.0.0: universal template, no platform suffix)
     setup_sandbox
     mkdir -p "$SANDBOX_HOME/.claude/docs/repo-templates"
-    cp "$REPO_ROOT/templates/AGENTS-terraform.md" "$SANDBOX_HOME/.claude/docs/repo-templates/AGENTS-terraform.md"
+    cp "$REPO_ROOT/templates/AGENTS.md" "$SANDBOX_HOME/.claude/docs/repo-templates/AGENTS.md"
     (cd "$SANDBOX_PROJECT" && run_installer --project --tools claude --profile terraform --client X --prefix x --force --local) >/dev/null 2>&1
 
     if [ -f "$SANDBOX_PROJECT/AGENTS.md" ]; then
         local tmpl_name
         tmpl_name="$(sed -n 's/.*template: \([^ |]*\).*/\1/p' "$SANDBOX_PROJECT/AGENTS.md" | head -1)"
-        assert_eq "version header: template name" "AGENTS-terraform" "$tmpl_name"
+        assert_eq "version header: template name (v2)" "AGENTS" "$tmpl_name"
 
         local tmpl_version
         tmpl_version="$(sed -n 's/.*version: \([^ |]*\).*/\1/p' "$SANDBOX_PROJECT/AGENTS.md" | head -1)"
-        if [ -n "$tmpl_version" ]; then
-            PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m version header: version non-empty (%s)\n" "$tmpl_version"
-        else
-            FAIL=$((FAIL + 1)); FAILURES+=("[$CURRENT_GROUP] version header: version is empty")
-            printf "  \033[31mFAIL\033[0m version header: version is empty\n"
-        fi
+        assert_eq "version header: version is 2.0.0" "2.0.0" "$tmpl_version"
+
+        # v2: platform is in the **platform:** body line (not the header suffix)
+        local platform_line
+        platform_line="$(sed -n 's/^[[:space:]]*-[[:space:]]*\*\*platform:\*\*[[:space:]]*\([a-z0-9-]*\).*/\1/p' "$SANDBOX_PROJECT/AGENTS.md" | head -1)"
+        assert_eq "v2: platform in body" "terraform" "$platform_line"
+
+        # v2: ADR list injected for profile
+        local content
+        content="$(cat "$SANDBOX_PROJECT/AGENTS.md")"
+        assert_contains "v2: terraform ADRs injected" "$content" "ADR-0019"
+        assert_contains "v2: safety ADR referenced" "$content" "ADR-0011"
     fi
     teardown_sandbox
 }

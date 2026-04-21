@@ -22,11 +22,11 @@ any agent used by any team member gets the same project context.
 
 ## Prerequisites
 
-Templates and settings must be installed at `~/.ai-toolkit/templates/`. Before
-anything else, verify that directory exists:
+The universal template must be installed at `~/.ai-toolkit/templates/AGENTS.md`.
+Before anything else, verify it exists:
 
 ```bash
-[ -d "$HOME/.ai-toolkit/templates" ] && echo "ok" || echo "missing"
+[ -f "$HOME/.ai-toolkit/templates/AGENTS.md" ] && echo "ok" || echo "missing"
 ```
 
 If it prints `missing`, Mindflayer is not installed on this machine. Stop and
@@ -45,7 +45,7 @@ broken setup.
 Before doing anything else, determine which of three states the repo is in:
 
 1. **Mindflayer-managed already** — `AGENTS.md` exists AND contains a
-   `<!-- template: AGENTS-<profile> | version: ... -->` header comment.
+   `<!-- template: AGENTS | version: ... -->` header comment.
    → **Join mode** (additive only). Go to [Step 1a: Join mode](#step-1a-join-mode).
 
 2. **Legacy repo** — `CLAUDE.md` exists at the repo root but no `AGENTS.md`.
@@ -67,10 +67,11 @@ correct — do not touch it.
 1. **Do not rewrite `AGENTS.md`.** It belongs to the team; re-running the
    template generator would clobber client-filled placeholders.
 
-2. **Infer the profile** from the template header in `AGENTS.md`:
+2. **Infer the platform** from the `**platform:**` line in `AGENTS.md`:
    ```bash
-   sed -n 's/.*template: AGENTS-\([a-z-]*\).*/\1/p' ./AGENTS.md | head -1
+   grep -i '^**platform:**' ./AGENTS.md | sed 's/.*: *\([a-z-]*\).*/\1/'
    ```
+   (Legacy repos with `<!-- template: AGENTS-<platform> -->` header can use that as fallback.)
 
 3. **Detect the user's installed agents** (same as fresh mode — see Step 2.4).
 
@@ -107,6 +108,10 @@ Ask the user for:
 If the user provided this information in their initial request (e.g., "set up this repo
 for PostNord Fabric"), don't ask again — extract it from the request.
 
+**Note:** Platform-specific conventions (Fabric medallion layers, Databricks Unity Catalog
+structure, Terraform module patterns, safety rules, etc.) are documented in ADRs at
+`~/.ai-toolkit/docs/decisions/platform/`. Point new users there for platform guidance.
+
 4. **Detect installed agents** — run `command -v` checks to find what's available:
    - `claude` → `command -v claude`
    - `codex` → `command -v codex`
@@ -127,61 +132,61 @@ for PostNord Fabric"), don't ask again — extract it from the request.
    ```
    Let the user add or remove agents before proceeding.
 
-### Step 3: Copy and customize templates
+### Step 3: Run the installer
 
-1. **Copy the AGENTS.md template** from `~/.ai-toolkit/templates/AGENTS-{platform}.md`
-   to `./AGENTS.md` at the repo root.
+The installer handles template substitution, placeholder filling, and ADR injection.
+**Do not manually copy or edit templates** — let `install.sh` do it.
 
-2. **Fill in known placeholders:**
-   - Replace `{CLIENT_NAME}` with the client name
-   - Replace `{prefix}` with the client prefix
-   - Replace `{ClientPrefix}` with the prefix in PascalCase (for Fabric workspace naming)
-   - Leave other placeholders like `{subscription_name_or_id}`, `{state_storage_account_name}`,
-     `{connection_name}` as-is with a comment: `<!-- TODO: fill in -->`
+Run:
 
-3. **Create tool-specific config directories and files** — only for selected agents:
+```bash
+bash ~/.ai-toolkit/install.sh --project --profile <platform> --client "<client_name>" --prefix <prefix>
+```
 
-   **Claude Code** (always included — we're running inside Claude Code):
-   - Create `.claude/` directory
-   - Copy `~/.ai-toolkit/templates/settings/settings-{platform}.json` to `./.claude/settings.json`
+Where:
+- `<platform>` is `terraform`, `databricks`, or `microsoft-fabric`
+- `<client_name>` is the client name (quoted if it contains spaces)
+- `<prefix>` is the short lowercase prefix
 
-   **Codex CLI** (only if `codex` selected):
-   - Copy `~/.ai-toolkit/templates/codex/codex.md` to `./codex.md`
+Example:
+```bash
+bash ~/.ai-toolkit/install.sh --project --profile microsoft-fabric --client "PostNord" --prefix pn
+```
 
-   **GitHub Copilot** (only if `copilot` selected):
-   - Create `.github/` directory
-   - Create `.github/copilot-instructions.md` as a symlink to `../AGENTS.md`
-     (or copy `~/.ai-toolkit/templates/copilot/copilot-instructions.md` if
-     symlinks are problematic on the team's OS)
+The installer will:
+- Copy `AGENTS.md` from the universal template
+- Substitute `{CLIENT_NAME}`, `{PLATFORM}`, `{prefix}` placeholders
+- Inject the platform-specific ADR list into the `{ADR_LIST}` placeholder
+- Leave unfilled placeholders (like `{subscription_name_or_id}`) as TODOs
 
-   **Gemini CLI** (only if `gemini` selected):
-   - Copy `~/.ai-toolkit/templates/gemini/gemini.md` to `./gemini.md`
+The installer also creates:
+- `.claude/settings.json` (Claude Code permissions)
+- Tool-specific config files for selected agents (Codex, Copilot, Gemini, Cursor)
+- `docs/adr/` directory for Architecture Decision Records
+- `.gitignore` entries for local overrides
 
-   **Cursor** (only if `cursor` selected):
-   - Create `.cursor/rules/` directory
-   - Copy `~/.ai-toolkit/templates/cursor/cursor.md` to `./.cursor/rules/project.md`
+### Step 4: Detect installed agents and configure
 
-4. **Create `docs/adr/` directory** for Architecture Decision Records.
+After the installer completes, detect which agents the user has installed (Step 2.4 above)
+and offer to run the installer again for any agents not yet configured.
 
-5. **Create `.gitignore` entries** (append if `.gitignore` exists, create if not):
-   - `.claude/settings.local.json`
-   - `CLAUDE.local.md`
+### Step 5: Report what was created
 
-### Step 4: Report what was created
-
-After setup, show a summary listing only the files that were actually created:
+After setup, show a summary listing the files created by the installer:
 
 ```
 Repo initialized for {client_name} ({platform}):
 
   AGENTS.md                          ← project instructions — all agents read this (commit)
   .claude/settings.json              ← Claude Code permissions (commit)
-  {per-agent files created above}
+  {per-agent files created}
   docs/adr/                          ← architecture decision records
   .gitignore                         ← updated
 
 Remaining TODOs in AGENTS.md:
   - {list any unfilled placeholders}
+
+Platform guidance: ~/.ai-toolkit/docs/decisions/platform/
 
 Next steps:
   - Fill in the TODOs in AGENTS.md

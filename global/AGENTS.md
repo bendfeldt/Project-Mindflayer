@@ -127,17 +127,12 @@ I don't need basics explained, but do flag non-obvious gotchas.
 
 (This is one of the Hard Rules — see the Hard Rules section near the top.)
 
-NEVER read, display, log, or expose secrets in any form. This includes:
+The canonical, universal safety rules for all agents live in
+**ADR-0011: Safety Rules for All Agents**
+(`~/.ai-toolkit/docs/decisions/platform/0011-safety-rules-for-all-agents.md`).
 
-- `.env` files, `.env.local`, `.env.production`, or any `.env*` variant
-- `*.tfvars` files (may contain secrets)
-- Files named `secret*`, `credential*`, `token*`
-- Private keys (`.pem`, `.key`, `.pfx`, `.p12`)
-- `.netrc`, `.pgpass`, or any authentication config
-- Environment variables containing SECRET, TOKEN, KEY, PASSWORD, or CREDENTIAL
-
-If you need to verify a secret exists, check for the file or variable name — never output its value.
-When writing code that uses secrets, always reference vault lookups or environment variables, never literal values.
+Every repo's `AGENTS.md` references the same ADR. There is no separate inline
+list here — read the ADR.
 
 ## Compliance & Regulatory Context
 

@@ -9,7 +9,7 @@ Project-Mindflayer is a distribution toolkit that installs portable AI coding as
 ### Three-Layer Configuration Model
 
 1. **Global** (`global/AGENTS.md`) — installed to each agent's config directory (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, etc.). Contains personal identity, coding standards, stack preferences.
-2. **Repo** (`templates/AGENTS-*.md`) — thin templates (~70 lines) installed as `./AGENTS.md` in client repos. Contains only client-specific: name, platform, build commands, branching.
+2. **Repo** (`templates/AGENTS.md`) — thin template (~70 lines) installed as `./AGENTS.md` in client repos. Contains only client-specific: name, platform, build commands, branching. Platform conventions (ADR list) injected by installer.
 3. **Skills** (`skills/*/SKILL.md`) — reusable capabilities using the cross-platform `SKILL.md` open standard. Installed to `~/.ai-toolkit/skills/` (all agents) and `~/.claude/skills/` (Claude only).
 
 ### Distribution Flow
@@ -23,7 +23,8 @@ Files in `skills/`, `templates/`, `settings/`, and `docs/` are *distribution sou
 ### Key Design Patterns
 
 - **AGENTS.md** is the universal repo instruction file read by all agents. Safety rules and platform context live here, not in tool-specific files.
-- **Template versioning**: templates carry HTML comment version headers (`<!-- template: AGENTS-fabric | version: 1.0.0 -->`). `tools/check-template-update.sh` detects drift between installed and source versions.
+- **Template versioning**: templates carry HTML comment version headers (`<!-- template: AGENTS | version: 2.0.0 -->`). `tools/check-template-update.sh` detects drift between installed and source versions.
+- **Platform conventions as ADRs**: since v2.0.0, platform-specific guidance lives as ADRs in `docs/decisions/platform/` (injected into `AGENTS.md` by the installer).
 - **File manifests**: `install.sh` uses hardcoded arrays listing every file to fetch. When adding new files to the repo, the corresponding manifest array in `install.sh` must be updated.
 - **Copilot integration**: Copilot reads `.github/copilot-instructions.md` in client repos, which redirects to `AGENTS.md` (see `settings/copilot/copilot-instructions.md` for the template).
 
@@ -54,7 +55,7 @@ All scripts must be cross-platform (macOS + Linux):
 - **Permission philosophy**: read/validate/lint/test = auto-approve; deploy/destroy/secrets = always ask. Expressed in `AGENTS.md` (cross-platform) and `settings.json` (Claude-specific).
 - **Secrets policy**: `.env` files and secrets are never read or exposed. Code referencing secrets must use vault lookups or environment variables.
 - **Commit format**: Conventional Commits — `type(scope): description` (imperative mood, lowercase, max 72 chars).
-- **Three platform profiles**: `terraform`, `databricks`, `fabric` — each with a matching `AGENTS-*.md` template and `settings-*.json`.
+- **Three platform profiles**: `terraform`, `databricks`, `fabric` — each with matching `settings-*.json` and platform ADRs in `docs/decisions/platform/`.
 
 ## What NOT to Change
 

@@ -284,7 +284,7 @@ If you prefer to do it yourself:
 
 ```bash
 # Copy template + settings
-cp ~/.ai-toolkit/templates/AGENTS-fabric.md ./AGENTS.md
+cp ~/.ai-toolkit/templates/AGENTS.md ./AGENTS.md
 mkdir -p .claude
 cp ~/.ai-toolkit/templates/settings/settings-fabric.json .claude/settings.json
 
@@ -293,7 +293,7 @@ mkdir -p docs/adr
 echo '.claude/settings.local.json' >> .gitignore
 echo 'CLAUDE.local.md' >> .gitignore
 
-# Fill in {placeholders} in AGENTS.md
+# Fill in {placeholders} in AGENTS.md and inject ADR list for platform
 vim AGENTS.md
 ```
 
@@ -306,13 +306,17 @@ Then open the file and fill in the `{placeholders}`:
 
 > **Templates are thin on purpose.** Each template is roughly 40–60 lines. They only contain what's unique to the repo — client identity, platform, build commands, branching. All coding standards, architecture principles, and tool expertise come from your global ~/.claude/CLAUDE.md and skills.
 
-**Available templates:**
+**Platform-specific guidance:**
 
-| Template | Use For | Key Declarations |
-|----------|---------|------------------|
-| `AGENTS-terraform.md` | IaC repos | Cloud provider, remote state, resource prefix, pipeline structure |
-| `AGENTS-databricks.md` | Databricks repos | Unity Catalog structure, DLT naming, compute choices, DAB commands |
-| `AGENTS-fabric.md` | Fabric repos | Workspace pattern, lakehouse/warehouse names, semantic model conventions |
+Since v2.0.0, a single universal `AGENTS.md` template is used for all platforms. Platform conventions are expressed as ADRs in `docs/decisions/platform/`:
+
+| Platform | Relevant ADRs | Key Topics |
+|----------|---------------|------------|
+| `terraform` | 0011, 0019-0020 | Safety rules, module structure, remote state conventions |
+| `databricks` | 0011, 0016-0018 | Safety rules, Unity Catalog structure, DLT naming, compute choices |
+| `fabric` | 0011, 0012-0015 | Safety rules, workspace pattern, medallion architecture, semantic models |
+
+The installer injects the appropriate ADR list into `AGENTS.md` based on the `--profile` flag.
 
 ---
 
@@ -337,16 +341,16 @@ bash <(curl -sL https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/m
 Every repo template includes a version header:
 
 ```html
-<!-- template: AGENTS-fabric | version: 1.0.0 | updated: 2026-03-24 -->
-<!-- To check for updates: diff this file against ~/.ai-toolkit/templates/AGENTS-fabric.md -->
+<!-- template: AGENTS | version: 2.0.0 | updated: 2026-03-30 -->
+<!-- To check for updates: diff this file against ~/.ai-toolkit/templates/AGENTS.md -->
 ```
 
 When you copy a template into a repo, this header travels with it.
 
 ### When you update a template
 
-1. Edit the template in `~/.ai-toolkit/templates/AGENTS-{type}.md`
-2. Bump the version number in the header (e.g., `1.0.0` → `1.1.0`)
+1. Edit the template in `~/.ai-toolkit/templates/AGENTS.md`
+2. Bump the version number in the header (e.g., `2.0.0` → `2.1.0`)
 3. New repos automatically get the latest version
 
 ### Checking existing repos for drift
@@ -363,12 +367,12 @@ Example output when versions match:
 
 ```
 Repo file: AGENTS.md
-  Template:  AGENTS-fabric
-  Version:   1.0.0
+  Template:  AGENTS
+  Version:   2.0.0
 
 Current template:
-  Location:  ~/.ai-toolkit/templates/AGENTS-fabric.md
-  Version:   1.0.0
+  Location:  ~/.ai-toolkit/templates/AGENTS.md
+  Version:   2.0.0
 
 ✓ Versions match. No structural template updates available.
 ```
@@ -489,14 +493,14 @@ vim ~/.ai-toolkit/docs/my-reference.md
 echo '@~/.ai-toolkit/docs/my-reference.md' >> ~/.claude/CLAUDE.md
 ```
 
-### Creating a new repo template
+### Creating a new platform profile
 
 ```bash
-cp ~/.ai-toolkit/templates/AGENTS-databricks.md \
-   ~/.ai-toolkit/templates/AGENTS-sqlserver.md
+# Create new platform ADRs in docs/decisions/platform/
+vim ~/.ai-toolkit/docs/decisions/platform/0021-sqlserver-conventions.md
 
-# Edit: change platform, adjust conventions, update version header
-vim ~/.ai-toolkit/templates/AGENTS-sqlserver.md
+# Update install.sh to inject the new ADR list for --profile sqlserver
+vim ~/repos/Project-Mindflayer/install.sh
 ```
 
 ### Useful skill repositories

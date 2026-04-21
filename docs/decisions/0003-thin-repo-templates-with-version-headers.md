@@ -1,6 +1,6 @@
 # ADR-0003: Thin Repo Templates (~70 Lines) with Version Headers
 
-**Status:** Accepted
+**Status:** Accepted (superseded in part by ADR-0011: platform conventions as ADRs)
 **Date:** 2026-03-01
 **Deciders:** Michael Bendfeldt
 
@@ -61,3 +61,7 @@ source template to detect drift.
 
 - `/templates/AGENTS-*.md` — the three platform templates
 - `/tools/check-template-update.sh` — drift detection script
+
+## Revision Note (v2.0.0)
+
+In v2.0.0 (March 2026), the three per-platform templates (`AGENTS-fabric.md`, `AGENTS-databricks.md`, `AGENTS-terraform.md`) were consolidated into a single universal `templates/AGENTS.md`. Platform-specific conventions moved to ADRs in `docs/decisions/platform/` (0011 cross-platform safety, 0012-0015 Fabric, 0016-0018 Databricks, 0019-0020 Terraform). The thin-template principle still holds: repo templates remain ~70 lines, containing only client-specific values and a platform-specific ADR list injected by the installer.
