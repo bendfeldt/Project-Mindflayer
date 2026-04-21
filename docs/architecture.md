@@ -37,6 +37,11 @@ each agent from the canonical baseline at `~/.ai-toolkit/AGENTS.md`.
 Skills are cross-platform — the `SKILL.md` format is an open standard readable by all
 supported agents, not Claude-specific.
 
+**Why three layers, not four.** A short-lived experiment added a personal-overlay layer
+between Baseline and Repo (individual quirks that shouldn't ship with the baseline).
+That experiment was reverted; see [ADR-0013](decisions/0013-revert-personal-overlay-and-client-adrs.md)
+for the reasoning. The three-layer model above is the intentional final state.
+
 ---
 
 ## Distribution Flow

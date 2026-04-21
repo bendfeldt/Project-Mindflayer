@@ -74,7 +74,7 @@ These are settled — do not revisit:
 
 1. Global config via `~/.claude/CLAUDE.md`, repo-level via `AGENTS.md`
 2. Skills use the `SKILL.md` open standard (cross-platform)
-3. Repo templates are thin (~70 lines, client-specific only)
+3. The repo template is thin (~50 lines, client-specific only)
 4. Version headers on templates enable drift detection
 5. Safety rules expressed in `AGENTS.md` (cross-platform), not just `settings.json`
 6. Permission settings are tool-specific (settings.json, config.toml, etc.)

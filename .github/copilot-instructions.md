@@ -9,7 +9,7 @@ Project-Mindflayer is a distribution toolkit that installs portable AI coding as
 ### Layered Configuration Model
 
 1. **Baseline** (`global/AGENTS.md`) — universal data-consultant standards, Hard Rules, engineering principles, Kimball/medallion, Conventional Commits, compliance awareness. Shippable across any consultant without modification.
-2. **Repo** (`templates/AGENTS.md`) — thin template (~70 lines) installed as `./AGENTS.md` in client repos. Contains only client-specific: name, platform, build commands, branching. Platform conventions (ADR list) injected by installer. Remains the cross-agent instructions file for the repo.
+2. **Repo** (`templates/AGENTS.md`) — thin template (~50 lines) installed as `./AGENTS.md` in client repos. Contains only client-specific: name, platform, build commands, branching. Platform conventions (ADR list) injected by installer. Remains the cross-agent instructions file for the repo.
 3. **Skills** (`skills/*/SKILL.md`) — reusable capabilities using the cross-platform `SKILL.md` open standard. Installed to `~/.ai-toolkit/skills/` (all agents) and `~/.claude/skills/` (Claude only).
 
 The baseline is copied to each agent's global config location (e.g. `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md`) at install time, giving cross-agent parity without per-agent include mechanics.

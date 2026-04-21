@@ -289,9 +289,18 @@ safe_copy() {
     local src="$1"
     local dest="$2"
 
+    # Use <parent>/<basename> when the basename is generic (e.g., SKILL.md)
+    # so install output identifies which skill was copied instead of printing
+    # "SKILL.md" eight times.
+    local label
+    label="$(basename "$dest")"
+    if [ "$label" = "SKILL.md" ]; then
+        label="$(basename "$(dirname "$dest")")/$label"
+    fi
+
     if [ -f "$dest" ] && [ "$FORCE" != "1" ]; then
         if diff -q "$src" "$dest" >/dev/null 2>&1; then
-            ok "$(basename "$dest") (unchanged)"
+            ok "$label (unchanged)"
             return
         fi
         if ! [ -t 0 ]; then
@@ -309,7 +318,7 @@ safe_copy() {
     dest_dir="$(dirname "$dest")"
     mkdir -p "$dest_dir"
     cp "$src" "$dest"
-    ok "$(basename "$dest")"
+    ok "$label"
 }
 
 # --- File manifests ----------------------------------------------------------

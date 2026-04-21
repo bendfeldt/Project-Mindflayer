@@ -15,7 +15,7 @@ This toolkit gives you a portable AI coding assistant setup that works across al
 | Global CLAUDE.md | `~/.claude/CLAUDE.md` | Your identity, standards, stack preferences |
 | Skills (8) | `~/.ai-toolkit/skills/` | ADR, Terraform scaffold, Kimball modeling, Setup repo, Smart commit, Smart PR, Branch cleanup, Promote ADR |
 | Reference docs | `~/.ai-toolkit/docs/` | Quick-reference for Terraform + Kimball |
-| Repo templates (4) | `~/.ai-toolkit/templates/` | Starter AGENTS.md for each repo type |
+| Repo template | `~/.ai-toolkit/templates/AGENTS.md` | Universal repo template; platform conventions injected as ADRs |
 | Update checker | `~/.ai-toolkit/check-template-update.sh` | Diff repo files against templates |
 
 **How merging works:**
@@ -58,7 +58,7 @@ claude
 
 # List available skills
 /skills
-# You should see: adr, terraform-scaffold, kimball-model, setup-repo
+# You should see: adr, branch-cleanup, kimball-model, promote-adr, setup-repo, smart-commit, smart-pr, terraform-scaffold
 ```
 
 ---
@@ -587,7 +587,7 @@ When a teammate leaves the project, almost nothing needs to happen in the repo:
 | Set up a new repo (easy) | `/setup-repo` (inside Claude Code, in the repo) |
 | Onboard new teammate | Install globally, clone repo, open agent — `AGENTS.md` loads automatically |
 | Offboard a teammate | Nothing to remove from the repo; optionally `~/.ai-toolkit/uninstall.sh --global --confirm` on their machine |
-| Set up a new repo (manual) | `cp ~/.ai-toolkit/templates/AGENTS-{type}.md ./AGENTS.md` |
+| Set up a new repo (manual) | `cp ~/.ai-toolkit/templates/AGENTS.md ./AGENTS.md` |
 | Add repo permissions (manual) | `cp ~/.ai-toolkit/templates/settings/settings-{type}.json .claude/settings.json` |
 | Check for template updates | `~/.ai-toolkit/check-template-update.sh` |
 | List available skills | `/skills` (inside Claude Code) |
