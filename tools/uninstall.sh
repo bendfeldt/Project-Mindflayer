@@ -23,18 +23,15 @@ set -euo pipefail
 if [ -t 1 ] && command -v tput >/dev/null 2>&1 && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
     GREEN=$(tput setaf 2)
     RED=$(tput setaf 1)
-    YELLOW=$(tput setaf 3)
     BOLD=$(tput bold)
     RESET=$(tput sgr0)
 else
-    GREEN="" RED="" YELLOW="" RED="" BOLD="" RESET=""
+    GREEN="" RED="" BOLD="" RESET=""
 fi
 
 # --- Helpers -----------------------------------------------------------------
 
-info()  { printf "%s\n" "$1"; }
 ok()    { printf "  %s✓%s %s\n" "$GREEN" "$RESET" "$1"; }
-warn()  { printf "  %s⚠%s %s\n" "$YELLOW" "$RESET" "$1"; }
 err()   { printf "  %s✗%s %s\n" "$RED" "$RESET" "$1"; }
 
 usage() {

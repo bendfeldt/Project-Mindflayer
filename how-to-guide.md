@@ -32,16 +32,7 @@ When you start a session inside a repo, Claude Code loads:
 
 ## 2. Installation
 
-### One-liner (from GitHub)
-
-```bash
-# Global install — skills, docs, templates, settings to ~/
-bash <(curl -sL https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh) --global
-
-# Project install — AGENTS.md + tool configs in the current repo
-cd ~/repos/my-project
-bash <(curl -sL https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh)
-```
+See the [README — Quick Install](README.md#quick-install) for the canonical one-liner, and the [README — Installer Options](README.md#installer-options) for the full flag table.
 
 ### From local checkout
 
@@ -58,17 +49,6 @@ bash install.sh --global --local
 3. **Installs** global config, skills, docs, templates, and settings to each agent's config directory
 
 Use `--tools claude,codex` to skip the interactive prompt. Use `--force` to overwrite without asking.
-
-| Flag | Description |
-|------|-------------|
-| `--global` | Install to user-level config directories |
-| `--project` | Set up current repo (default if --global not set) |
-| `--tools TOOLS` | Comma-separated list of agents to configure |
-| `--force` | Overwrite existing files without prompting |
-| `--profile PROFILE` | Platform profile: terraform, databricks, fabric |
-| `--local` | Use local checkout instead of fetching from GitHub |
-| `--client NAME` | Client name (skips interactive prompt) |
-| `--prefix PREFIX` | Resource prefix (skips interactive prompt) |
 
 After installation, verify in Claude Code:
 
