@@ -386,7 +386,7 @@ test_global_install() {
     assert_file_exists "doc: terraform-patterns" "$SANDBOX_HOME/.ai-toolkit/docs/terraform-patterns.md"
     assert_file_exists "doc: kimball-reference" "$SANDBOX_HOME/.ai-toolkit/docs/kimball-reference.md"
 
-    # Templates (in ~/.ai-toolkit/) — v2.0.0: one universal template
+    # Templates (in ~/.ai-toolkit/) — one universal template since v2
     assert_file_exists "template: universal AGENTS.md" "$SANDBOX_HOME/.ai-toolkit/templates/AGENTS.md"
     assert_not_exists "template: no legacy AGENTS-terraform.md" "$SANDBOX_HOME/.ai-toolkit/templates/AGENTS-terraform.md"
     assert_not_exists "template: no legacy AGENTS-databricks.md" "$SANDBOX_HOME/.ai-toolkit/templates/AGENTS-databricks.md"
@@ -702,7 +702,7 @@ test_edge_cases() {
     fi
     teardown_sandbox
 
-    # Template version header parsing (v2.0.0: universal template, no platform suffix)
+    # Template version header parsing (universal template, no platform suffix)
     setup_sandbox
     mkdir -p "$SANDBOX_HOME/.claude/docs/repo-templates"
     cp "$REPO_ROOT/templates/AGENTS.md" "$SANDBOX_HOME/.claude/docs/repo-templates/AGENTS.md"
@@ -715,7 +715,7 @@ test_edge_cases() {
 
         local tmpl_version
         tmpl_version="$(sed -n 's/.*version: \([^ |]*\).*/\1/p' "$SANDBOX_PROJECT/AGENTS.md" | head -1)"
-        assert_eq "version header: version is 2.0.0" "2.0.0" "$tmpl_version"
+        assert_eq "version header: version is 2.1.0" "2.1.0" "$tmpl_version"
 
         # v2: platform is in the **platform:** body line (not the header suffix)
         local platform_line

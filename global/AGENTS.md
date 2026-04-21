@@ -47,6 +47,28 @@ Never proceed when input is needed from the user and the user is unavailable.
 - The only carve-out: the user has explicitly delegated a specific decision
   in writing during this session ("if X, do Y")
 
+### Respect the Decision Log
+
+Every project has a decision log — toolkit-level at
+`~/.ai-toolkit/docs/decisions/`, client-specific at the repo's `docs/adr/` or
+`docs/decisions/`. ADRs are binding specifications, not suggestions.
+
+- Before any non-trivial change — architecture, modeling, tooling, installer,
+  CI, or operations — scan the decision log for relevant ADRs.
+- **Accepted** ADRs are the spec. Code must match them. If code drifts from
+  an Accepted ADR, the code is wrong, not the ADR.
+- If a requested change would violate an Accepted ADR, stop and surface the
+  conflict. Do not silently comply. Offer three explicit paths: (a) a
+  different approach that honors the ADR, (b) supersede the ADR with a new
+  one via `/adr` or `/promote-adr`, (c) mark the ADR **Superseded** first,
+  then change the code.
+- Status semantics: **Accepted** = binding; **Proposed** = discuss before
+  following; **Superseded** = ignore, read the replacement; **Deprecated** =
+  ignore entirely.
+- New decisions of ADR-level importance get a new ADR, not a silent code
+  change. "ADR-level" means: affects structure, is hard to reverse, has
+  compliance implications, or keeps coming up in discussion.
+
 ### Secrets
 
 Canonical safety rules live in **ADR-0011: Safety Rules for All Agents**
@@ -173,8 +195,14 @@ repo setup is resolved or the user explicitly skips it.
 
 ## Decision Log
 
-Architecture and standards decisions are at `~/.ai-toolkit/docs/decisions/`.
-Consult them when generating DDL, choosing layer names, or advising on design patterns.
+Toolkit-level decisions live at `~/.ai-toolkit/docs/decisions/`. Client repos
+add their own under `docs/adr/` or `docs/decisions/`.
+
+See the **Respect the Decision Log** Hard Rule above for how these are to
+be treated. Two supporting skills:
+
+- `/adr` — create or update an ADR
+- `/promote-adr` — elevate an in-repo decision to an ADR
 
 ## Modular Docs (loaded via @-includes as needed)
 

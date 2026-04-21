@@ -1,6 +1,6 @@
 # Project Instructions
 
-<!-- template: AGENTS | version: 2.0.0 | updated: 2026-04-21 -->
+<!-- template: AGENTS | version: 2.1.0 | updated: 2026-04-21 -->
 <!-- To check for updates: diff this file against ~/.ai-toolkit/templates/AGENTS.md -->
 
 ## Repo Identity
@@ -23,8 +23,11 @@
 
 ## Stack Conventions
 
-This repo follows the conventions established in the following ADRs. Read them
-before making changes that touch architecture, modeling, compute, or deployment.
+This repo follows the conventions established in the following ADRs. Accepted
+ADRs are binding — read them before any non-trivial change, including tooling,
+CI, and operations, not only architecture and modeling. If a change would
+violate an ADR, stop and resolve the conflict before proceeding (see the
+**Respect the Decision Log** Hard Rule in the baseline instructions).
 
 {ADR_LIST}
 
