@@ -10,6 +10,11 @@ Works across **Claude Code**, **Codex**, **Gemini CLI**, **Cursor**, and **GitHu
 # Global setup — installs skills, docs, templates, and settings to ~/
 bash <(curl -sL https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh) --global
 
+# First-run: fill in your personal overlay (name, employer, role, country, languages)
+# then re-sync so each agent's global config picks up your identity.
+$EDITOR ~/.ai-toolkit/AGENTS.personal.md
+~/.ai-toolkit/sync-global.sh
+
 # Project setup — creates AGENTS.md + tool configs in the current repo
 cd ~/repos/my-project
 bash <(curl -sL https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh)
@@ -19,15 +24,16 @@ The installer detects which coding agents are installed on your machine and prom
 
 ## What It Does
 
-Configuration is layered — global standards travel with you, repo-level config is unique to each client and platform:
+Configuration is layered — a universal baseline plus a per-consultant personal overlay travel with you, while repo-level config is unique to each client and platform (see [ADR-0012](docs/decisions/0012-universal-baseline-plus-personal-layer.md)):
 
 | Layer | File | Scope |
 |-------|------|-------|
-| **Global** | `~/.claude/CLAUDE.md` | Your identity, coding standards, stack preferences, compliance awareness |
+| **Baseline** | `~/.ai-toolkit/AGENTS.md` | Universal data-consultant standards, Hard Rules, stack preferences, compliance awareness |
+| **Personal** | `~/.ai-toolkit/AGENTS.personal.md` | Your identity: name, employer, role, country, spoken languages |
 | **Repo** | `./AGENTS.md` | Client name, platform, build commands, branching rules, safety rules |
-| **Skills** | `~/.ai-toolkit/skills/` | Reusable capabilities that adapt to both layers |
+| **Skills** | `~/.ai-toolkit/skills/` | Reusable capabilities that adapt to all layers |
 
-When you start a session, the agent loads global config + repo config + skills. No duplication between layers.
+Each agent's global config (e.g. `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`) is written as `concat(baseline, personal)` at install time, giving cross-agent parity even for agents that don't support `@`-includes. When you start a session, the agent loads global config + repo config + skills. No duplication between layers.
 
 ## Supported Agents
 

@@ -2,15 +2,20 @@
 
 ## Project Overview
 
-Project-Mindflayer is a distribution toolkit that installs portable AI coding assistant configurations (Claude Code, Codex, Gemini CLI, Cursor, GitHub Copilot) across multiple client engagements. It separates personal standards from project-specific settings using a three-layer model.
+Project-Mindflayer is a distribution toolkit that installs portable AI coding assistant configurations (Claude Code, Codex, Gemini CLI, Cursor, GitHub Copilot) across multiple client engagements. It separates personal standards from project-specific settings using a layered model.
 
 ## Architecture
 
-### Three-Layer Configuration Model
+### Layered Configuration Model
 
-1. **Global** (`global/AGENTS.md`) — installed to each agent's config directory (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, etc.). Contains personal identity, coding standards, stack preferences.
-2. **Repo** (`templates/AGENTS.md`) — thin template (~70 lines) installed as `./AGENTS.md` in client repos. Contains only client-specific: name, platform, build commands, branching. Platform conventions (ADR list) injected by installer.
-3. **Skills** (`skills/*/SKILL.md`) — reusable capabilities using the cross-platform `SKILL.md` open standard. Installed to `~/.ai-toolkit/skills/` (all agents) and `~/.claude/skills/` (Claude only).
+Per ADR-0012, the global layer is itself split into a universal baseline and a per-consultant personal overlay:
+
+1. **Baseline** (`global/AGENTS.md`) — universal data-consultant standards, Hard Rules, engineering principles, Kimball/medallion, Conventional Commits, compliance awareness. Shippable across any consultant without modification.
+2. **Personal** (`global/AGENTS.personal.example.md` → `~/.ai-toolkit/AGENTS.personal.md`) — per-consultant identity: name, employer, role, country, spoken languages. Seeded on first install and preserved byte-for-byte on re-install.
+3. **Repo** (`templates/AGENTS.md`) — thin template (~70 lines) installed as `./AGENTS.md` in client repos. Contains only client-specific: name, platform, build commands, branching. Platform conventions (ADR list) injected by installer. Remains the cross-agent instructions file for the repo.
+4. **Skills** (`skills/*/SKILL.md`) — reusable capabilities using the cross-platform `SKILL.md` open standard. Installed to `~/.ai-toolkit/skills/` (all agents) and `~/.claude/skills/` (Claude only).
+
+Each agent's resolved global config (e.g. `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md`) is written as `concat(baseline, personal)` at install time. Codex and Gemini do not support `@`-includes, so install-time concatenation is what gives cross-agent parity.
 
 ### Distribution Flow
 
@@ -61,7 +66,7 @@ All scripts must be cross-platform (macOS + Linux):
 
 These are finalized design decisions (see `docs/decisions/` for ADRs):
 
-- Content of skills, templates, settings, and `global/AGENTS.md`
+- Content of skills, templates, settings, `global/AGENTS.md` (baseline), and `global/AGENTS.personal.example.md`
 - The `SKILL.md` format, `AGENTS.md` format, and cross-platform approach
 - The version header pattern for templates
 - The safety rules and secrets policy

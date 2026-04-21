@@ -8,23 +8,42 @@ from a single source of truth.
 
 ---
 
-## Three-Layer Configuration Model
+## Four-Layer Configuration Model
+
+Per [ADR-0012](decisions/0012-universal-baseline-plus-personal-layer.md), the global
+layer is itself split into a shippable baseline and a per-consultant personal overlay.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 1: Global (~/.claude/CLAUDE.md)                      │
-│  Personal identity, coding standards, stack preferences,    │
-│  compliance awareness. Travels with you to every repo.      │
+│  Layer 1a: Baseline (global/AGENTS.md)                      │
+│  Universal data-consultant standards — Hard Rules,          │
+│  engineering principles, Kimball/medallion, stack prefs,    │
+│  Conventional Commits, GDPR/NIS2/ISO 27001 awareness.       │
+│  Shippable across any consultant without modification.      │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 1b: Personal (~/.ai-toolkit/AGENTS.personal.md)      │
+│  Per-consultant identity: name, employer, role, country,    │
+│  spoken languages, personal notes. Seeded from              │
+│  AGENTS.personal.example.md on first install and            │
+│  preserved byte-for-byte on re-install.                     │
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 2: Repo (./AGENTS.md + .claude/settings.json)        │
 │  Client name, platform, build commands, safety rules.       │
 │  Committed to the project repo — client-specific.           │
 ├─────────────────────────────────────────────────────────────┤
-│  Layer 3: Skills (~/.claude/skills/*/SKILL.md)              │
+│  Layer 3: Skills (~/.ai-toolkit/skills/*/SKILL.md)          │
 │  Reusable capabilities (ADR, Terraform scaffold, Kimball,   │
-│  setup-repo). Read both layers and adapt automatically.     │
+│  setup-repo). Read the layers above and adapt automatically.│
 └─────────────────────────────────────────────────────────────┘
 ```
+
+**Concat-at-install-time mechanism.** Each agent's resolved global config is written as
+`concat(baseline, personal)` by the installer — e.g. `~/.claude/CLAUDE.md`,
+`~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md`. Codex and Gemini CLI do not support
+`@`-include syntax, so concatenation at install time is what gives cross-agent parity
+without per-agent include mechanics. Re-running the installer (or
+`~/.ai-toolkit/sync-global.sh`) refreshes the baseline while preserving the personal
+file.
 
 Skills are cross-platform — the `SKILL.md` format is an open standard readable by all
 supported agents, not Claude-specific.
@@ -36,10 +55,14 @@ supported agents, not Claude-specific.
 ```
 Project-Mindflayer (this repo)
 │
-├── global/AGENTS.md        ──▶  ~/.claude/CLAUDE.md             (Claude global config, conditional)
-│                           ──▶  ~/.codex/AGENTS.md              (Codex global config, conditional)
-│                           ──▶  ~/.gemini/GEMINI.md             (Gemini global config, conditional)
-│                           ──▶  ~/.cursor/rules.md              (Cursor global config, conditional)
+├── global/AGENTS.md         ──▶  ~/.ai-toolkit/AGENTS.md            (baseline, always)
+├── global/AGENTS.personal.example.md
+│                            ──▶  ~/.ai-toolkit/AGENTS.personal.md   (seeded on first install; preserved on re-install)
+│
+│   concat(baseline, personal) ──▶  ~/.claude/CLAUDE.md              (Claude global config, conditional)
+│                              ──▶  ~/.codex/AGENTS.md               (Codex global config, conditional)
+│                              ──▶  ~/.gemini/GEMINI.md              (Gemini global config, conditional)
+│                              ──▶  ~/.cursor/rules.md               (Cursor global config, conditional)
 │
 ├── skills/*/SKILL.md       ──▶  ~/.ai-toolkit/skills/*/SKILL.md (agent-neutral, always)
 │   (source at repo root)   ──▶  ~/.claude/skills/*/SKILL.md     (Claude auto-discovery, if claude selected)

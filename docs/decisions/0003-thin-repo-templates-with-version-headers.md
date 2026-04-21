@@ -65,3 +65,12 @@ source template to detect drift.
 ## Revision Note (v2.0.0)
 
 In v2.0.0 (March 2026), the three per-platform templates (`AGENTS-fabric.md`, `AGENTS-databricks.md`, `AGENTS-terraform.md`) were consolidated into a single universal `templates/AGENTS.md`. Platform-specific conventions moved to ADRs in `docs/decisions/platform/` (0011 cross-platform safety, 0012-0015 Fabric, 0016-0018 Databricks, 0019-0020 Terraform). The thin-template principle still holds: repo templates remain ~70 lines, containing only client-specific values and a platform-specific ADR list injected by the installer.
+
+## Revision Note (ADR-0012)
+
+[ADR-0012](0012-universal-baseline-plus-personal-layer.md) extends the layered model at
+the consultant layer: global instructions split into a universal baseline
+(`global/AGENTS.md`) and a per-consultant personal overlay
+(`~/.ai-toolkit/AGENTS.personal.md`), written to each agent's config as
+`concat(baseline, personal)` at install time. Thin repo templates are unchanged — the
+baseline/personal split applies only to the global layer.
