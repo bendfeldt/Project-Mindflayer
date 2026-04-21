@@ -451,31 +451,12 @@ test_global_install() {
     assert_contains "global config: Always Plan First rule" "$claude_body" "Always Plan First"
     assert_contains "global config: Wait for the User rule" "$claude_body" "Wait for the User"
 
-    # Baseline + personal split (ADR-0012)
+    # Baseline at toolkit home
     assert_file_exists "baseline at toolkit home" "$SANDBOX_HOME/.ai-toolkit/AGENTS.md"
-    assert_file_exists "personal example at toolkit home" "$SANDBOX_HOME/.ai-toolkit/AGENTS.personal.example.md"
-    assert_file_exists "personal overlay seeded" "$SANDBOX_HOME/.ai-toolkit/AGENTS.personal.md"
 
-    # Per-agent config is concat(baseline, personal): contains content from both
-    assert_contains "global config: baseline content (Hard Rules)" "$claude_body" "Always Plan First"
-    assert_contains "global config: personal content (Identity heading)" "$claude_body" "## Identity"
-
-    # Personal file preserved on re-install
-    printf '\n## My Custom Line\nkeep-me-intact\n' >> "$SANDBOX_HOME/.ai-toolkit/AGENTS.personal.md"
-    run_installer --global --tools claude --force --local >/dev/null 2>&1
-    local personal_after
-    personal_after="$(cat "$SANDBOX_HOME/.ai-toolkit/AGENTS.personal.md")"
-    assert_contains "personal overlay preserved on re-install" "$personal_after" "keep-me-intact"
-    # And the custom line flows into per-agent config after re-install
-    local claude_body_after
-    claude_body_after="$(cat "$SANDBOX_HOME/.claude/CLAUDE.md")"
-    assert_contains "re-install: custom personal content in per-agent config" "$claude_body_after" "keep-me-intact"
-
-    # Danish client ADR template included in distribution
-    assert_file_exists "client-adrs: danish compliance template" "$SANDBOX_HOME/.ai-toolkit/templates/client-adrs/danish-public-sector-compliance.md"
-
-    # Toolkit-scope meta ADR 0012
-    assert_file_exists "decision: 0012 baseline+personal" "$SANDBOX_HOME/.ai-toolkit/docs/decisions/0012-universal-baseline-plus-personal-layer.md"
+    # Toolkit-scope meta ADRs (0012 superseded, 0013 documents the revert)
+    assert_file_exists "decision: 0012 baseline+personal (superseded)" "$SANDBOX_HOME/.ai-toolkit/docs/decisions/0012-universal-baseline-plus-personal-layer.md"
+    assert_file_exists "decision: 0013 revert personal overlay" "$SANDBOX_HOME/.ai-toolkit/docs/decisions/0013-revert-personal-overlay-and-client-adrs.md"
 
     # Codex + copilot templates (in ~/.ai-toolkit/)
     assert_file_exists "codex: config.toml" "$SANDBOX_HOME/.ai-toolkit/templates/codex/config.toml"

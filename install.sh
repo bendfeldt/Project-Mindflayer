@@ -346,6 +346,7 @@ DECISION_FILES=(
     "docs/decisions/0010-lowercase-snake-case-naming.md"
     "docs/decisions/0011-tech-stack-conventions-as-adrs.md"
     "docs/decisions/0012-universal-baseline-plus-personal-layer.md"
+    "docs/decisions/0013-revert-personal-overlay-and-client-adrs.md"
     "docs/decisions/platform/0011-safety-rules-for-all-agents.md"
     "docs/decisions/platform/0012-fabric-medallion-layers.md"
     "docs/decisions/platform/0013-fabric-semantic-model-design.md"
@@ -360,10 +361,6 @@ DECISION_FILES=(
 
 TEMPLATE_FILES=(
     "templates/AGENTS.md"
-)
-
-CLIENT_ADR_FILES=(
-    "templates/client-adrs/danish-public-sector-compliance.md"
 )
 
 CLAUDE_SETTINGS_FILES=(
@@ -415,40 +412,17 @@ install_global() {
     local toolkit_home="$HOME/.ai-toolkit"
     mkdir -p "$toolkit_home"
 
-    # --- Baseline + personal overlay ---
-    # Per ADR-0012: global layer is split into a universal baseline and a
-    # per-consultant personal overlay. The installed per-agent config is the
-    # concatenation of the two. The personal overlay is seeded on first install
-    # and preserved byte-for-byte on every subsequent install.
-    local baseline_tmp personal_example_tmp
+    # --- Global baseline ---
+    # The baseline is copied to ~/.ai-toolkit/AGENTS.md (source of truth for
+    # sync-global.sh) and to each selected agent's config directory.
+    local baseline_tmp
     baseline_tmp="$(fetch_to_tmp "global/AGENTS.md")"
-    personal_example_tmp="$(fetch_to_tmp "global/AGENTS.personal.example.md")"
-
-    info "${BOLD}Personal overlay:${RESET}"
-    local baseline_dest="$toolkit_home/AGENTS.md"
-    local personal_example_dest="$toolkit_home/AGENTS.personal.example.md"
-    local personal_file="$toolkit_home/AGENTS.personal.md"
-    cp "$baseline_tmp" "$baseline_dest"
+    cp "$baseline_tmp" "$toolkit_home/AGENTS.md"
     ok "~/.ai-toolkit/AGENTS.md (baseline)"
-    cp "$personal_example_tmp" "$personal_example_dest"
-    ok "~/.ai-toolkit/AGENTS.personal.example.md"
-    if [ ! -f "$personal_file" ]; then
-        cp "$personal_example_tmp" "$personal_file"
-        ok "~/.ai-toolkit/AGENTS.personal.md (seeded — edit it with your identity)"
-    else
-        ok "~/.ai-toolkit/AGENTS.personal.md (preserved)"
-    fi
 
-    # Build the concatenated config that each agent will receive.
-    local combined_tmp
-    combined_tmp="$(mktemp)"
-    cat "$baseline_tmp" > "$combined_tmp"
-    printf '\n\n' >> "$combined_tmp"
-    cat "$personal_file" >> "$combined_tmp"
-
-    # --- Global config per agent (baseline + personal) ---
+    # --- Global config per agent ---
     info ""
-    info "${BOLD}Global config (baseline + personal):${RESET}"
+    info "${BOLD}Global config:${RESET}"
 
     for agent in "${AGENTS_TO_INSTALL[@]}"; do
         case "$agent" in
@@ -459,32 +433,31 @@ install_global() {
                     info "  Backed up: $backup"
                 fi
                 mkdir -p "$HOME/.claude"
-                cp "$combined_tmp" "$HOME/.claude/CLAUDE.md"
+                cp "$baseline_tmp" "$HOME/.claude/CLAUDE.md"
                 ok "~/.claude/CLAUDE.md"
                 ;;
             codex)
                 mkdir -p "$HOME/.codex"
-                cp "$combined_tmp" "$HOME/.codex/AGENTS.md"
+                cp "$baseline_tmp" "$HOME/.codex/AGENTS.md"
                 ok "~/.codex/AGENTS.md"
                 ;;
             gemini)
                 mkdir -p "$HOME/.gemini"
-                cp "$combined_tmp" "$HOME/.gemini/GEMINI.md"
+                cp "$baseline_tmp" "$HOME/.gemini/GEMINI.md"
                 ok "~/.gemini/GEMINI.md"
                 ;;
             cursor)
                 mkdir -p "$HOME/.cursor"
-                cp "$combined_tmp" "$HOME/.cursor/rules.md"
+                cp "$baseline_tmp" "$HOME/.cursor/rules.md"
                 ok "~/.cursor/rules.md"
                 ;;
             copilot)
                 mkdir -p "$HOME/.copilot"
-                cp "$combined_tmp" "$HOME/.copilot/copilot-instructions.md"
+                cp "$baseline_tmp" "$HOME/.copilot/copilot-instructions.md"
                 ok "~/.copilot/copilot-instructions.md"
                 ;;
         esac
     done
-    rm -f "$combined_tmp"
 
     # --- Skills ---
     # Always install to ~/.ai-toolkit/skills/ (agent-neutral shared location).
@@ -531,17 +504,6 @@ install_global() {
         local dest="$toolkit_home/templates/$(basename "$f")"
         local tmp
         tmp="$(fetch_to_tmp "$f")"
-        safe_copy "$tmp" "$dest"
-    done
-
-    # --- Client ADR templates ---
-    info ""
-    info "${BOLD}Client ADR templates:${RESET}"
-    for f in "${CLIENT_ADR_FILES[@]}"; do
-        local dest="$toolkit_home/templates/client-adrs/$(basename "$f")"
-        local tmp
-        tmp="$(fetch_to_tmp "$f")"
-        mkdir -p "$(dirname "$dest")"
         safe_copy "$tmp" "$dest"
     done
 
@@ -636,10 +598,8 @@ install_global() {
     info "Agents configured: ${AGENTS_TO_INSTALL[*]}"
     info ""
     info "Next steps:"
-    info "  1. Edit ${BOLD}~/.ai-toolkit/AGENTS.personal.md${RESET} with your identity (name, employer, role, country)"
-    info "  2. Run ${BOLD}~/.ai-toolkit/sync-global.sh${RESET} after editing to regenerate per-agent configs"
-    info "  3. Start an agent in any repo — it will detect missing AGENTS.md and offer setup"
-    info "  4. Or run: ${BOLD}bash install.sh --project${RESET} from inside a repo"
+    info "  1. Start an agent in any repo — it will detect missing AGENTS.md and offer setup"
+    info "  2. Or run: ${BOLD}bash install.sh --project${RESET} from inside a repo"
     info ""
 }
 

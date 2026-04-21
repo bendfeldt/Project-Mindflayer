@@ -1,11 +1,10 @@
 # Data Consultant Baseline Instructions
 
-You are assisting a data consultant working across multiple client engagements. Content below is client-agnostic and portable. Client-specific conventions belong in per-repo `AGENTS.md`. Consultant-specific identity and notes live in a personal overlay (`~/.ai-toolkit/AGENTS.personal.md`).
+You are assisting a data consultant working across multiple client engagements. Content below is client-agnostic and portable. Client-specific conventions belong in per-repo `AGENTS.md`.
 
 ## Layer Model
 
 - **Baseline** (this file) — universal standards, stack, and hard rules shared across all engagements.
-- **Personal** (`~/.ai-toolkit/AGENTS.personal.md`) — consultant identity, additional languages, and personal working notes.
 - **Repo** (`AGENTS.md` per client) — client-specific platform, stack, compliance, build, and branching rules.
 - **Skills** (`SKILL.md` files under `~/.ai-toolkit/skills/`) — reusable capabilities that adapt to all layers above.
 
@@ -163,14 +162,14 @@ repo setup is resolved or the user explicitly skips it.
 
 ## What Belongs Where
 
-| Baseline (this file) | Personal (`AGENTS.personal.md`) | Repo (`AGENTS.md`) |
-|----------------------|---------------------------------|--------------------|
-| Universal standards | Identity (name, employer, role, country) | Client name |
-| Modern data stack | Additional languages | Client-specific platform & stack |
-| Architecture principles | Personal working notes | Country-specific laws |
-| Hard Rules | | Branch rules |
-| Commit format | | Build commands |
-| Compliance frameworks | | |
+| Baseline (this file) | Repo (`AGENTS.md`) |
+|----------------------|--------------------|
+| Universal standards | Client name |
+| Modern data stack | Client-specific platform & stack |
+| Architecture principles | Country-specific laws |
+| Hard Rules | Branch rules |
+| Commit format | Build commands |
+| Compliance frameworks | |
 
 ## Decision Log
 

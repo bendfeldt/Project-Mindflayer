@@ -1,8 +1,24 @@
 # ADR-0012: Universal Baseline Plus Personal Layer for Global Instructions
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0013](0013-revert-personal-overlay-and-client-adrs.md)
 **Date:** 2026-04-21
 **Deciders:** Michael Bendfeldt
+
+## Supersession Note
+
+The personal overlay mechanism introduced by this ADR was reverted one commit after
+landing. The overlay primarily stored identity fields (name, employer, role, country,
+additional languages) that do not operationally change agent behavior — the baseline
+already instructs agents to respond in the consultant's language, and personal identity
+doesn't meaningfully affect task execution. The engineering complexity (seed-on-first-run,
+byte-preserve-on-re-run, concat-at-install-time) exceeded the value delivered.
+
+See [ADR-0013](0013-revert-personal-overlay-and-client-adrs.md) for the reversal
+rationale and the final three-layer model (Baseline / Repo / Skills).
+
+The historical context below is retained for the decision trail.
+
+---
 
 ## Context
 

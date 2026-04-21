@@ -223,19 +223,6 @@ uninstall_global() {
         printf "Global uninstall preview:\n\n"
     fi
 
-    # 0. Personal overlay — user-maintained. Preserve unless --force.
-    local personal_file="$HOME/.ai-toolkit/AGENTS.personal.md"
-    if [ -f "$personal_file" ] && [ "$FORCE" -eq 0 ]; then
-        local preserved="$HOME/AGENTS.personal.md.preserved"
-        if [ "$CONFIRM" -eq 1 ]; then
-            mv "$personal_file" "$preserved"
-            warn "Preserved personal overlay to: ${preserved/#$HOME/~}"
-        else
-            printf "  would preserve: %s → %s\n" "${personal_file/#$HOME/~}" "${preserved/#$HOME/~}"
-            SKIPPED=$((SKIPPED + 1))
-        fi
-    fi
-
     # 1. ~/.ai-toolkit/ — entire directory
     remove_dir "$HOME/.ai-toolkit"
 
