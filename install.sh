@@ -321,6 +321,52 @@ safe_copy() {
     ok "$label"
 }
 
+# safe_symlink <target-path> <link-path>
+#   Creates a symlink at <link-path> pointing to <target-path>.
+#   Idempotent: updates the link if it points elsewhere; prompts on real-file
+#   collisions (matching safe_copy's interactive behaviour).
+#   Used so a single skill directory in ~/.ai-toolkit/skills/ is the source
+#   of truth and ~/.claude/skills/<name>/ symlinks there for Claude
+#   auto-discovery (ADR-0002).
+safe_symlink() {
+    local target="$1"
+    local link="$2"
+    local label
+    label="$(basename "$link")"
+
+    local link_dir
+    link_dir="$(dirname "$link")"
+    mkdir -p "$link_dir"
+
+    if [ -L "$link" ]; then
+        local current
+        current="$(readlink "$link")"
+        if [ "$current" = "$target" ]; then
+            ok "$label (symlink unchanged)"
+            return
+        fi
+        ln -sfn "$target" "$link"
+        ok "$label (symlink updated)"
+        return
+    fi
+
+    if [ -e "$link" ] && [ "$FORCE" != "1" ]; then
+        if ! [ -t 0 ]; then
+            warn "Skipped (exists, use --force): $link"
+            return
+        fi
+        read -r -p "  Replace $link with symlink? [y/N]: " answer
+        case "$answer" in
+            y|Y) ;;
+            *)   warn "Skipped: $link"; return ;;
+        esac
+    fi
+
+    rm -rf "$link" 2>/dev/null || true
+    ln -s "$target" "$link"
+    ok "$label (symlinked)"
+}
+
 # --- File manifests ----------------------------------------------------------
 
 SKILL_FILES=(
@@ -469,8 +515,11 @@ install_global() {
     done
 
     # --- Skills ---
-    # Always install to ~/.ai-toolkit/skills/ (agent-neutral shared location).
-    # Also install to ~/.claude/skills/ for Claude Code auto-discovery when claude is selected.
+    # Install once to ~/.ai-toolkit/skills/ (agent-neutral source of truth).
+    # Claude Code auto-discovers from ~/.claude/skills/, so symlink each
+    # skill directory there when Claude is selected (ADR-0002). One symlink
+    # per skill keeps the source of truth singular and also handles nested
+    # files like skills/terraform-scaffold/references/*.md automatically.
     info ""
     info "${BOLD}Skills:${RESET}"
     for f in "${SKILL_FILES[@]}"; do
@@ -479,12 +528,14 @@ install_global() {
         local toolkit_dest="$toolkit_home/$f"
         mkdir -p "$(dirname "$toolkit_dest")"
         safe_copy "$tmp" "$toolkit_dest"
-        if is_agent_selected claude; then
-            local claude_dest="$HOME/.claude/$f"
-            mkdir -p "$(dirname "$claude_dest")"
-            safe_copy "$tmp" "$claude_dest"
-        fi
     done
+    if is_agent_selected claude; then
+        mkdir -p "$HOME/.claude/skills"
+        local TOOLKIT_SKILL_NAMES="adr branch-cleanup kimball-model promote-adr setup-repo smart-commit smart-pr terraform-scaffold"
+        for name in $TOOLKIT_SKILL_NAMES; do
+            safe_symlink "$toolkit_home/skills/$name" "$HOME/.claude/skills/$name"
+        done
+    fi
 
     # --- Reference docs ---
     info ""

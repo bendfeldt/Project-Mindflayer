@@ -160,10 +160,27 @@ remove_dir() {
 }
 
 # remove_if_toolkit_skill "$path"
-#   Removes a skill directory if it contains a SKILL.md (i.e. toolkit-managed).
+#   Removes a skill entry at $path if it is toolkit-managed.
+#   Toolkit-managed means either:
+#     - a symlink (installer created it pointing at ~/.ai-toolkit/skills/<name>)
+#     - a real directory containing SKILL.md (legacy copies)
 remove_if_toolkit_skill() {
     local path="$1"
     local display="${path/#$HOME/~}"
+
+    # Symlink (possibly dangling if ~/.ai-toolkit/ was removed first) — always
+    # safe to unlink since the installer is the only thing that creates these.
+    if [ -L "$path" ]; then
+        if [ "$CONFIRM" -eq 0 ]; then
+            printf "  would remove: %s\n" "$display"
+            WOULD_REMOVE=$((WOULD_REMOVE + 1))
+            return
+        fi
+        rm -f "$path"
+        ok "$display"
+        REMOVED=$((REMOVED + 1))
+        return
+    fi
 
     [ ! -d "$path" ] && return
 

@@ -86,6 +86,18 @@ assert_not_exists() {
     fi
 }
 
+assert_is_symlink() {
+    local description="$1" filepath="$2"
+    if [ -L "$filepath" ]; then
+        PASS=$((PASS + 1))
+        printf "  \033[32mPASS\033[0m %s\n" "$description"
+    else
+        FAIL=$((FAIL + 1))
+        FAILURES+=("[$CURRENT_GROUP] $description ($filepath is not a symlink)")
+        printf "  \033[31mFAIL\033[0m %s (%s is not a symlink)\n" "$description" "$filepath"
+    fi
+}
+
 assert_executable() {
     local description="$1" filepath="$2"
     if [ -x "$filepath" ]; then
@@ -325,9 +337,13 @@ test_global_install() {
     assert_file_exists "skill ref (toolkit): azure-devops" "$SANDBOX_HOME/.ai-toolkit/skills/terraform-scaffold/references/azure-devops-pipelines.md"
     assert_file_exists "skill ref (toolkit): fabric" "$SANDBOX_HOME/.ai-toolkit/skills/terraform-scaffold/references/fabric-modules.md"
 
-    # Skills also in ~/.claude/skills/ for Claude auto-discovery (claude was selected)
+    # Skills also in ~/.claude/skills/ for Claude auto-discovery (claude was selected).
+    # Each skill directory is a symlink to the toolkit source of truth, not a
+    # duplicate copy (ADR-0002). This keeps the two install locations in lockstep.
     assert_file_exists "skill (claude): adr" "$SANDBOX_HOME/.claude/skills/adr/SKILL.md"
     assert_file_exists "skill (claude): kimball-model" "$SANDBOX_HOME/.claude/skills/kimball-model/SKILL.md"
+    assert_is_symlink "skill (claude) dir is symlink: adr" "$SANDBOX_HOME/.claude/skills/adr"
+    assert_is_symlink "skill (claude) dir is symlink: kimball-model" "$SANDBOX_HOME/.claude/skills/kimball-model"
 
     # Smart skills installed
     assert_file_exists "skill (toolkit): smart-commit" "$SANDBOX_HOME/.ai-toolkit/skills/smart-commit/SKILL.md"
