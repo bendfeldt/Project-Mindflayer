@@ -5,6 +5,8 @@ description: >
   message, stage the files, and commit. Use when the user says "commit my changes",
   "/commit", "create a commit", "save my work", or "commit and push". Also trigger
   when the user asks for help writing a commit message for the current changes.
+version: 1.0.0
+updated: 2026-04-23
 ---
 
 # Smart Commit

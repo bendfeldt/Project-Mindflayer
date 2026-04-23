@@ -14,6 +14,7 @@ Cursor, Copilot) when working with code in this repository.
 - **Global** (`~/.claude/CLAUDE.md`) — portable identity, coding standards, stack preferences, compliance awareness. Synced to Codex/Gemini/Cursor via `tools/sync-global.sh`.
 - **Repo** (`AGENTS.md`) — client-specific: platform, build commands, branching rules, safety rules. Cross-platform standard.
 - **Skills** (`SKILL.md` open standard) — adapt to both layers automatically. Work across all supported agents.
+- **Per-project `.claude/`** — committed into client repos by `install.sh --project` (skills as real files + scaffolds for `rules/`, `commands/`, `agents/`, `hooks/`). This is what makes skills visible to Claude Cowork cloud sessions. See **ADR-0014**.
 
 ### Permission Philosophy
 
@@ -24,6 +25,27 @@ Cursor, Copilot) when working with code in this repository.
 ### Template Versioning
 
 Templates carry HTML comment version headers. `tools/check-template-update.sh` detects drift.
+Skills (`SKILL.md`) carry `version:` + `updated:` fields in their YAML frontmatter;
+`tools/check-skills-update.sh` detects drift in client repos and `tools/sync-skills.sh`
+refreshes them from `~/.ai-toolkit/skills/`.
+
+### Per-Project `.claude/` Layout (ADR-0014)
+
+`install.sh --project --tools claude` writes the canonical Claude per-project layout into the client repo:
+
+```
+<client-repo>/.claude/
+├── settings.json            # permissions + hooks config
+├── skills/<name>/SKILL.md   # real file copies of all toolkit skills (not symlinks)
+├── rules/README.md          # scaffold for client-specific modular guidance
+├── commands/README.md       # scaffold for custom slash commands
+├── agents/README.md         # scaffold for specialized sub-agents
+└── hooks/README.md          # scaffold for event-driven scripts
+```
+
+Skills are committed so **Claude Cowork** (cloud VM sessions) sees them — `~/.claude/` is invisible to Cowork.
+Global install (`--global`) still uses `~/.claude/skills/` symlinks into `~/.ai-toolkit/skills/` for local Claude Code.
+Bidirectional sync: edits to a client-repo skill can be promoted back to the toolkit via the `/promote-skill` skill (mirrors `/promote-adr`).
 
 ## File Layout
 
@@ -41,14 +63,15 @@ docs/                   # Reference docs, architecture overview, and ADRs
 templates/              # Distribution source for repo templates (installed to ~/.ai-toolkit/templates/)
 settings/               # Tool-specific permission settings (claude/, codex/, copilot/, gemini/, cursor/)
 stores.yml              # External stores registry (installed to ~/.ai-toolkit/stores.yml)
-tools/                  # Utility scripts: check-template-update.sh, check-stores.sh, check-update.sh, sync-global.sh, uninstall.sh
+tools/                  # Utility scripts: check-template-update.sh, check-skills-update.sh, check-stores.sh, check-update.sh, sync-global.sh, sync-skills.sh, uninstall.sh
 ```
 
 Note: `skills/` and `templates/` are *distribution sources* in this repo. Their install
 destinations are `~/.ai-toolkit/skills/` (all agents) and `~/.claude/skills/` (Claude only)
 for skills, and `~/.ai-toolkit/templates/` for repo templates. See
 `docs/architecture.md` for the full distribution flow. See `docs/decisions/0004-*.md`
-for why skills live at repo root rather than under `.claude/skills/`.
+for why this distribution repo keeps skills at its own root, and `docs/decisions/0014-*.md`
+for the per-project `.claude/` layout installed into client repos.
 
 ## Install Script (`install.sh`)
 
@@ -80,6 +103,7 @@ These are settled — do not revisit:
 6. Permission settings are tool-specific (settings.json, config.toml, etc.)
 7. `/setup-repo` creates configs for all detected tools automatically
 8. Principle: read/validate = auto-approve, deploy/destroy = always ask
+9. Client repos receive the canonical per-project `.claude/` layout with real skill files committed (ADR-0014); bidirectional sync via `/promote-skill`
 
 ## What NOT to Change
 

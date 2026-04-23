@@ -6,6 +6,8 @@ description: >
   "document this decision", or asks to record why a technical choice was made. Also trigger
   when the user says things like "why did we pick X over Y" and wants to formalize that
   reasoning. Works for any client engagement — not project-specific.
+version: 1.0.0
+updated: 2026-04-23
 ---
 
 # Architecture Decision Records

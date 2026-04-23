@@ -5,6 +5,8 @@ description: >
   no longer exists on the remote. Use when the user says "clean branches",
   "prune branches", "/prune", "delete stale branches", or "clean up old
   branches". Also triggered automatically after a push via smart-commit.
+version: 1.0.0
+updated: 2026-04-23
 ---
 
 # Branch Cleanup

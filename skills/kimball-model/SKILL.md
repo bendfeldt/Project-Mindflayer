@@ -8,6 +8,8 @@ description: >
   trigger for medallion architecture modeling, data vault to Kimball translation,
   or when the user asks about modeling patterns for Databricks, Fabric, or SQL Server.
   Not project-specific — applies to any data platform engagement.
+version: 1.0.0
+updated: 2026-04-23
 ---
 
 # Kimball Dimensional Modeling

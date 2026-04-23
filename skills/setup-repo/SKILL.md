@@ -9,6 +9,8 @@ description: >
   manually with /setup-repo. Use when the user says "set up this repo",
   "initialize repo", "new client repo", "bootstrap repo", "I just joined this
   project", or accepts the automatic prompt to configure a project.
+version: 1.0.0
+updated: 2026-04-23
 ---
 
 # Repo Setup

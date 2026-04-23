@@ -539,6 +539,45 @@ test_project_install() {
         assert_file_exists "[$profile] gemini.md" "$SANDBOX_PROJECT/gemini.md"
         assert_file_exists "[$profile] .cursor/rules/project.md" "$SANDBOX_PROJECT/.cursor/rules/project.md"
 
+        # --- Per-project .claude/ layout (ADR-0014) ---
+        # Skills are copied as real files (not symlinks) so they travel with
+        # the git clone into Claude Cowork cloud VMs.
+        local expected_skills="adr branch-cleanup kimball-model promote-adr promote-skill setup-repo smart-commit smart-pr terraform-scaffold"
+        for skill in $expected_skills; do
+            assert_file_exists "[$profile] .claude/skills/$skill/SKILL.md" \
+                "$SANDBOX_PROJECT/.claude/skills/$skill/SKILL.md"
+            # Version header must be present (YAML frontmatter `version:` field)
+            if [ -f "$SANDBOX_PROJECT/.claude/skills/$skill/SKILL.md" ]; then
+                local v
+                v=$(awk '/^---$/{c++; next} c==1 && /^version:/{print $2; exit}' \
+                    "$SANDBOX_PROJECT/.claude/skills/$skill/SKILL.md" 2>/dev/null)
+                if [ -n "$v" ]; then
+                    PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m [$profile] $skill version header: %s\n" "$v"
+                else
+                    FAIL=$((FAIL + 1)); FAILURES+=("[$CURRENT_GROUP] [$profile] $skill missing version header")
+                    printf "  \033[31mFAIL\033[0m [$profile] $skill missing version header\n"
+                fi
+            fi
+        done
+
+        # Real files, not symlinks (critical for Cowork — symlinks to ~ would break)
+        if [ -L "$SANDBOX_PROJECT/.claude/skills/adr" ] || [ -L "$SANDBOX_PROJECT/.claude/skills/adr/SKILL.md" ]; then
+            FAIL=$((FAIL + 1)); FAILURES+=("[$CURRENT_GROUP] [$profile] skills must be real files, not symlinks")
+            printf "  \033[31mFAIL\033[0m [$profile] skills must be real files, not symlinks\n"
+        else
+            PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m [$profile] skills are real files (Cowork-safe)\n"
+        fi
+
+        # Nested skill references (terraform-scaffold has supporting files)
+        assert_file_exists "[$profile] nested skill file preserved" \
+            "$SANDBOX_PROJECT/.claude/skills/terraform-scaffold/references/azure-devops-pipelines.md"
+
+        # Scaffold folders with pointer READMEs
+        for folder in rules commands agents hooks; do
+            assert_file_exists "[$profile] .claude/$folder/README.md" \
+                "$SANDBOX_PROJECT/.claude/$folder/README.md"
+        done
+
         teardown_sandbox
     done
 
@@ -649,6 +688,25 @@ test_safety() {
     assert_file_exists "join mode: cursor file added for new teammate" "$SANDBOX_PROJECT/.cursor/rules/project.md"
     teardown_sandbox
 
+    # Join mode: skills and scaffolds refresh without touching AGENTS.md
+    # (new teammate joining an existing Mindflayer repo must get current skills)
+    setup_sandbox
+    (cd "$SANDBOX_PROJECT" && run_installer --project --tools claude --profile terraform --client OriginalCorp --prefix oc --force --local) >/dev/null 2>&1
+    # Simulate a skill that went missing (teammate's checkout lacks it)
+    rm -rf "$SANDBOX_PROJECT/.claude/skills/promote-skill"
+    rm -f "$SANDBOX_PROJECT/.claude/rules/README.md"
+    local before_join
+    before_join="$(cat "$SANDBOX_PROJECT/AGENTS.md")"
+    (cd "$SANDBOX_PROJECT" && run_installer --project --tools claude --local) >/dev/null 2>&1
+    local after_join
+    after_join="$(cat "$SANDBOX_PROJECT/AGENTS.md")"
+    assert_eq "join mode: AGENTS.md untouched during skill refresh" "$before_join" "$after_join"
+    assert_file_exists "join mode: missing skill restored" \
+        "$SANDBOX_PROJECT/.claude/skills/promote-skill/SKILL.md"
+    assert_file_exists "join mode: missing scaffold restored" \
+        "$SANDBOX_PROJECT/.claude/rules/README.md"
+    teardown_sandbox
+
     # Join mode: legacy v1 header fallback — old repo with AGENTS-fabric header
     # should still have its platform inferred (backwards compatibility).
     setup_sandbox
@@ -715,7 +773,7 @@ test_edge_cases() {
 
         local tmpl_version
         tmpl_version="$(sed -n 's/.*version: \([^ |]*\).*/\1/p' "$SANDBOX_PROJECT/AGENTS.md" | head -1)"
-        assert_eq "version header: version is 2.1.0" "2.1.0" "$tmpl_version"
+        assert_eq "version header: version is 2.2.0" "2.2.0" "$tmpl_version"
 
         # v2: platform is in the **platform:** body line (not the header suffix)
         local platform_line

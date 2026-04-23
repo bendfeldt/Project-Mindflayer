@@ -7,6 +7,8 @@ description: >
   (primary), GCP, and cloud-agnostic patterns. Also trigger when the user mentions
   "microsoft/fabric provider", "azurerm", "google provider", Terraform workspaces,
   remote state, or module structure. Not project-specific — adapts to any client.
+version: 1.0.0
+updated: 2026-04-23
 ---
 
 # Terraform Scaffold

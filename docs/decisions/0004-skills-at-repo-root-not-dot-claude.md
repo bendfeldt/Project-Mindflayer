@@ -2,6 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-04-09
+**Scope clarified:** 2026-04-23 (see ADR-0014)
 **Deciders:** Michael Bendfeldt
 
 ## Context
@@ -10,6 +11,14 @@ Claude Code installs and reads skills from `~/.claude/skills/` (global) or
 `.claude/skills/` (project-level). A natural question when structuring this distribution
 repo is whether the source skills should live at `.claude/skills/` to mirror the
 install destination.
+
+> **Scope note:** This ADR is about *this distribution repo's own layout* —
+> where the **source of truth** for skills lives inside Project-Mindflayer.
+> It is **not** about how client repos are structured. Client repos created
+> by `install.sh --project --tools claude` receive a per-project `.claude/`
+> layout (see **ADR-0014**) where skills are copied as real files into
+> `./.claude/skills/` so they travel with the git clone (including into
+> Claude Cowork cloud VMs).
 
 ## Decision
 
@@ -40,3 +49,4 @@ We will keep skills at the repo root under `skills/` rather than under `.claude/
 
 - `/install.sh` — `SKILL_FILES` array shows the `skills/` → `~/.ai-toolkit/skills/` mapping
 - ADR-0002 — context on the SKILL.md open standard and multi-agent portability requirement
+- ADR-0014 — per-project `.claude/` layout for **client** repos (complements this ADR)

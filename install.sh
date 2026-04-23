@@ -374,12 +374,31 @@ SKILL_FILES=(
     "skills/branch-cleanup/SKILL.md"
     "skills/kimball-model/SKILL.md"
     "skills/promote-adr/SKILL.md"
+    "skills/promote-skill/SKILL.md"
     "skills/setup-repo/SKILL.md"
     "skills/smart-commit/SKILL.md"
     "skills/smart-pr/SKILL.md"
     "skills/terraform-scaffold/SKILL.md"
     "skills/terraform-scaffold/references/azure-devops-pipelines.md"
     "skills/terraform-scaffold/references/fabric-modules.md"
+)
+
+# Toolkit skill names (directory names under skills/).
+# Keep in sync with SKILL_FILES above. Used both by --global (symlink targets)
+# and --project (copy into ./.claude/skills/<name>/).
+TOOLKIT_SKILL_NAMES=(
+    adr branch-cleanup kimball-model promote-adr promote-skill
+    setup-repo smart-commit smart-pr terraform-scaffold
+)
+
+# Scaffold files laid down under ./.claude/ during --project install. Folders
+# are created with a README.md pointing at Anthropic docs so teams can populate
+# them as the engagement needs.
+SCAFFOLD_FILES=(
+    "settings/claude/scaffold/rules/README.md"
+    "settings/claude/scaffold/commands/README.md"
+    "settings/claude/scaffold/agents/README.md"
+    "settings/claude/scaffold/hooks/README.md"
 )
 
 DOC_FILES=(
@@ -402,6 +421,7 @@ DECISION_FILES=(
     "docs/decisions/0011-tech-stack-conventions-as-adrs.md"
     "docs/decisions/0012-universal-baseline-plus-personal-layer.md"
     "docs/decisions/0013-revert-personal-overlay-and-client-adrs.md"
+    "docs/decisions/0014-per-project-claude-layout.md"
     "docs/decisions/platform/0011-safety-rules-for-all-agents.md"
     "docs/decisions/platform/0012-fabric-medallion-layers.md"
     "docs/decisions/platform/0013-fabric-semantic-model-design.md"
@@ -445,8 +465,10 @@ CURSOR_FILES=(
 
 SCRIPT_FILES=(
     "tools/check-template-update.sh"
+    "tools/check-skills-update.sh"
     "tools/check-stores.sh"
     "tools/sync-global.sh"
+    "tools/sync-skills.sh"
     "tools/check-update.sh"
     "tools/uninstall.sh"
 )
@@ -531,8 +553,7 @@ install_global() {
     done
     if is_agent_selected claude; then
         mkdir -p "$HOME/.claude/skills"
-        local TOOLKIT_SKILL_NAMES="adr branch-cleanup kimball-model promote-adr setup-repo smart-commit smart-pr terraform-scaffold"
-        for name in $TOOLKIT_SKILL_NAMES; do
+        for name in "${TOOLKIT_SKILL_NAMES[@]}"; do
             safe_symlink "$toolkit_home/skills/$name" "$HOME/.claude/skills/$name"
         done
     fi
@@ -902,6 +923,35 @@ install_project() {
                 settings_tmp="$(fetch_to_tmp "settings/claude/settings-${PROFILE}.json")"
                 mkdir -p .claude
                 safe_copy "$settings_tmp" ".claude/settings.json"
+
+                # --- Per-project skills (committed to repo) ---
+                # Skills are copied as real files into ./.claude/skills/<name>/ so
+                # they are visible in the repo, travel with git clones (including
+                # to Claude Cowork cloud VMs), and can be inspected in PRs.
+                # ADR: per-project-claude-layout.
+                info "  ${BOLD}Skills (project):${RESET}"
+                for f in "${SKILL_FILES[@]}"; do
+                    local skill_src skill_dest
+                    skill_src="$(fetch_to_tmp "$f")"
+                    # f is "skills/<name>/..." — prefix with ".claude/"
+                    # to get ".claude/skills/<name>/..."
+                    skill_dest=".claude/$f"
+                    mkdir -p "$(dirname "$skill_dest")"
+                    safe_copy "$skill_src" "$skill_dest"
+                done
+
+                # --- Scaffold folders (rules/commands/agents/hooks) ---
+                # Pointer READMEs only; clients populate as needed.
+                info "  ${BOLD}Scaffold folders:${RESET}"
+                for f in "${SCAFFOLD_FILES[@]}"; do
+                    local scaffold_src scaffold_dest folder
+                    scaffold_src="$(fetch_to_tmp "$f")"
+                    # f is "settings/claude/scaffold/<folder>/README.md"
+                    folder="$(basename "$(dirname "$f")")"
+                    scaffold_dest=".claude/${folder}/README.md"
+                    mkdir -p "$(dirname "$scaffold_dest")"
+                    safe_copy "$scaffold_src" "$scaffold_dest"
+                done
                 ;;
             codex)
                 local codex_tmp
@@ -962,6 +1012,11 @@ install_project() {
     info "Created files:"
     [ -f ./AGENTS.md ] && info "  AGENTS.md"
     [ -f .claude/settings.json ] && info "  .claude/settings.json"
+    [ -d .claude/skills ] && info "  .claude/skills/ ($(ls -1 .claude/skills 2>/dev/null | wc -l | tr -d ' ') skills)"
+    [ -f .claude/rules/README.md ] && info "  .claude/rules/ (scaffold)"
+    [ -f .claude/commands/README.md ] && info "  .claude/commands/ (scaffold)"
+    [ -f .claude/agents/README.md ] && info "  .claude/agents/ (scaffold)"
+    [ -f .claude/hooks/README.md ] && info "  .claude/hooks/ (scaffold)"
     [ -f ./codex.md ] && info "  codex.md"
     [ -f ./gemini.md ] && info "  gemini.md"
     [ -f .cursor/rules/project.md ] && info "  .cursor/rules/project.md"

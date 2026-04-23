@@ -5,6 +5,8 @@ description: >
   title and description, create the PR, and set it to auto-complete. Use when the user
   says "create a PR", "open a pull request", "/pr", "raise a PR", or "submit this branch
   for review". Works for both GitHub and Azure DevOps repos.
+version: 1.0.0
+updated: 2026-04-23
 ---
 
 # Smart Pull Request

@@ -5,6 +5,8 @@ description: >
   becomes a global standard. Use when the user says "promote this ADR",
   "elevate this decision to toolkit", "this should be a global ADR",
   "/promote-adr", or asks to make a client decision reusable across engagements.
+version: 1.0.0
+updated: 2026-04-23
 ---
 
 # Promote ADR
