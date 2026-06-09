@@ -44,7 +44,8 @@ refreshes them from `~/.ai-toolkit/skills/`.
 ```
 
 Skills are committed so **Claude Cowork** (cloud VM sessions) sees them — `~/.claude/` is invisible to Cowork.
-Global install (`--global`) still uses `~/.claude/skills/` symlinks into `~/.ai-toolkit/skills/` for local Claude Code.
+The same `.claude/skills/` directory is also read by **Copilot CLI** as a project-skill location (per Copilot's own docs), so a `--project` install with `--tools copilot` (with or without `claude`) populates skills the same way.
+Global install (`--global`) symlinks skills into `~/.claude/skills/` (when `claude` is selected) and `~/.copilot/skills/` (when `copilot` is selected), both pointing at `~/.ai-toolkit/skills/`. See [ADR-0016](docs/decisions/0016-cross-agent-project-skills-and-copilot-global-symlinks.md).
 Bidirectional sync: edits to a client-repo skill can be promoted back to the toolkit via the `/promote-skill` skill (mirrors `/promote-adr`).
 
 ## File Layout

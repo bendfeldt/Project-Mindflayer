@@ -73,3 +73,15 @@ exploration work.
 - Superseded `templates/AGENTS-databricks.md` — original source of this convention
 - Medallion architecture: bronze (raw) → silver (cleansed) → gold (curated)
 - Databricks Unity Catalog best practices: catalog-per-environment is the recommended isolation model
+
+## Related
+
+- ADR-0029 — Five-layer medallion **container** layout
+  (landing/raw/base/enriched/curated). The schema layout in this ADR
+  uses the classic three-tier vocabulary (bronze/silver/gold) at the
+  catalog level; the container layout in ADR-0029 may be richer.
+  Engagements should decide whether to expose all five physical layers
+  as UC schemas or keep the schema layer aligned with the classic
+  three-tier presentation.
+- ADR-0030 — Unity Catalog external locations bind catalogs/schemas to
+  the underlying storage containers.

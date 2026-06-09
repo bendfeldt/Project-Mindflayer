@@ -2,6 +2,20 @@
 
 Quick-reference for common Terraform patterns across engagements.
 
+> **Authoritative platform decisions** for Terraform module structure,
+> state backend, authentication, and per-environment strategy live in the
+> ADRs, not here. This file is illustrative snippets only. For the
+> normative platform baseline see:
+>
+> - ADR-0021 — AzureRM remote state backend
+> - ADR-0022 — OIDC federated workload identity
+> - ADR-0023 — Single-root Terraform with per-resource modules
+> - ADR-0024 — Per-environment `.tfvars` strategy
+> - ADR-0038 — Pinned Terraform and provider versions
+>
+> ADR-0019 (the original Terraform Module Structure ADR) is **superseded**
+> by the four above.
+
 ## Remote State Backends
 
 ### Azure Storage

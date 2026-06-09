@@ -88,7 +88,8 @@ per-project only.
 - **Per-project customization** — teams can tweak a skill for one client without affecting others.
 - **Bidirectional sync** — `/promote-skill` closes the loop from client-repo edits back to the toolkit (symmetric with `/promote-adr`).
 - **Matches community convention** — repos feel "standard Claude Code" to outsiders.
-- **Non-Claude agents unaffected** — Codex, Gemini, Cursor, Copilot CLI continue to read `AGENTS.md` at the repo root and use `~/.ai-toolkit/skills/` via the global install.
+- **Non-Claude agents (Codex, Gemini, Cursor) unaffected** — they continue to read `AGENTS.md` at the repo root and use `~/.ai-toolkit/skills/` via the global install.
+- **Copilot CLI:** see [ADR-0016](0016-cross-agent-project-skills-and-copilot-global-symlinks.md) — Copilot reads project skills from `.claude/skills/` and global skills from `~/.copilot/skills/`. The toolkit installs to both.
 
 ### Negative
 

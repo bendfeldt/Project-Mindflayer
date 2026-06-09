@@ -422,6 +422,11 @@ DECISION_FILES=(
     "docs/decisions/0012-universal-baseline-plus-personal-layer.md"
     "docs/decisions/0013-revert-personal-overlay-and-client-adrs.md"
     "docs/decisions/0014-per-project-claude-layout.md"
+    "docs/decisions/0015-adr-location-hierarchy-and-scope.md"
+    "docs/decisions/0016-cross-agent-project-skills-and-copilot-global-symlinks.md"
+    "docs/decisions/templates/adr-platform-template.md"
+    "docs/decisions/templates/adr-client-template.md"
+    "docs/decisions/platform/README.md"
     "docs/decisions/platform/0011-safety-rules-for-all-agents.md"
     "docs/decisions/platform/0012-fabric-medallion-layers.md"
     "docs/decisions/platform/0013-fabric-semantic-model-design.md"
@@ -432,6 +437,24 @@ DECISION_FILES=(
     "docs/decisions/platform/0018-databricks-adr-triggers.md"
     "docs/decisions/platform/0019-terraform-module-structure.md"
     "docs/decisions/platform/0020-terraform-adr-triggers.md"
+    "docs/decisions/platform/0021-azurerm-remote-state-backend.md"
+    "docs/decisions/platform/0022-oidc-federated-workload-identity.md"
+    "docs/decisions/platform/0023-single-root-terraform-with-modules.md"
+    "docs/decisions/platform/0024-per-environment-tfvars-strategy.md"
+    "docs/decisions/platform/0025-databricks-vnet-injection.md"
+    "docs/decisions/platform/0026-service-endpoints-over-private-endpoints.md"
+    "docs/decisions/platform/0027-nat-gateway-egress-from-databricks-subnets.md"
+    "docs/decisions/platform/0028-adls-gen2-with-hierarchical-namespace.md"
+    "docs/decisions/platform/0029-medallion-container-layout.md"
+    "docs/decisions/platform/0030-unity-catalog-external-locations-per-container.md"
+    "docs/decisions/platform/0031-databricks-access-connector-managed-identity.md"
+    "docs/decisions/platform/0032-key-vault-rbac-authorization-model.md"
+    "docs/decisions/platform/0033-key-vault-backed-databricks-secret-scope.md"
+    "docs/decisions/platform/0034-personal-compute-cluster-policy-60min-autoterminate.md"
+    "docs/decisions/platform/0035-optional-modules-via-feature-flags.md"
+    "docs/decisions/platform/0036-dual-cicd-github-actions-and-azure-devops.md"
+    "docs/decisions/platform/0037-agent-ip-allowlisting-during-plan-apply.md"
+    "docs/decisions/platform/0038-pinned-terraform-and-provider-versions.md"
 )
 
 TEMPLATE_FILES=(
@@ -555,6 +578,16 @@ install_global() {
         mkdir -p "$HOME/.claude/skills"
         for name in "${TOOLKIT_SKILL_NAMES[@]}"; do
             safe_symlink "$toolkit_home/skills/$name" "$HOME/.claude/skills/$name"
+        done
+    fi
+    if is_agent_selected copilot; then
+        # Copilot CLI reads personal skills from ~/.copilot/skills/
+        # (per docs.github.com/copilot/how-tos/copilot-cli/customize-copilot/add-skills).
+        # Symlink each skill from the toolkit so edits in ~/.ai-toolkit/skills/
+        # propagate to both Claude and Copilot.
+        mkdir -p "$HOME/.copilot/skills"
+        for name in "${TOOLKIT_SKILL_NAMES[@]}"; do
+            safe_symlink "$toolkit_home/skills/$name" "$HOME/.copilot/skills/$name"
         done
     fi
 
@@ -880,11 +913,28 @@ install_project() {
             databricks)
                 adr_list="- ADR-0016: Databricks Unity Catalog Structure
 - ADR-0017: Databricks Compute Defaults
-- ADR-0018: Databricks ADR Triggers"
+- ADR-0018: Databricks ADR Triggers
+- ADR-0025: Databricks VNet Injection
+- ADR-0029: Five-Layer Medallion Container Layout
+- ADR-0030: Unity Catalog External Locations per Container
+- ADR-0031: Databricks Access Connector Managed Identity
+- ADR-0033: Key Vault-Backed Databricks Secret Scope
+- ADR-0034: Personal Compute Cluster Policy"
                 ;;
             terraform)
-                adr_list="- ADR-0019: Terraform Module Structure
-- ADR-0020: Terraform ADR Triggers"
+                adr_list="- ADR-0020: Terraform ADR Triggers
+- ADR-0021: AzureRM Remote State Backend
+- ADR-0022: OIDC Federated Workload Identity
+- ADR-0023: Single-Root Terraform with Modules
+- ADR-0024: Per-Environment tfvars Strategy
+- ADR-0026: Service Endpoints over Private Endpoints
+- ADR-0027: NAT Gateway Egress from Databricks Subnets
+- ADR-0028: ADLS Gen2 with Hierarchical Namespace
+- ADR-0032: Key Vault RBAC Authorization Model
+- ADR-0035: Optional Modules via Feature Flags
+- ADR-0036: Dual CI/CD — GitHub Actions and Azure DevOps
+- ADR-0037: Agent IP Allowlisting During Plan/Apply
+- ADR-0038: Pinned Terraform and Provider Versions"
                 ;;
             *)
                 adr_list="- (no platform ADRs registered for profile '${PROFILE}')"
@@ -915,6 +965,27 @@ install_project() {
         ok "AGENTS.md (universal template, profile: ${PROFILE})"
     fi
 
+    # --- Per-project skills (committed to repo, agent-neutral) ---
+    # Copilot CLI and Claude Code both read project-level skills from
+    # .claude/skills/ (per Copilot CLI docs:
+    #   docs.github.com/copilot/how-tos/copilot-cli/customize-copilot/add-skills
+    # and Claude Code's auto-discovery). Skills are copied as real files so they
+    # are visible in the repo, travel with git clones (including to Claude Cowork
+    # cloud VMs), and can be inspected in PRs.
+    # ADR: per-project-claude-layout (cross-agent project skills).
+    if is_agent_selected claude || is_agent_selected copilot; then
+        info "  ${BOLD}Skills (project):${RESET}"
+        for f in "${SKILL_FILES[@]}"; do
+            local skill_src skill_dest
+            skill_src="$(fetch_to_tmp "$f")"
+            # f is "skills/<name>/..." — prefix with ".claude/"
+            # to get ".claude/skills/<name>/..."
+            skill_dest=".claude/$f"
+            mkdir -p "$(dirname "$skill_dest")"
+            safe_copy "$skill_src" "$skill_dest"
+        done
+    fi
+
     # --- Tool-specific project configs ---
     for agent in "${AGENTS_TO_INSTALL[@]}"; do
         case "$agent" in
@@ -924,24 +995,9 @@ install_project() {
                 mkdir -p .claude
                 safe_copy "$settings_tmp" ".claude/settings.json"
 
-                # --- Per-project skills (committed to repo) ---
-                # Skills are copied as real files into ./.claude/skills/<name>/ so
-                # they are visible in the repo, travel with git clones (including
-                # to Claude Cowork cloud VMs), and can be inspected in PRs.
-                # ADR: per-project-claude-layout.
-                info "  ${BOLD}Skills (project):${RESET}"
-                for f in "${SKILL_FILES[@]}"; do
-                    local skill_src skill_dest
-                    skill_src="$(fetch_to_tmp "$f")"
-                    # f is "skills/<name>/..." — prefix with ".claude/"
-                    # to get ".claude/skills/<name>/..."
-                    skill_dest=".claude/$f"
-                    mkdir -p "$(dirname "$skill_dest")"
-                    safe_copy "$skill_src" "$skill_dest"
-                done
-
                 # --- Scaffold folders (rules/commands/agents/hooks) ---
                 # Pointer READMEs only; clients populate as needed.
+                # Claude-specific layout — Copilot does not consume these.
                 info "  ${BOLD}Scaffold folders:${RESET}"
                 for f in "${SCAFFOLD_FILES[@]}"; do
                     local scaffold_src scaffold_dest folder

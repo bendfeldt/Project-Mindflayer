@@ -24,7 +24,7 @@ When you start a session inside a repo, Claude Code loads:
 
 1. **`~/.claude/CLAUDE.md`** — your global standards (always loaded, every repo)
 2. **`{repo}/AGENTS.md`** — client and platform specifics (layered on top)
-3. **`~/.claude/skills/*`** — available everywhere, adapt to the repo context (Claude also auto-discovers from `~/.ai-toolkit/skills/` via @-includes)
+3. **`~/.claude/skills/*`** — available everywhere for Claude Code; symlinks into `~/.ai-toolkit/skills/`. For Copilot CLI the equivalent is `~/.copilot/skills/*` (also symlinks into the same toolkit source). Per-project, both agents read `<repo>/.claude/skills/` (committed real files).
 
 > **Key principle:** Global = what travels with you. Repo = what's unique to this client + tool. Skills read both layers and adapt. No duplication between layers.
 

@@ -345,6 +345,15 @@ test_global_install() {
     assert_is_symlink "skill (claude) dir is symlink: adr" "$SANDBOX_HOME/.claude/skills/adr"
     assert_is_symlink "skill (claude) dir is symlink: kimball-model" "$SANDBOX_HOME/.claude/skills/kimball-model"
 
+    # Skills also in ~/.copilot/skills/ for Copilot CLI auto-discovery
+    # (copilot was selected). Same symlink-to-toolkit-source pattern as Claude
+    # so edits propagate to all agents.
+    # See docs.github.com/copilot/how-tos/copilot-cli/customize-copilot/add-skills
+    assert_file_exists "skill (copilot): adr" "$SANDBOX_HOME/.copilot/skills/adr/SKILL.md"
+    assert_file_exists "skill (copilot): kimball-model" "$SANDBOX_HOME/.copilot/skills/kimball-model/SKILL.md"
+    assert_is_symlink "skill (copilot) dir is symlink: adr" "$SANDBOX_HOME/.copilot/skills/adr"
+    assert_is_symlink "skill (copilot) dir is symlink: kimball-model" "$SANDBOX_HOME/.copilot/skills/kimball-model"
+
     # Smart skills installed
     assert_file_exists "skill (toolkit): smart-commit" "$SANDBOX_HOME/.ai-toolkit/skills/smart-commit/SKILL.md"
     assert_file_exists "skill (toolkit): smart-pr" "$SANDBOX_HOME/.ai-toolkit/skills/smart-pr/SKILL.md"
@@ -593,6 +602,46 @@ test_project_install() {
     fi
 
     teardown_sandbox
+
+    # --- Regression: --project --tools copilot (no claude) populates skills ---
+    # Copilot CLI reads project skills from .claude/skills/ (per its own docs),
+    # so the per-project skill copy must NOT be gated on claude being selected.
+    # Bug history: skill copy was nested in the claude) case branch and a
+    # copilot-only project install produced no skills at all.
+    setup_sandbox
+    (cd "$SANDBOX_PROJECT" && run_installer --project --tools copilot --profile terraform --client X --prefix x --force --local) >/dev/null 2>&1
+
+    assert_file_exists "copilot-only project: .claude/skills/adr/SKILL.md" \
+        "$SANDBOX_PROJECT/.claude/skills/adr/SKILL.md"
+    assert_file_exists "copilot-only project: .claude/skills/setup-repo/SKILL.md" \
+        "$SANDBOX_PROJECT/.claude/skills/setup-repo/SKILL.md"
+    assert_file_exists "copilot-only project: .claude/skills/terraform-scaffold/SKILL.md" \
+        "$SANDBOX_PROJECT/.claude/skills/terraform-scaffold/SKILL.md"
+    # Nested skill files travel too
+    assert_file_exists "copilot-only project: nested skill file" \
+        "$SANDBOX_PROJECT/.claude/skills/terraform-scaffold/references/azure-devops-pipelines.md"
+    # Claude-specific scaffold/settings should NOT be present (claude not selected)
+    if [ -f "$SANDBOX_PROJECT/.claude/settings.json" ]; then
+        FAIL=$((FAIL + 1)); FAILURES+=("[$CURRENT_GROUP] copilot-only: .claude/settings.json should not exist")
+        printf "  \033[31mFAIL\033[0m copilot-only: .claude/settings.json should not exist\n"
+    else
+        PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m copilot-only: no .claude/settings.json (claude-only artifact)\n"
+    fi
+    if [ -f "$SANDBOX_PROJECT/.claude/rules/README.md" ]; then
+        FAIL=$((FAIL + 1)); FAILURES+=("[$CURRENT_GROUP] copilot-only: .claude/rules/ scaffold should not exist")
+        printf "  \033[31mFAIL\033[0m copilot-only: .claude/rules/ scaffold should not exist\n"
+    else
+        PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m copilot-only: no scaffold folders (claude-only artifact)\n"
+    fi
+    # Copilot's own per-project artifact must still be there
+    if [ -L "$SANDBOX_PROJECT/.github/copilot-instructions.md" ]; then
+        PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m copilot-only: copilot-instructions.md symlink\n"
+    else
+        FAIL=$((FAIL + 1)); FAILURES+=("[$CURRENT_GROUP] copilot-only: copilot-instructions.md symlink missing")
+        printf "  \033[31mFAIL\033[0m copilot-only: copilot-instructions.md symlink\n"
+    fi
+
+    teardown_sandbox
 }
 
 # =============================================================================
@@ -783,7 +832,7 @@ test_edge_cases() {
         # v2: ADR list injected for profile
         local content
         content="$(cat "$SANDBOX_PROJECT/AGENTS.md")"
-        assert_contains "v2: terraform ADRs injected" "$content" "ADR-0019"
+        assert_contains "v2: terraform ADRs injected" "$content" "ADR-0021"
         assert_contains "v2: safety ADR referenced" "$content" "ADR-0011"
     fi
     teardown_sandbox

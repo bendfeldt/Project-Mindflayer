@@ -1,8 +1,35 @@
 # ADR-0019: Terraform Module Structure and Operating Model
 
-**Status:** Accepted
+**Status:** Superseded
 **Date:** 2026-04-21
 **Deciders:** Michael Bendfeldt
+**Superseded-by:** ADR-0021, ADR-0022, ADR-0023, ADR-0024
+
+> **⚠ This ADR has been superseded.**
+>
+> The platform default for Terraform module structure is now described
+> by the combination of:
+>
+> - [ADR-0021](0021-azurerm-remote-state-backend.md) — AzureRM remote
+>   state backend.
+> - [ADR-0022](0022-oidc-federated-workload-identity.md) — OIDC
+>   federated workload identity (replaces the SP-with-secret pattern
+>   originally documented here).
+> - [ADR-0023](0023-single-root-terraform-with-modules.md) — single
+>   Terraform root with per-resource modules (replaces the
+>   per-environment-folder pattern originally documented here).
+> - [ADR-0024](0024-per-environment-tfvars-strategy.md) — per-environment
+>   `.tfvars` strategy.
+>
+> Use those ADRs for new engagements. The content below is preserved
+> for historical context only.
+>
+> The original ADR-0019 was authored before extended Azure Databricks
+> engagements clarified that single-root + per-env tfvars + OIDC scales
+> better than per-env folders + service-principal-with-secret. ADR-0023's
+> "General Principle" section explains the reasoning.
+
+---
 
 ## Context
 
