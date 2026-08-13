@@ -58,7 +58,8 @@ claude
 
 # List available skills
 /skills
-# You should see: adr, branch-cleanup, kimball-model, promote-adr, setup-repo, smart-commit, smart-pr, terraform-scaffold
+# You should see: adr, branch-cleanup, kimball-model, promote-adr, promote-skill,
+#                 release-notes, setup-repo, smart-commit, smart-pr, terraform-scaffold
 ```
 
 ---

@@ -64,6 +64,8 @@ The baseline is copied to each agent's global config (e.g. `~/.claude/CLAUDE.md`
 | **Smart PR** | `/pr` | Create pull requests with auto-complete for GitHub and Azure DevOps |
 | **Branch Cleanup** | `/prune` | Prune stale local branches whose upstream was deleted from origin |
 | **Promote ADR** | `/promote-adr` | Elevate a client-repo ADR to the toolkit as a global standard |
+| **Promote Skill** | `/promote-skill` | Elevate a client-repo skill to the toolkit as a global capability |
+| **Release Notes** | `/release-notes` | Turn a release PR into per-task "what changed / what to test" descriptions and a test email. Azure DevOps and GitHub |
 
 ## Platform Profiles
 

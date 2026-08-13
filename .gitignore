@@ -1,2 +1,11 @@
 .DS_Store
+
+# Python bytecode from skill scripts
+__pycache__/
+*.pyc
+
+# Local agent state and per-developer tooling
 .claude/settings.local.json
+.claude/.headroom_wrap_marker.json
+.serena/
+.vscode/

@@ -375,6 +375,16 @@ SKILL_FILES=(
     "skills/kimball-model/SKILL.md"
     "skills/promote-adr/SKILL.md"
     "skills/promote-skill/SKILL.md"
+    "skills/release-notes/SKILL.md"
+    "skills/release-notes/references/providers.md"
+    "skills/release-notes/references/templates.md"
+    "skills/release-notes/scripts/collect_evidence.py"
+    "skills/release-notes/scripts/config.py"
+    "skills/release-notes/scripts/make_outlook_draft.applescript"
+    "skills/release-notes/scripts/merge_release.py"
+    "skills/release-notes/scripts/providers.py"
+    "skills/release-notes/scripts/publish_descriptions.py"
+    "skills/release-notes/scripts/test_remote.py"
     "skills/setup-repo/SKILL.md"
     "skills/smart-commit/SKILL.md"
     "skills/smart-pr/SKILL.md"
@@ -388,7 +398,7 @@ SKILL_FILES=(
 # and --project (copy into ./.claude/skills/<name>/).
 TOOLKIT_SKILL_NAMES=(
     adr branch-cleanup kimball-model promote-adr promote-skill
-    setup-repo smart-commit smart-pr terraform-scaffold
+    release-notes setup-repo smart-commit smart-pr terraform-scaffold
 )
 
 # Scaffold files laid down under ./.claude/ during --project install. Folders
