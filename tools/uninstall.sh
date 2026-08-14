@@ -1,315 +1,121 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# =============================================================================
-# Consultant Toolkit Uninstaller
-# Removes files installed by install.sh. Dry-run by default.
-#
-# Usage:
-#   bash ~/.ai-toolkit/uninstall.sh --global              (dry-run: show what would be removed)
-#   bash ~/.ai-toolkit/uninstall.sh --global --confirm     (actually remove)
-#   bash ~/.ai-toolkit/uninstall.sh --project --confirm    (remove project config from cwd)
-#
-# Flags:
-#   --global    Remove global install (~/.ai-toolkit/, agent configs)
-#   --project   Remove project-level config from current directory
-#   --confirm   Actually delete files (default is dry-run)
-#   --force     Also remove user-modified files (backs up first)
-#   --help      Show this help
-# =============================================================================
-
-# --- Colors (with fallback for dumb terminals) --------------------------------
-
-if [ -t 1 ] && command -v tput >/dev/null 2>&1 && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
-    GREEN=$(tput setaf 2)
-    RED=$(tput setaf 1)
-    BOLD=$(tput bold)
-    RESET=$(tput sgr0)
-else
-    GREEN="" RED="" BOLD="" RESET=""
-fi
-
-# --- Helpers -----------------------------------------------------------------
-
-ok()    { printf "  %s✓%s %s\n" "$GREEN" "$RESET" "$1"; }
-err()   { printf "  %s✗%s %s\n" "$RED" "$RESET" "$1"; }
-
-usage() {
-    cat <<'USAGE'
-Usage: uninstall.sh [OPTIONS]
-
-Options:
-  --global    Remove global install (~/.ai-toolkit/, agent configs)
-  --project   Remove project-level config from current directory
-  --confirm   Actually delete files (default is dry-run)
-  --force     Also remove user-modified files (backs up first)
-  --help      Show this help
-
-Examples:
-  # Preview what would be removed (dry-run)
-  bash ~/.ai-toolkit/uninstall.sh --global
-
-  # Actually remove global install
-  bash ~/.ai-toolkit/uninstall.sh --global --confirm
-
-  # Remove project config including user-modified files
-  bash ~/.ai-toolkit/uninstall.sh --project --confirm --force
-
-USAGE
-    exit 0
-}
-
-# --- Defaults ----------------------------------------------------------------
-
 MODE=""
 CONFIRM=0
 FORCE=0
-
-# --- Counters ----------------------------------------------------------------
-
 REMOVED=0
-SKIPPED=0
-WOULD_REMOVE=0
+PRESERVED=0
 
-# --- Parse arguments ---------------------------------------------------------
+fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
+usage() {
+  cat <<'USAGE'
+Usage: uninstall.sh (--global | --project) [--confirm] [--force]
+
+Dry-run is the default. --confirm performs verified removal. Modified regular
+files are preserved unless --force is supplied; forced removal backs them up.
+USAGE
+}
 
 while [ $# -gt 0 ]; do
-    case "$1" in
-        --global)
-            [ -n "$MODE" ] && { err "--global and --project are mutually exclusive."; exit 1; }
-            MODE="global"
-            ;;
-        --project)
-            [ -n "$MODE" ] && { err "--global and --project are mutually exclusive."; exit 1; }
-            MODE="project"
-            ;;
-        --confirm)  CONFIRM=1      ;;
-        --force)    FORCE=1        ;;
-        --help)     usage          ;;
-        *)
-            err "Unknown option: $1"
-            printf "  Run with --help for usage.\n"
-            exit 1
-            ;;
-    esac
-    shift
+  case "$1" in
+    --global|--project)
+      requested="${1#--}"
+      [ -z "$MODE" ] || [ "$MODE" = "$requested" ] || fail "--global and --project are mutually exclusive"
+      MODE="$requested"
+      ;;
+    --confirm) CONFIRM=1 ;;
+    --force) FORCE=1 ;;
+    --help|-h) usage; exit 0 ;;
+    *) fail "unknown option: $1" ;;
+  esac
+  shift
 done
+[ -n "$MODE" ] || fail "specify --global or --project"
 
-if [ -z "$MODE" ]; then
-    err "Must specify --global or --project."
-    printf "  Run with --help for usage.\n"
-    exit 1
-fi
-
-# --- Core removal helpers ----------------------------------------------------
-
-# remove_file "$path" ["user-modified"]
-#   Removes a single file. If the second argument is "user-modified", the file
-#   is only removed when --force is set; otherwise it is skipped.
-remove_file() {
-    local path="$1"
-    local guarded="${2:-}"
-    local display="${path/#$HOME/~}"
-
-    [ ! -f "$path" ] && return
-
-    # User-modified files require --force
-    if [ "$guarded" = "user-modified" ] && [ "$FORCE" -eq 0 ]; then
-        if [ "$CONFIRM" -eq 1 ]; then
-            err "$display (skipped — user-modified, use --force)"
-        else
-            printf "  would skip:   %s (user-modified, use --force)\n" "$display"
-        fi
-        SKIPPED=$((SKIPPED + 1))
-        return
-    fi
-
-    if [ "$CONFIRM" -eq 0 ]; then
-        printf "  would remove: %s\n" "$display"
-        WOULD_REMOVE=$((WOULD_REMOVE + 1))
-        return
-    fi
-
-    # --force on guarded files: back up first
-    if [ "$guarded" = "user-modified" ] && [ "$FORCE" -eq 1 ]; then
-        cp "$path" "${path}.bak"
-    fi
-
-    rm -f "$path"
-    ok "$display"
-    REMOVED=$((REMOVED + 1))
+fingerprint() { cksum "$1" | awk '{print $1 ":" $2}'; }
+backup() {
+  local path="$1" candidate suffix=0
+  candidate="${path}.bak.$(date '+%Y%m%d%H%M%S')"
+  while [ -e "$candidate" ] || [ -L "$candidate" ]; do suffix=$((suffix + 1)); candidate="${path}.bak.$(date '+%Y%m%d%H%M%S').$suffix"; done
+  cp -R "$path" "$candidate"
+  printf ' backed up: %s\n' "$candidate"
 }
 
-# remove_dir "$path"
-#   Removes a directory recursively.
-remove_dir() {
-    local path="$1"
-    local display="${path/#$HOME/~}"
-
-    [ ! -d "$path" ] && return
-
-    if [ "$CONFIRM" -eq 0 ]; then
-        printf "  would remove: %s (entire directory)\n" "$display"
-        WOULD_REMOVE=$((WOULD_REMOVE + 1))
-        return
-    fi
-
-    rm -rf "$path"
-    ok "$display"
-    REMOVED=$((REMOVED + 1))
-}
-
-# remove_if_toolkit_skill "$path"
-#   Removes a skill entry at $path if it is toolkit-managed.
-#   Toolkit-managed means either:
-#     - a symlink (installer created it pointing at ~/.ai-toolkit/skills/<name>)
-#     - a real directory containing SKILL.md (legacy copies)
-remove_if_toolkit_skill() {
-    local path="$1"
-    local display="${path/#$HOME/~}"
-
-    # Symlink (possibly dangling if ~/.ai-toolkit/ was removed first) — always
-    # safe to unlink since the installer is the only thing that creates these.
-    if [ -L "$path" ]; then
-        if [ "$CONFIRM" -eq 0 ]; then
-            printf "  would remove: %s\n" "$display"
-            WOULD_REMOVE=$((WOULD_REMOVE + 1))
-            return
-        fi
-        rm -f "$path"
-        ok "$display"
-        REMOVED=$((REMOVED + 1))
-        return
-    fi
-
-    [ ! -d "$path" ] && return
-
-    if [ ! -f "$path/SKILL.md" ]; then
-        return
-    fi
-
-    if [ "$CONFIRM" -eq 0 ]; then
-        printf "  would remove: %s\n" "$display"
-        WOULD_REMOVE=$((WOULD_REMOVE + 1))
-        return
-    fi
-
-    rm -rf "$path"
-    ok "$display"
-    REMOVED=$((REMOVED + 1))
-}
-
-# remove_symlink "$path" "$expected_target"
-#   Removes a symlink only if it points to the expected target.
-remove_symlink() {
-    local path="$1"
-    local expected_target="$2"
-    local display="$path"
-
-    [ ! -L "$path" ] && return
-
-    local actual_target
-    actual_target="$(readlink "$path")"
-
-    if [ "$actual_target" != "$expected_target" ]; then
-        return
-    fi
-
-    if [ "$CONFIRM" -eq 0 ]; then
-        printf "  would remove: %s (symlink → %s)\n" "$display" "$expected_target"
-        WOULD_REMOVE=$((WOULD_REMOVE + 1))
-        return
-    fi
-
-    rm -f "$path"
-    ok "$display (symlink)"
-    REMOVED=$((REMOVED + 1))
-}
-
-# --- Global uninstall --------------------------------------------------------
-
-uninstall_global() {
+remove_recorded() {
+  local path="$1" kind="$2" proof="$3"
+  if [ "$kind" = line ]; then
+    [ -f "$path" ] || return
     if [ "$CONFIRM" -eq 1 ]; then
-        printf "%s=== Consultant Toolkit Uninstaller ===%s\n\n" "$BOLD" "$RESET"
-        printf "Global uninstall:\n\n"
+      temporary="${path}.mindflayer.tmp"
+      awk -v value="$proof" '$0 != value {print}' "$path" > "$temporary"
+      mv "$temporary" "$path"
+      [ -s "$path" ] || rm -f "$path"
+      printf ' removed line: %s from %s\n' "$proof" "$path"
     else
-        printf "%s=== Consultant Toolkit Uninstaller (dry-run) ===%s\n\n" "$BOLD" "$RESET"
-        printf "Global uninstall preview:\n\n"
+      printf ' would remove line: %s from %s\n' "$proof" "$path"
     fi
+    REMOVED=$((REMOVED + 1)); return
+  elif [ "$kind" = directory ]; then
+    [ -d "$path" ] || return
+    if [ -n "$(find "$path" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+      printf ' preserve: %s (not empty)\n' "$path"; PRESERVED=$((PRESERVED + 1)); return
+    fi
+    if [ "$CONFIRM" -eq 1 ]; then rmdir "$path"; printf ' removed: %s\n' "$path"; else printf ' would remove: %s\n' "$path"; fi
+    REMOVED=$((REMOVED + 1)); return
+  elif [ "$kind" = symlink ]; then
+    if [ ! -L "$path" ] || [ "$(readlink "$path")" != "$proof" ]; then
+      printf ' preserve: %s (symlink target changed)\n' "$path"; PRESERVED=$((PRESERVED + 1)); return
+    fi
+  elif [ "$kind" = file ]; then
+    [ -f "$path" ] || return
+    if [ "$(fingerprint "$path")" != "$proof" ]; then
+      if [ "$FORCE" -ne 1 ]; then printf ' preserve: %s (modified)\n' "$path"; PRESERVED=$((PRESERVED + 1)); return; fi
+      [ "$CONFIRM" -ne 1 ] || backup "$path"
+    fi
+  else
+    printf ' preserve: %s (unknown ownership class)\n' "$path"; PRESERVED=$((PRESERVED + 1)); return
+  fi
 
-    # 1. ~/.ai-toolkit/ — entire directory
-    remove_dir "$HOME/.ai-toolkit"
-
-    # 2. Claude skills (toolkit-managed only)
-    local TOOLKIT_SKILLS="adr branch-cleanup kimball-model promote-adr setup-repo smart-commit smart-pr terraform-scaffold"
-    for skill in $TOOLKIT_SKILLS; do
-        remove_if_toolkit_skill "$HOME/.claude/skills/$skill"
-    done
-
-    # 3. Claude config files (user-modified)
-    remove_file "$HOME/.claude/CLAUDE.md" "user-modified"
-    remove_file "$HOME/.claude/settings.json" "user-modified"
-
-    # 4. Other agent configs (toolkit-created, safe to remove)
-    remove_file "$HOME/.codex/AGENTS.md"
-    remove_file "$HOME/.gemini/GEMINI.md"
-    remove_file "$HOME/.cursor/rules.md"
-    remove_file "$HOME/.copilot/copilot-instructions.md"
+  if [ "$CONFIRM" -eq 1 ]; then rm -f "$path"; printf ' removed: %s\n' "$path"; else printf ' would remove: %s\n' "$path"; fi
+  REMOVED=$((REMOVED + 1))
 }
 
-# --- Project uninstall -------------------------------------------------------
-
-uninstall_project() {
-    if [ "$CONFIRM" -eq 1 ]; then
-        printf "%s=== Consultant Toolkit Uninstaller ===%s\n\n" "$BOLD" "$RESET"
-        printf "Project uninstall (%s):\n\n" "$(pwd)"
-    else
-        printf "%s=== Consultant Toolkit Uninstaller (dry-run) ===%s\n\n" "$BOLD" "$RESET"
-        printf "Project uninstall preview (%s):\n\n" "$(pwd)"
-    fi
-
-    # AGENTS.md — user fills in placeholders, so treat as user-modified
-    remove_file "AGENTS.md" "user-modified"
-
-    # Tool-specific configs (generated, safe to remove)
-    remove_file ".claude/settings.json"
-    remove_file "codex.md"
-    remove_file "gemini.md"
-    remove_file ".cursor/rules/project.md"
-
-    # Copilot symlink — only remove if it points to ../AGENTS.md
-    remove_symlink ".github/copilot-instructions.md" "../AGENTS.md"
+prune_empty_parents() {
+  local path="$1" stop="$2" parent
+  parent="$(dirname "$path")"
+  while [ "$parent" != "$stop" ] && [ "$parent" != / ] && [ -d "$parent" ]; do
+    rmdir "$parent" 2>/dev/null || break
+    parent="$(dirname "$parent")"
+  done
 }
 
-# --- Main --------------------------------------------------------------------
-
-if [ "$MODE" = "global" ]; then
-    uninstall_global
-elif [ "$MODE" = "project" ]; then
-    uninstall_project
-fi
-
-# --- Summary -----------------------------------------------------------------
-
-printf "\n"
-
-if [ "$CONFIRM" -eq 0 ]; then
-    printf "Would remove %d item%s" "$WOULD_REMOVE" "$([ "$WOULD_REMOVE" -ne 1 ] && printf "s" || true)"
-    if [ "$SKIPPED" -gt 0 ]; then
-        printf ", skip %d item%s" "$SKIPPED" "$([ "$SKIPPED" -ne 1 ] && printf "s" || true)"
-    fi
-    printf ".\n"
-
-    if [ "$WOULD_REMOVE" -gt 0 ]; then
-        printf "Re-run with --confirm to actually remove files.\n"
-    fi
-    if [ "$SKIPPED" -gt 0 ]; then
-        printf "Re-run with --confirm --force to also remove user-modified files.\n"
-    fi
+if [ "$MODE" = global ]; then
+  STATE="$HOME/.ai-toolkit/managed.tsv"
+  STOP="$HOME"
 else
-    printf "Removed %d item%s" "$REMOVED" "$([ "$REMOVED" -ne 1 ] && printf "s" || true)"
-    if [ "$SKIPPED" -gt 0 ]; then
-        printf ", skipped %d item%s" "$SKIPPED" "$([ "$SKIPPED" -ne 1 ] && printf "s" || true)"
-    fi
-    printf ".\n"
+  STATE="$(pwd)/.mindflayer-managed.tsv"
+  STOP="$(pwd)"
 fi
+
+[ -f "$STATE" ] || fail "ownership record not found: $STATE"
+
+# Children are removed before parents; the state file itself is removed last.
+reverse_state="$(mktemp)"
+trap 'rm -f "$reverse_state"' EXIT
+awk '{rows[NR]=$0} END {for (i=NR; i>=1; i--) print rows[i]}' "$STATE" > "$reverse_state"
+while IFS=$'\t' read -r path kind proof; do
+  [ -n "$path" ] || continue
+  remove_recorded "$path" "$kind" "$proof"
+  [ "$CONFIRM" -ne 1 ] || prune_empty_parents "$path" "$STOP"
+done < "$reverse_state"
+
+if [ "$CONFIRM" -eq 1 ] && [ "$PRESERVED" -eq 0 ]; then
+  rm -f "$STATE"
+  if [ "$MODE" = global ]; then rmdir "$HOME/.ai-toolkit" 2>/dev/null || true; fi
+elif [ "$CONFIRM" -eq 1 ]; then
+  printf ' ownership record retained for preserved artifacts: %s\n' "$STATE"
+else
+  printf ' ownership record retained: %s\n' "$STATE"
+fi
+printf 'Summary: %d removable, %d preserved\n' "$REMOVED" "$PRESERVED"

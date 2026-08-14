@@ -1,0 +1,7 @@
+interface:
+  display_name: "Release Notes"
+  short_description: "Prepare provider-aware release notes"
+  default_prompt: "Use $release-notes to prepare provider-aware release notes."
+policy:
+  allow_implicit_invocation: true
+

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Smart Commit"
+  short_description: "Create a focused reviewed commit"
+  default_prompt: "Use $smart-commit to create a focused reviewed commit."
+policy:
+  allow_implicit_invocation: true
+

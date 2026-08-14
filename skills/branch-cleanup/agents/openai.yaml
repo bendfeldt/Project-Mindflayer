@@ -1,0 +1,7 @@
+interface:
+  display_name: "Branch Cleanup"
+  short_description: "Review and remove stale local branches"
+  default_prompt: "Use $branch-cleanup to review and remove stale local branches."
+policy:
+  allow_implicit_invocation: true
+

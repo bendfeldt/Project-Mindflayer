@@ -1,126 +1,43 @@
-# Consultant Toolkit
+# Project-Mindflayer
 
-Portable AI coding assistant configuration for consultants working across multiple client engagements. Separates your personal standards from project-specific settings — switch between clients by changing directories.
+Portable configuration and operational skills for Claude Code, Codex, Gemini CLI, Cursor, and GitHub Copilot.
 
-Works across **Claude Code**, **Codex**, **Gemini CLI**, **Cursor**, and **GitHub Copilot**.
+## Install
 
-## Quick Install
-
-```bash
-# Global setup — installs skills, docs, templates, and settings to ~/
-bash <(curl -sL https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh) --global
-
-# Project setup — creates AGENTS.md + tool configs in the current repo
-cd ~/repos/my-project
-bash <(curl -sL https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh)
-```
-
-The installer detects which coding agents are installed on your machine and prompts you to choose which to configure.
-
-## What It Does
-
-Configuration is layered — a universal baseline travels with you, while repo-level config is unique to each client and platform:
-
-| Layer | File | Scope |
-|-------|------|-------|
-| **Baseline** | `~/.ai-toolkit/AGENTS.md` | Universal data-consultant standards, Hard Rules, stack preferences, compliance awareness |
-| **Repo** | `./AGENTS.md` | Client name, platform, build commands, branching rules, safety rules |
-| **Skills** | `~/.ai-toolkit/skills/` | Reusable capabilities that adapt to all layers |
-
-The baseline is copied to each agent's global config (e.g. `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`) at install time, giving cross-agent parity. When you start a session, the agent loads global config + repo config + skills. No duplication between layers.
-
-## Supported Agents
-
-| Agent | Global Config | Project Config | Skills |
-|-------|:---:|:---:|:---:|
-| Claude Code | `~/.claude/CLAUDE.md` | `AGENTS.md` + `.claude/settings.json` | `~/.ai-toolkit/skills/` + `~/.claude/skills/` |
-| Codex | `~/.codex/AGENTS.md` | `AGENTS.md` + `codex.md` | via SKILL.md standard |
-| Gemini CLI | `~/.gemini/GEMINI.md` | `AGENTS.md` | via SKILL.md standard |
-| Cursor | `~/.cursor/rules.md` | `AGENTS.md` | via SKILL.md standard |
-| Copilot | `~/.copilot/copilot-instructions.md` | `.github/copilot-instructions.md` -> `AGENTS.md` | via AGENTS.md |
-
-## Installer Options
-
-| Flag | Description |
-|------|-------------|
-| `--global` | Install to user-level config directories |
-| `--project` | Set up current repo (default if `--global` not set) |
-| `--tools claude,codex,gemini,cursor,copilot` | Skip agent selection prompt |
-| `--force` | Overwrite existing files without prompting |
-| `--profile terraform\|databricks\|fabric` | Skip platform selection prompt |
-| `--local` | Install from local checkout instead of GitHub |
-| `--client NAME` | Client name for project install (skips prompt) |
-| `--prefix PREFIX` | Resource prefix for project install (skips prompt) |
-
-## Included Skills
-
-| Skill | Command | Description |
-|-------|---------|-------------|
-| **ADR** | `/adr` | Architecture Decision Records with domain-specific prompts per platform |
-| **Terraform Scaffold** | `/terraform-scaffold` | IaC project scaffolding with environment parity and module patterns |
-| **Kimball Model** | `/kimball-model` | Dimensional model design with platform-aware DDL output |
-| **Setup Repo** | `/setup-repo` | Auto-bootstrap repos with AGENTS.md + tool configs. Idempotent — safe to run on existing Mindflayer repos (switches to join mode for new teammates). |
-| **Smart Commit** | `/commit` | Review changes and generate business-friendly commit messages |
-| **Smart PR** | `/pr` | Create pull requests with auto-complete for GitHub and Azure DevOps |
-| **Branch Cleanup** | `/prune` | Prune stale local branches whose upstream was deleted from origin |
-| **Promote ADR** | `/promote-adr` | Elevate a client-repo ADR to the toolkit as a global standard |
-| **Promote Skill** | `/promote-skill` | Elevate a client-repo skill to the toolkit as a global capability |
-| **Release Notes** | `/release-notes` | Turn a release PR into per-task "what changed / what to test" descriptions and a test email. Azure DevOps and GitHub |
-
-## Platform Profiles
-
-Each profile provides a repo template (`AGENTS.md`) and matching permission settings:
-
-| Profile | Auto-approved | Always asks |
-|---------|--------------|-------------|
-| **terraform** | `init`, `validate`, `fmt`, `plan` | `apply`, `destroy`, `import` |
-| **databricks** | `bundle validate/summary`, catalog list | `bundle deploy/run/destroy` |
-| **fabric** | `az account show/list`, pytest, ruff | `az rest` mutations, `az login` |
-
-## Updating
-
-Check if a newer version of the toolkit is available:
+From a checkout:
 
 ```bash
-~/.ai-toolkit/check-update.sh
+bash install.sh --global --tools claude,codex --local
 ```
 
-Re-run the global install to get the latest skills, templates, and settings:
+Into a client repository:
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh) --global --force
+bash /path/to/Project-Mindflayer/install.sh --project \
+  --tools claude,codex --profile terraform \
+  --client "Client name" --prefix client --local
 ```
 
-Check existing repos for template drift:
+Remote installation uses the same flags without `--local`. Existing files are skipped by default. `--force` explicitly authorizes replacement and creates timestamped backups.
+
+## Contents
+
+- 10 public skills, including nested scripts and references.
+- One portable global baseline and one thin project template.
+- Consumer-specific settings and compatibility shims.
+- Manifest-driven install, drift, sync, update, store, and uninstall tooling.
+
+`manifest.tsv` is the canonical artifact inventory. Its version column tracks artifact lifecycle versions. `VERSION` in `install.sh` is the toolkit release. The header in `templates/AGENTS.md` is the template schema version.
+
+See [architecture](docs/architecture.md), [operating standards](docs/operating-standards.md), and the [how-to guide](how-to-guide.md).
+
+## Safety
+
+The installer never silently replaces existing agent configuration. Uninstall is dry-run by default and removes only verified toolkit-owned artifacts. The toolkit repository does not install its own generated `.claude/` client layout.
+
+## Validate
 
 ```bash
-~/.ai-toolkit/check-template-update.sh
+bash tests/test-install.sh
+python3 -m unittest discover -s tests -p 'test_*.py'
 ```
-
-## Uninstalling
-
-Remove the global toolkit install:
-
-```bash
-# Preview what would be removed (dry-run)
-~/.ai-toolkit/uninstall.sh --global
-
-# Actually remove
-~/.ai-toolkit/uninstall.sh --global --confirm
-```
-
-Remove project-level config from the current repo:
-
-```bash
-~/.ai-toolkit/uninstall.sh --project --confirm
-```
-
-The uninstaller is safe by default — it shows what would be removed without deleting anything. Use `--confirm` to actually remove files, and `--force` to also remove files you may have customized.
-
-## Detailed Guide
-
-See [how-to-guide.md](how-to-guide.md) for complete documentation on skills, permissions, day-to-day workflow, and customization.
-
-## License
-
-MIT

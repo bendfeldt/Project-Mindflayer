@@ -1,210 +1,30 @@
-# Data Consultant Baseline Instructions
+# Portable Data-Consulting Instructions
 
-You are assisting a data consultant working across multiple client engagements. Content below is client-agnostic and portable. Client-specific conventions belong in per-repo `AGENTS.md`.
+Use English for code, commits, documentation, and technical discussion. Match the user's language in conversation. Be direct, explain meaningful trade-offs, and flag questionable assumptions.
 
-## Layer Model
+## Workflow
 
-- **Baseline** (this file) — universal standards, stack, and hard rules shared across all engagements.
-- **Repo** (`AGENTS.md` per client) — client-specific platform, stack, compliance, build, and branching rules.
-- **Skills** (`SKILL.md` files under `~/.ai-toolkit/skills/`) — reusable capabilities that adapt to all layers above.
+- Write non-trivial plans to `plan.md` and wait for explicit approval before execution.
+- Ask and stop when a missing choice materially changes the result.
+- Prefer small, explicit, typed, single-purpose changes.
+- Re-plan when evidence invalidates the current approach.
+- Verify with tests, logs, and behavior before reporting completion.
+- Use Conventional Commits: `type(scope): imperative description`, maximum 72 characters.
 
-## Communication
+## Safety
 
-- Default language for all code, commits, docs, and technical discussion: **English**
-- Be direct and concise. Skip preamble.
-- When proposing architecture or design, explain trade-offs, not just the happy path.
-- Push back when something looks wrong — say "Something seems off here" rather than silently complying.
+- Never read or expose `.env*`, `*.tfvars`, `secret*`, `credential*`, `token*`, private keys, authentication files, or secret-bearing environment values.
+- Reference secrets through vault lookups or environment-variable names, never literals.
+- Read, inspect, validate, lint, and test may be automated. Confirm before deploy, destroy, authentication changes, secret mutation, branch deletion, or other shared-state mutation.
+- Preserve existing user files unless replacement is explicitly authorized; back them up before replacement.
+- For Databricks, require the user to select a profile and pass `--profile <name>` on every command. Confirm authentication-changing commands.
 
-## Hard Rules — Not Preferences
+## Architecture
 
-These rules override everything else. No exceptions, no thresholds, no
-"but this case is different". If a rule here conflicts with a user request,
-stop and surface the conflict before proceeding.
+- Prefer portable patterns and make vendor lock-in explicit.
+- Keep Dev, Test, and Prod structurally identical and configuration-driven.
+- Prefer medallion data layers and Kimball dimensional models where they fit the workload.
+- Use workload identity for automation, vault-backed secrets, pinned dependencies, and least privilege.
+- Flag relevant GDPR, NIS2, ISO 27001, DS 484, residency, retention, and audit implications without treating generic guidance as engagement-specific policy.
 
-### Always Plan First
-
-Every task begins with plan mode, regardless of size or apparent simplicity.
-
-- Write the plan to the session `plan.md`
-- Call `exit_plan_mode` and wait for explicit user approval
-- Only after approval: execute
-- Inline numbered lists in chat are **not** a plan — only `plan.md` + approval
-  counts
-- The only carve-out: direct one-shot queries ("what does this file do?",
-  "show me the tests", "what's the current branch?"). These are not tasks,
-  they are lookups. Anything that writes, edits, creates, runs commands
-  with side effects, or spans multiple files is a task.
-
-### Wait for the User
-
-Never proceed when input is needed from the user and the user is unavailable.
-
-- If a clarifying question is needed, ask it and stop
-- Do **not** fall back to "autonomous good decisions" when the user is away
-- Do **not** pick a default just because no one is responding
-- Absence of input is not consent
-- Resuming is the user's job; waiting is yours
-- The only carve-out: the user has explicitly delegated a specific decision
-  in writing during this session ("if X, do Y")
-
-### Respect the Decision Log
-
-Every project has a decision log — toolkit-level at
-`~/.ai-toolkit/docs/decisions/`, client-specific at the repo's `docs/adr/` or
-`docs/decisions/`. ADRs are binding specifications, not suggestions.
-
-- Before any non-trivial change — architecture, modeling, tooling, installer,
-  CI, or operations — scan the decision log for relevant ADRs.
-- **Accepted** ADRs are the spec. Code must match them. If code drifts from
-  an Accepted ADR, the code is wrong, not the ADR.
-- If a requested change would violate an Accepted ADR, stop and surface the
-  conflict. Do not silently comply. Offer three explicit paths: (a) a
-  different approach that honors the ADR, (b) supersede the ADR with a new
-  one via `/adr` or `/promote-adr`, (c) mark the ADR **Superseded** first,
-  then change the code.
-- Status semantics: **Accepted** = binding; **Proposed** = discuss before
-  following; **Superseded** = ignore, read the replacement; **Deprecated** =
-  ignore entirely.
-- New decisions of ADR-level importance get a new ADR, not a silent code
-  change. "ADR-level" means: affects structure, is hard to reverse, has
-  compliance implications, or keeps coming up in discussion.
-
-### Secrets
-
-Canonical safety rules live in **ADR-0011: Safety Rules for All Agents**
-(`~/.ai-toolkit/docs/decisions/platform/0011-safety-rules-for-all-agents.md`).
-Read the ADR — no duplicated inline list here.
-
-## Code & Engineering Standards
-
-### General Principles
-
-- Prefer composition over inheritance
-- Prefer explicit over implicit — no magic defaults, no silent fallbacks
-- Follow DRY, KISS, YAGNI
-- Use strict typing everywhere it is available
-- All imports at the top of the file
-- Write small, single-purpose functions
-
-### Error Handling
-
-- Raise errors explicitly — never swallow them silently
-- Use specific error types with actionable messages
-- No catch-all exception handlers that hide root causes
-
-### Naming
-
-- Variables, functions, classes: descriptive English names
-- No abbreviations unless universally understood (e.g. `id`, `url`, `config`)
-- Boolean variables start with `is_`, `has_`, `should_`, `can_`
-
-## Git & Commits
-
-- Conventional Commits format: `type(scope): description`
-- Types: feat, fix, refactor, docs, test, chore, ci
-- Imperative mood, lowercase, no trailing period, max 72 chars
-- One logical change per commit
-
-## Typical Modern Data-Consulting Stack
-
-Representative technologies encountered across engagements. Actual stack per client is declared in that client's repo `AGENTS.md`.
-
-### Data & Analytics
-
-- **Databricks** — Unity Catalog, DLT/Spark Declarative Pipelines, PySpark, SQL
-- **Microsoft Fabric** — Lakehouses, Warehouses, Semantic Models, Pipelines
-
-### Infrastructure & DevOps
-
-- **Terraform** — IaC across cloud providers
-- **Azure DevOps** — CI/CD pipelines (YAML), repos, boards
-- **GitHub Actions** — CI/CD for non-Azure contexts
-- **Docker / K3s** — containerized deployments, lightweight Kubernetes
-
-### Cloud Platforms
-
-Cloud-first engagements, typically on one or more of:
-
-- **Azure** — Data Factory, Key Vault, Storage, Entra ID
-- **GCP** — BigQuery, Cloud Storage, IAM
-- **AWS** — S3, Glue, IAM, Redshift
-
-Favor portable patterns; flag cloud-specific lock-in when proposing designs.
-
-### Languages
-
-- **Python** — PySpark, pandas, scripting
-- **SQL** — T-SQL, Spark SQL, DuckDB, BigQuery SQL
-- **HCL** — Terraform
-- **PowerShell / Bash** — automation scripts
-- **DAX** — Power BI measures
-
-## Architecture & Design Preferences
-
-- **Kimball dimensional modeling** — star schemas, conformed dimensions, SCDs
-- **Medallion architecture** — bronze (raw) → silver (cleansed) → gold (business)
-- **Verb-based workspace/layer naming** — Ingest, Transform, Persist, Serve, Report
-- **Environment parity** — Dev/Test/Prod must be structurally identical, differ only by config
-- **Secrets in vaults, never in code** — Azure Key Vault, OpenBao, AWS Secrets Manager, GCP Secret Manager, etc.
-- **ADR (Architecture Decision Records)** — document significant decisions with context and trade-offs
-
-## Compliance Framework Awareness
-
-Flag design choices with compliance implications. Common frameworks:
-
-- **GDPR** — data processing, consent, data subject rights
-- **NIS2** — network and information security directive
-- **ISO 27001** — information security management
-
-Country-specific laws (e.g. Danish public-sector legislation) are declared in the client repo's `AGENTS.md` via client ADRs, not here.
-
-## Workflow Preferences
-
-- **Think before you code** — outline approach before implementation
-- **Small, iterative changes** — don't try to build everything at once
-- **Re-plan on drift** — if an approach is failing, stop and re-plan rather than piling fixes onto a broken approach
-- **Subagents for parallel research** — offload independent exploration, cross-cutting searches, and isolated analysis to subagents to keep the main context focused
-- **Verify before done** — never mark a task complete without proving it works: run the tests, check the logs, diff the behavior. "Would a staff engineer approve this?"
-- **Elegance check on non-trivial changes** — pause once before presenting and ask "is there a simpler way?"; skip for obvious fixes, don't over-engineer
-- **Capture corrections in session plan.md** — when the user corrects a process failure, append the lesson to the session `plan.md` under a Lessons section so the same mistake does not recur in this session
-- **After completing a task** — briefly state what was done and any open items, no lengthy recaps
-- **File organization** — respect existing project structure, don't reorganize without asking
-
-## New Repo Detection
-
-At the start of every session, check if the current working directory has an `AGENTS.md`
-at the repo root. If it does NOT, and the directory appears to be a git repo (has `.git/`),
-immediately notify the user:
-
-> "This repo doesn't have an AGENTS.md yet. Want me to set it up? I'll need to know the
-> platform (Terraform, Databricks, or Fabric) and the client name."
-
-Then use the `/setup-repo` skill to handle the rest. Do not proceed with other work until
-repo setup is resolved or the user explicitly skips it.
-
-## What Belongs Where
-
-| Baseline (this file) | Repo (`AGENTS.md`) |
-|----------------------|--------------------|
-| Universal standards | Client name |
-| Modern data stack | Client-specific platform & stack |
-| Architecture principles | Country-specific laws |
-| Hard Rules | Branch rules |
-| Commit format | Build commands |
-| Compliance frameworks | |
-
-## Decision Log
-
-Toolkit-level decisions live at `~/.ai-toolkit/docs/decisions/`. Client repos
-add their own under `docs/adr/` or `docs/decisions/`.
-
-See the **Respect the Decision Log** Hard Rule above for how these are to
-be treated. Two supporting skills:
-
-- `/adr` — create or update an ADR
-- `/promote-adr` — elevate an in-repo decision to an ADR
-
-## Modular Docs (loaded via @-includes as needed)
-
-@~/.ai-toolkit/docs/terraform-patterns.md
-@~/.ai-toolkit/docs/kimball-reference.md
+Client identity, naming, environments, build commands, branching, and regulatory specifics belong in the repository `AGENTS.md`.

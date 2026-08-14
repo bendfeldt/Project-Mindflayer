@@ -1,1137 +1,395 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# =============================================================================
-# Consultant Toolkit Installer
-# Cross-platform (macOS + Linux) — curl-installable or run from local checkout
-# =============================================================================
-
-VERSION="1.0.0"
+VERSION="3.0.0"
 REPO_URL="https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main"
-
-# --- Defaults ----------------------------------------------------------------
+KNOWN_TOOLS="claude codex gemini cursor copilot"
+VALID_PROFILES="terraform databricks fabric"
 
 INSTALL_MODE=""
 SELECTED_TOOLS=""
-FORCE=0
 PROFILE=""
-LOCAL=""
 CLIENT_NAME=""
 CLIENT_PREFIX=""
+LOCAL=0
+REPLACE=0
+TMP_ROOT=""
+OWNERSHIP_FILE=""
+AGENTS_TO_INSTALL=()
 
-# --- Colors (with fallback for dumb terminals) -------------------------------
-
-if [ -t 1 ] && command -v tput >/dev/null 2>&1 && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
-    GREEN=$(tput setaf 2)
-    RED=$(tput setaf 1)
-    YELLOW=$(tput setaf 3)
-    BOLD=$(tput bold)
-    RESET=$(tput sgr0)
-else
-    GREEN="" RED="" YELLOW="" BOLD="" RESET=""
-fi
-
-# --- Helpers -----------------------------------------------------------------
-
-info()  { printf "%s\n" "$1"; }
-ok()    { printf "  %s✓%s %s\n" "$GREEN" "$RESET" "$1"; }
-warn()  { printf "  %s⚠%s %s\n" "$YELLOW" "$RESET" "$1"; }
-err()   { printf "  %s✗%s %s\n" "$RED" "$RESET" "$1"; }
-
+info() { printf '%s\n' "$*"; }
+warn() { printf ' ! %s\n' "$*"; }
+fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
 usage() {
-    cat <<'USAGE'
-Usage: install.sh [OPTIONS]
+  cat <<'USAGE'
+Usage: install.sh (--global | --project) --tools TOOL[,TOOL...] [OPTIONS]
 
 Options:
-  --global              Install to user-level (~/.claude/, ~/.codex/, etc.)
-  --project             Install to current directory (default if --global not set)
-  --tools TOOLS         Comma-separated list of agents: claude,codex,gemini,cursor,copilot
-  --force               Overwrite existing files without prompting
-  --profile PROFILE     Platform profile: terraform, databricks, fabric
-  --local               Use local checkout instead of fetching from GitHub
-  --client NAME         Client name for project install (e.g., PostNord)
-  --prefix PREFIX       Resource prefix for project install (e.g., pn)
-  --help                Show this help
+  --global          Install user-level artifacts
+  --project         Install artifacts in the current repository
+  --tools LIST      claude,codex,gemini,cursor,copilot
+  --profile NAME    terraform, databricks, or fabric (project mode)
+  --client NAME     Client name (new project install)
+  --prefix PREFIX   Resource prefix (new project install)
+  --force           Authorize replacement; existing files are backed up first
+  --local           Read from this checkout instead of GitHub
+  --help            Show this help
 
-Examples:
-  # Global install (interactive agent selection)
-  bash install.sh --global
-
-  # Global install via curl
-  bash <(curl -sL https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh) --global
-
-  # Project setup with profile
-  bash install.sh --profile terraform --tools claude,codex
-
+Existing files are preserved unless --force explicitly authorizes replacement.
+The toolkit repository itself is not a valid --project target.
 USAGE
-    exit 0
 }
 
-# --- Source resolution -------------------------------------------------------
-
-resolve_source() {
-    if [ -n "$LOCAL" ]; then
-        return
-    fi
-
-    # Detect if running from curl pipe (stdin is script, not a real file)
-    if [ -f "${BASH_SOURCE[0]:-}" ]; then
-        local script_path
-        script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        # Verify it looks like the repo (global/ dir exists)
-        if [ -d "$script_path/global" ]; then
-            LOCAL=1
-            SCRIPT_DIR="$script_path"
-            return
-        fi
-    fi
-
-    # Not local — use remote
-    LOCAL=0
+cleanup() {
+  if [ -n "$TMP_ROOT" ] && [ -d "$TMP_ROOT" ]; then
+    rm -rf "$TMP_ROOT"
+  fi
 }
+trap cleanup EXIT
 
-TMPDIR_CLEANUP=""
-
-fetch_file() {
-    local rel_path="$1"
-    local dest="$2"
-
-    local dest_dir
-    dest_dir="$(dirname "$dest")"
-    mkdir -p "$dest_dir"
-
-    if [ "$LOCAL" = "1" ]; then
-        cp "$SCRIPT_DIR/$rel_path" "$dest"
-    else
-        if ! curl -sfL --proto =https "${REPO_URL}/${rel_path}" -o "$dest"; then
-            err "Failed to fetch: $rel_path"
-            return 1
-        fi
-    fi
-}
-
-# Fetch a file to a temp location and print the path
-# Uses full relative path to avoid basename collisions (e.g., multiple SKILL.md)
-fetch_to_tmp() {
-    local rel_path="$1"
-    if [ -z "$TMPDIR_CLEANUP" ]; then
-        TMPDIR_CLEANUP="$(mktemp -d)"
-    fi
-    local tmp_file="$TMPDIR_CLEANUP/$rel_path"
-    mkdir -p "$(dirname "$tmp_file")"
-    fetch_file "$rel_path" "$tmp_file"
-    printf "%s" "$tmp_file"
-}
-
-cleanup_tmp() {
-    if [ -n "$TMPDIR_CLEANUP" ] && [ -d "$TMPDIR_CLEANUP" ]; then
-        rm -rf "$TMPDIR_CLEANUP"
-    fi
-}
-trap cleanup_tmp EXIT
-
-# --- Flag parsing ------------------------------------------------------------
-
-require_arg() {
-    if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" == --* ]]; then
-        err "$1 requires a value"
-        exit 1
-    fi
+require_value() {
+  [ $# -ge 2 ] && [ -n "$2" ] && [ "${2#--}" = "$2" ] || fail "$1 requires a value"
 }
 
 parse_args() {
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --global)   INSTALL_MODE="global" ;;
-            --project)  INSTALL_MODE="project" ;;
-            --tools)    require_arg "$1" "${2:-}"; shift; SELECTED_TOOLS="$1" ;;
-            --force)    FORCE=1 ;;
-            --profile)  require_arg "$1" "${2:-}"; shift; PROFILE="$1" ;;
-            --local)    LOCAL=1 ;;
-            --client)   require_arg "$1" "${2:-}"; shift; CLIENT_NAME="$1" ;;
-            --prefix)   require_arg "$1" "${2:-}"; shift; CLIENT_PREFIX="$1" ;;
-            --help|-h)  usage ;;
-            *)          err "Unknown option: $1"; exit 1 ;;
-        esac
-        shift
-    done
-}
-
-# --- Agent detection ---------------------------------------------------------
-
-KNOWN_AGENTS=(claude codex gemini cursor copilot)
-DETECTED=()
-
-detect_agents() {
-    DETECTED=()
-    for agent in "${KNOWN_AGENTS[@]}"; do
-        case "$agent" in
-            copilot)
-                if command -v gh >/dev/null 2>&1; then
-                    DETECTED+=("copilot")
-                fi
-                ;;
-            *)
-                if command -v "$agent" >/dev/null 2>&1; then
-                    DETECTED+=("$agent")
-                fi
-                ;;
-        esac
-    done
-}
-
-is_detected() {
-    local needle="$1"
-    for d in ${DETECTED[@]+"${DETECTED[@]}"}; do
-        [ "$d" = "$needle" ] && return 0
-    done
-    return 1
-}
-
-# --- Agent selection prompt --------------------------------------------------
-
-AGENTS_TO_INSTALL=()
-
-prompt_agent_selection() {
-    if [ -n "$SELECTED_TOOLS" ]; then
-        IFS=',' read -ra AGENTS_TO_INSTALL <<< "$SELECTED_TOOLS"
-        return
-    fi
-
-    if ! [ -t 0 ]; then
-        err "Non-interactive shell detected. Use --tools to specify agents."
-        exit 1
-    fi
-
-    info ""
-    info "${BOLD}Detected coding agents:${RESET}"
-
-    local defaults=()
-    for i in "${!KNOWN_AGENTS[@]}"; do
-        local num=$((i + 1))
-        local agent="${KNOWN_AGENTS[$i]}"
-        if is_detected "$agent"; then
-            local note=""
-            [ "$agent" = "copilot" ] && note=" (via gh)"
-            printf "  [%d] %-10s %s✓ installed%s%s\n" "$num" "$agent" "$GREEN" "$RESET" "$note"
-            defaults+=("$num")
-        else
-            printf "  [%d] %-10s %s✗ not found%s\n" "$num" "$agent" "$RED" "$RESET"
-        fi
-    done
-
-    local default_str=""
-    if [ ${#defaults[@]} -gt 0 ]; then
-        default_str="$(IFS=','; echo "${defaults[*]}")"
-    fi
-
-    info ""
-    read -r -p "Select agents to configure [${default_str}]: " selection
-
-    if [ -z "$selection" ]; then
-        selection="$default_str"
-    fi
-
-    if [ -z "$selection" ]; then
-        err "No agents detected or selected. Install an agent CLI first, or use --tools."
-        exit 1
-    fi
-
-    AGENTS_TO_INSTALL=()
-    IFS=',' read -ra nums <<< "$selection"
-    for n in "${nums[@]}"; do
-        n="$(echo "$n" | tr -d ' ')"
-        if [ "$n" -ge 1 ] 2>/dev/null && [ "$n" -le 5 ] 2>/dev/null; then
-            AGENTS_TO_INSTALL+=("${KNOWN_AGENTS[$((n - 1))]}")
-        else
-            warn "Ignoring invalid selection: $n"
-        fi
-    done
-
-    if [ ${#AGENTS_TO_INSTALL[@]} -eq 0 ]; then
-        err "No agents selected. Exiting."
-        exit 1
-    fi
-
-    info ""
-    info "Configuring: ${BOLD}${AGENTS_TO_INSTALL[*]}${RESET}"
-}
-
-# --- Install mode prompt -----------------------------------------------------
-
-prompt_install_mode() {
-    if [ -n "$INSTALL_MODE" ]; then
-        return
-    fi
-
-    if ! [ -t 0 ]; then
-        err "Non-interactive shell. Use --global or --project to specify mode."
-        exit 1
-    fi
-
-    info ""
-    info "${BOLD}Install mode:${RESET}"
-    info "  [1] Global  — install skills, docs, settings to ~/  (run once)"
-    info "  [2] Project — set up AGENTS.md + settings in current repo"
-    info ""
-    read -r -p "Select mode [1]: " mode_choice
-
-    case "${mode_choice:-1}" in
-        1) INSTALL_MODE="global" ;;
-        2) INSTALL_MODE="project" ;;
-        *) err "Invalid choice"; exit 1 ;;
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --global|--project)
+        local requested="${1#--}"
+        [ -z "$INSTALL_MODE" ] || [ "$INSTALL_MODE" = "$requested" ] || fail "--global and --project are mutually exclusive"
+        INSTALL_MODE="$requested"
+        ;;
+      --tools) require_value "$1" "${2:-}"; shift; SELECTED_TOOLS="$1" ;;
+      --profile) require_value "$1" "${2:-}"; shift; PROFILE="$1" ;;
+      --client) require_value "$1" "${2:-}"; shift; CLIENT_NAME="$1" ;;
+      --prefix) require_value "$1" "${2:-}"; shift; CLIENT_PREFIX="$1" ;;
+      --force) REPLACE=1 ;;
+      --local) LOCAL=1 ;;
+      --help|-h) usage; exit 0 ;;
+      *) fail "unknown option: $1" ;;
     esac
+    shift
+  done
 }
 
-# --- Safe copy with overwrite protection -------------------------------------
-
-safe_copy() {
-    local src="$1"
-    local dest="$2"
-
-    # Use <parent>/<basename> when the basename is generic (e.g., SKILL.md)
-    # so install output identifies which skill was copied instead of printing
-    # "SKILL.md" eight times.
-    local label
-    label="$(basename "$dest")"
-    if [ "$label" = "SKILL.md" ]; then
-        label="$(basename "$(dirname "$dest")")/$label"
-    fi
-
-    if [ -f "$dest" ] && [ "$FORCE" != "1" ]; then
-        if diff -q "$src" "$dest" >/dev/null 2>&1; then
-            ok "$label (unchanged)"
-            return
-        fi
-        if ! [ -t 0 ]; then
-            warn "Skipped (exists, use --force): $dest"
-            return
-        fi
-        read -r -p "  Overwrite $dest? [y/N]: " answer
-        case "$answer" in
-            y|Y) ;;
-            *)   warn "Skipped: $dest"; return ;;
-        esac
-    fi
-
-    local dest_dir
-    dest_dir="$(dirname "$dest")"
-    mkdir -p "$dest_dir"
-    cp "$src" "$dest"
-    ok "$label"
+contains_word() {
+  local needle="$1" word
+  for word in $2; do [ "$word" = "$needle" ] && return 0; done
+  return 1
 }
 
-# safe_symlink <target-path> <link-path>
-#   Creates a symlink at <link-path> pointing to <target-path>.
-#   Idempotent: updates the link if it points elsewhere; prompts on real-file
-#   collisions (matching safe_copy's interactive behaviour).
-#   Used so a single skill directory in ~/.ai-toolkit/skills/ is the source
-#   of truth and ~/.claude/skills/<name>/ symlinks there for Claude
-#   auto-discovery (ADR-0002).
-safe_symlink() {
-    local target="$1"
-    local link="$2"
-    local label
-    label="$(basename "$link")"
-
-    local link_dir
-    link_dir="$(dirname "$link")"
-    mkdir -p "$link_dir"
-
-    if [ -L "$link" ]; then
-        local current
-        current="$(readlink "$link")"
-        if [ "$current" = "$target" ]; then
-            ok "$label (symlink unchanged)"
-            return
-        fi
-        ln -sfn "$target" "$link"
-        ok "$label (symlink updated)"
-        return
-    fi
-
-    if [ -e "$link" ] && [ "$FORCE" != "1" ]; then
-        if ! [ -t 0 ]; then
-            warn "Skipped (exists, use --force): $link"
-            return
-        fi
-        read -r -p "  Replace $link with symlink? [y/N]: " answer
-        case "$answer" in
-            y|Y) ;;
-            *)   warn "Skipped: $link"; return ;;
-        esac
-    fi
-
-    rm -rf "$link" 2>/dev/null || true
-    ln -s "$target" "$link"
-    ok "$label (symlinked)"
+validate_tools() {
+  [ -n "$SELECTED_TOOLS" ] || fail "--tools is required in non-interactive operation"
+  local raw tool existing
+  IFS=',' read -r -a raw <<< "$SELECTED_TOOLS"
+  for tool in "${raw[@]}"; do
+    tool="$(printf '%s' "$tool" | tr -d '[:space:]')"
+    [ -n "$tool" ] || fail "--tools contains an empty value"
+    contains_word "$tool" "$KNOWN_TOOLS" || fail "unknown tool '$tool'; expected one of: ${KNOWN_TOOLS// /,}"
+    for existing in "${AGENTS_TO_INSTALL[@]:-}"; do
+      [ "$existing" != "$tool" ] || fail "duplicate tool '$tool'"
+    done
+    AGENTS_TO_INSTALL+=("$tool")
+  done
 }
 
-# --- File manifests ----------------------------------------------------------
+is_selected() {
+  local candidate
+  for candidate in "${AGENTS_TO_INSTALL[@]}"; do [ "$candidate" = "$1" ] && return 0; done
+  return 1
+}
 
-SKILL_FILES=(
-    "skills/adr/SKILL.md"
-    "skills/branch-cleanup/SKILL.md"
-    "skills/kimball-model/SKILL.md"
-    "skills/promote-adr/SKILL.md"
-    "skills/promote-skill/SKILL.md"
-    "skills/release-notes/SKILL.md"
-    "skills/release-notes/references/providers.md"
-    "skills/release-notes/references/templates.md"
-    "skills/release-notes/scripts/collect_evidence.py"
-    "skills/release-notes/scripts/config.py"
-    "skills/release-notes/scripts/make_outlook_draft.applescript"
-    "skills/release-notes/scripts/merge_release.py"
-    "skills/release-notes/scripts/providers.py"
-    "skills/release-notes/scripts/publish_descriptions.py"
-    "skills/release-notes/scripts/test_remote.py"
-    "skills/setup-repo/SKILL.md"
-    "skills/smart-commit/SKILL.md"
-    "skills/smart-pr/SKILL.md"
-    "skills/terraform-scaffold/SKILL.md"
-    "skills/terraform-scaffold/references/azure-devops-pipelines.md"
-    "skills/terraform-scaffold/references/fabric-modules.md"
-)
+source_root() {
+  cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
+}
 
-# Toolkit skill names (directory names under skills/).
-# Keep in sync with SKILL_FILES above. Used both by --global (symlink targets)
-# and --project (copy into ./.claude/skills/<name>/).
-TOOLKIT_SKILL_NAMES=(
-    adr branch-cleanup kimball-model promote-adr promote-skill
-    release-notes setup-repo smart-commit smart-pr terraform-scaffold
-)
+fetch() {
+  local path="$1" destination="$2"
+  mkdir -p "$(dirname "$destination")"
+  if [ "$LOCAL" -eq 1 ]; then
+    cp "$(source_root)/$path" "$destination"
+  else
+    command -v curl >/dev/null 2>&1 || fail "curl is required for remote installation"
+    curl -fsSL --proto '=https' "$REPO_URL/$path" -o "$destination"
+  fi
+}
 
-# Scaffold files laid down under ./.claude/ during --project install. Folders
-# are created with a README.md pointing at Anthropic docs so teams can populate
-# them as the engagement needs.
-SCAFFOLD_FILES=(
-    "settings/claude/scaffold/rules/README.md"
-    "settings/claude/scaffold/commands/README.md"
-    "settings/claude/scaffold/agents/README.md"
-    "settings/claude/scaffold/hooks/README.md"
-)
+fetch_temp() {
+  local path="$1"
+  if [ -z "$TMP_ROOT" ]; then TMP_ROOT="$(mktemp -d)"; fi
+  local destination="$TMP_ROOT/$path"
+  fetch "$path" "$destination"
+  printf '%s' "$destination"
+}
 
-DOC_FILES=(
-    "docs/architecture.md"
-    "docs/terraform-patterns.md"
-    "docs/kimball-reference.md"
-)
+timestamp() { date '+%Y%m%d%H%M%S'; }
 
-DECISION_FILES=(
-    "docs/decisions/0001-agents-md-as-universal-repo-instruction-file.md"
-    "docs/decisions/0002-skill-md-open-standard-for-cross-agent-skills.md"
-    "docs/decisions/0003-thin-repo-templates-with-version-headers.md"
-    "docs/decisions/0004-skills-at-repo-root-not-dot-claude.md"
-    "docs/decisions/0005-entity-prefix-column-naming.md"
-    "docs/decisions/0006-surrogate-key-business-key-pair.md"
-    "docs/decisions/0007-scd2-audit-column-triplet.md"
-    "docs/decisions/0008-role-playing-dimension-fk-naming.md"
-    "docs/decisions/0009-five-layer-data-architecture.md"
-    "docs/decisions/0010-lowercase-snake-case-naming.md"
-    "docs/decisions/0011-tech-stack-conventions-as-adrs.md"
-    "docs/decisions/0012-universal-baseline-plus-personal-layer.md"
-    "docs/decisions/0013-revert-personal-overlay-and-client-adrs.md"
-    "docs/decisions/0014-per-project-claude-layout.md"
-    "docs/decisions/0015-adr-location-hierarchy-and-scope.md"
-    "docs/decisions/0016-cross-agent-project-skills-and-copilot-global-symlinks.md"
-    "docs/decisions/templates/adr-platform-template.md"
-    "docs/decisions/templates/adr-client-template.md"
-    "docs/decisions/platform/README.md"
-    "docs/decisions/platform/0011-safety-rules-for-all-agents.md"
-    "docs/decisions/platform/0012-fabric-medallion-layers.md"
-    "docs/decisions/platform/0013-fabric-semantic-model-design.md"
-    "docs/decisions/platform/0014-fabric-git-integration-policy.md"
-    "docs/decisions/platform/0015-fabric-adr-triggers.md"
-    "docs/decisions/platform/0016-databricks-unity-catalog-structure.md"
-    "docs/decisions/platform/0017-databricks-compute-defaults.md"
-    "docs/decisions/platform/0018-databricks-adr-triggers.md"
-    "docs/decisions/platform/0019-terraform-module-structure.md"
-    "docs/decisions/platform/0020-terraform-adr-triggers.md"
-    "docs/decisions/platform/0021-azurerm-remote-state-backend.md"
-    "docs/decisions/platform/0022-oidc-federated-workload-identity.md"
-    "docs/decisions/platform/0023-single-root-terraform-with-modules.md"
-    "docs/decisions/platform/0024-per-environment-tfvars-strategy.md"
-    "docs/decisions/platform/0025-databricks-vnet-injection.md"
-    "docs/decisions/platform/0026-service-endpoints-over-private-endpoints.md"
-    "docs/decisions/platform/0027-nat-gateway-egress-from-databricks-subnets.md"
-    "docs/decisions/platform/0028-adls-gen2-with-hierarchical-namespace.md"
-    "docs/decisions/platform/0029-medallion-container-layout.md"
-    "docs/decisions/platform/0030-unity-catalog-external-locations-per-container.md"
-    "docs/decisions/platform/0031-databricks-access-connector-managed-identity.md"
-    "docs/decisions/platform/0032-key-vault-rbac-authorization-model.md"
-    "docs/decisions/platform/0033-key-vault-backed-databricks-secret-scope.md"
-    "docs/decisions/platform/0034-personal-compute-cluster-policy-60min-autoterminate.md"
-    "docs/decisions/platform/0035-optional-modules-via-feature-flags.md"
-    "docs/decisions/platform/0036-dual-cicd-github-actions-and-azure-devops.md"
-    "docs/decisions/platform/0037-agent-ip-allowlisting-during-plan-apply.md"
-    "docs/decisions/platform/0038-pinned-terraform-and-provider-versions.md"
-)
+fingerprint() {
+  cksum "$1" | awk '{print $1 ":" $2}'
+}
 
-TEMPLATE_FILES=(
-    "templates/AGENTS.md"
-)
+record_ownership() {
+  local path="$1" kind="$2" proof="$3" temporary
+  [ -n "$OWNERSHIP_FILE" ] || return 0
+  mkdir -p "$(dirname "$OWNERSHIP_FILE")"
+  temporary="${OWNERSHIP_FILE}.tmp"
+  if [ -f "$OWNERSHIP_FILE" ]; then
+    if [ "$kind" = line ]; then
+      awk -F '\t' -v value="$path" -v class="$kind" -v evidence="$proof" \
+        '!($1 == value && $2 == class && $3 == evidence) {print}' "$OWNERSHIP_FILE" > "$temporary"
+    else
+      awk -F '\t' -v value="$path" '$1 != value {print}' "$OWNERSHIP_FILE" > "$temporary"
+    fi
+  else
+    : > "$temporary"
+  fi
+  printf '%s\t%s\t%s\n' "$path" "$kind" "$proof" >> "$temporary"
+  mv "$temporary" "$OWNERSHIP_FILE"
+}
 
-CLAUDE_SETTINGS_FILES=(
-    "settings/claude/settings-global.json"
-    "settings/claude/settings-terraform.json"
-    "settings/claude/settings-databricks.json"
-    "settings/claude/settings-fabric.json"
-)
+is_recorded() {
+  [ -n "$OWNERSHIP_FILE" ] && [ -f "$OWNERSHIP_FILE" ] && awk -F '\t' -v value="$1" '$1 == value {found=1} END {exit !found}' "$OWNERSHIP_FILE"
+}
 
-CODEX_FILES=(
-    "settings/codex/config.toml"
-    "settings/codex/codex.md"
-)
+backup_path() {
+  local path="$1" backup suffix=0
+  backup="${path}.bak.$(timestamp)"
+  while [ -e "$backup" ] || [ -L "$backup" ]; do
+    suffix=$((suffix + 1)); backup="${path}.bak.$(timestamp).$suffix"
+  done
+  printf '%s' "$backup"
+}
 
-COPILOT_FILES=(
-    "settings/copilot/copilot-instructions.md"
-)
+install_file() {
+  local source="$1" destination="$2" label="${3:-$2}"
+  mkdir -p "$(dirname "$destination")"
+  if [ -f "$destination" ] && cmp -s "$source" "$destination"; then
+    info " = $label"
+    if is_recorded "$destination"; then record_ownership "$destination" file "$(fingerprint "$destination")"; fi
+    return 0
+  fi
+  if [ -e "$destination" ] || [ -L "$destination" ]; then
+    if [ "$REPLACE" -ne 1 ]; then warn "preserved $label (use --force to replace)"; return 0; fi
+    local backup; backup="$(backup_path "$destination")"
+    cp -R "$destination" "$backup"
+    rm -rf "$destination"
+    info " b $backup"
+  fi
+  cp "$source" "$destination"
+  record_ownership "$destination" file "$(fingerprint "$destination")"
+  info " + $label"
+}
 
-GEMINI_FILES=(
-    "settings/gemini/settings.json"
-    "settings/gemini/gemini.md"
-)
+install_link() {
+  local target="$1" link="$2"
+  mkdir -p "$(dirname "$link")"
+  if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then
+    info " = $link"
+    if is_recorded "$link"; then record_ownership "$link" symlink "$target"; fi
+    return
+  fi
+  if [ -e "$link" ] || [ -L "$link" ]; then
+    if [ "$REPLACE" -ne 1 ]; then warn "preserved $link (use --force to replace)"; return; fi
+    local backup; backup="$(backup_path "$link")"
+    cp -R "$link" "$backup"
+    rm -rf "$link"
+    info " b $backup"
+  fi
+  ln -s "$target" "$link"
+  [ "$(readlink "$link")" = "$target" ] || fail "failed to verify symlink $link"
+  record_ownership "$link" symlink "$target"
+  info " + $link -> $target"
+}
 
-CURSOR_FILES=(
-    "settings/cursor/cursor.md"
-)
+manifest_rows() {
+  awk -F '\t' 'NF >= 5 && $1 !~ /^#/ {print}' "$1"
+}
 
-SCRIPT_FILES=(
-    "tools/check-template-update.sh"
-    "tools/check-skills-update.sh"
-    "tools/check-stores.sh"
-    "tools/sync-global.sh"
-    "tools/sync-skills.sh"
-    "tools/check-update.sh"
-    "tools/uninstall.sh"
-)
+consumer_matches() {
+  local consumers="$1" wanted="$2" item
+  IFS=',' read -r -a items <<< "$consumers"
+  for item in "${items[@]}"; do [ "$item" = "$wanted" ] && return 0; done
+  return 1
+}
 
-# =============================================================================
-# GLOBAL INSTALL
-# =============================================================================
+global_consumer_selected() {
+  local consumers="$1" item tool
+  IFS=',' read -r -a items <<< "$consumers"
+  for item in "${items[@]}"; do
+    [ "$item" = global ] && return 0
+    case "$item" in
+      global:*) tool="${item#global:}"; is_selected "$tool" && return 0 ;;
+    esac
+  done
+  return 1
+}
 
-is_agent_selected() {
-    printf '%s\n' "${AGENTS_TO_INSTALL[@]}" | grep -qx "$1"
+skill_names() {
+  awk -F '\t' '$2 == "skill" {sub("skills/", "", $1); sub("/SKILL.md", "", $1); print $1}' "$1"
+}
+
+global_destination() {
+  local path="$1"
+  case "$path" in
+    install.sh) printf '%s/.ai-toolkit/install.sh' "$HOME" ;;
+    README.md|how-to-guide.md|LICENSE) printf '%s/.ai-toolkit/docs/%s' "$HOME" "$path" ;;
+    global/AGENTS.md) printf '%s/.ai-toolkit/AGENTS.md' "$HOME" ;;
+    templates/*) printf '%s/.ai-toolkit/%s' "$HOME" "$path" ;;
+    docs/*) printf '%s/.ai-toolkit/%s' "$HOME" "$path" ;;
+    skills/*) printf '%s/.ai-toolkit/%s' "$HOME" "$path" ;;
+    tools/*) printf '%s/.ai-toolkit/%s' "$HOME" "${path#tools/}" ;;
+    stores.yml|manifest.tsv) printf '%s/.ai-toolkit/%s' "$HOME" "$path" ;;
+    settings/claude/settings-terraform.json|settings/claude/settings-databricks.json|settings/claude/settings-fabric.json)
+      printf '%s/.ai-toolkit/templates/settings/%s' "$HOME" "$(basename "$path")" ;;
+    settings/claude/settings-global.json)
+      printf '%s/.ai-toolkit/templates/settings/%s' "$HOME" "$(basename "$path")" ;;
+    settings/codex/*) printf '%s/.ai-toolkit/templates/codex/%s' "$HOME" "$(basename "$path")" ;;
+    settings/copilot/*) printf '%s/.ai-toolkit/templates/copilot/%s' "$HOME" "$(basename "$path")" ;;
+    settings/gemini/*) printf '%s/.ai-toolkit/templates/gemini/%s' "$HOME" "$(basename "$path")" ;;
+    settings/cursor/*) printf '%s/.ai-toolkit/templates/cursor/%s' "$HOME" "$(basename "$path")" ;;
+    settings/claude/scaffold/*) printf '%s/.ai-toolkit/templates/%s' "$HOME" "$path" ;;
+    *) return 1 ;;
+  esac
 }
 
 install_global() {
-    info ""
-    info "${BOLD}=== Global Install ===${RESET}"
-    info ""
+  local manifest source path type consumers destination
+  manifest="$(fetch_temp manifest.tsv)"
+  mkdir -p "$HOME/.ai-toolkit"
+  OWNERSHIP_FILE="$HOME/.ai-toolkit/managed.tsv"
+  install_file "$manifest" "$HOME/.ai-toolkit/manifest.tsv" "manifest.tsv"
 
-    local toolkit_home="$HOME/.ai-toolkit"
-    mkdir -p "$toolkit_home"
+  while IFS=$'\t' read -r path type _version consumers _ownership; do
+    global_consumer_selected "$consumers" || continue
+    source="$(fetch_temp "$path")"
+    destination="$(global_destination "$path")" || fail "no global destination for $path"
+    install_file "$source" "$destination"
+    [ "$type" != script ] || chmod +x "$destination"
+  done < <(manifest_rows "$manifest")
 
-    # --- Global baseline ---
-    # The baseline is copied to ~/.ai-toolkit/AGENTS.md (source of truth for
-    # sync-global.sh) and to each selected agent's config directory.
-    local baseline_tmp
-    baseline_tmp="$(fetch_to_tmp "global/AGENTS.md")"
-    cp "$baseline_tmp" "$toolkit_home/AGENTS.md"
-    ok "~/.ai-toolkit/AGENTS.md (baseline)"
-
-    # --- Global config per agent ---
-    info ""
-    info "${BOLD}Global config:${RESET}"
-
-    for agent in "${AGENTS_TO_INSTALL[@]}"; do
-        case "$agent" in
-            claude)
-                if [ -f "$HOME/.claude/CLAUDE.md" ]; then
-                    local backup="$HOME/.claude/CLAUDE.md.bak.$(date +%Y%m%d%H%M%S)"
-                    cp "$HOME/.claude/CLAUDE.md" "$backup"
-                    info "  Backed up: $backup"
-                fi
-                mkdir -p "$HOME/.claude"
-                cp "$baseline_tmp" "$HOME/.claude/CLAUDE.md"
-                ok "~/.claude/CLAUDE.md"
-                ;;
-            codex)
-                mkdir -p "$HOME/.codex"
-                cp "$baseline_tmp" "$HOME/.codex/AGENTS.md"
-                ok "~/.codex/AGENTS.md"
-                ;;
-            gemini)
-                mkdir -p "$HOME/.gemini"
-                cp "$baseline_tmp" "$HOME/.gemini/GEMINI.md"
-                ok "~/.gemini/GEMINI.md"
-                ;;
-            cursor)
-                mkdir -p "$HOME/.cursor"
-                cp "$baseline_tmp" "$HOME/.cursor/rules.md"
-                ok "~/.cursor/rules.md"
-                ;;
-            copilot)
-                mkdir -p "$HOME/.copilot"
-                cp "$baseline_tmp" "$HOME/.copilot/copilot-instructions.md"
-                ok "~/.copilot/copilot-instructions.md"
-                ;;
-        esac
-    done
-
-    # --- Skills ---
-    # Install once to ~/.ai-toolkit/skills/ (agent-neutral source of truth).
-    # Claude Code auto-discovers from ~/.claude/skills/, so symlink each
-    # skill directory there when Claude is selected (ADR-0002). One symlink
-    # per skill keeps the source of truth singular and also handles nested
-    # files like skills/terraform-scaffold/references/*.md automatically.
-    info ""
-    info "${BOLD}Skills:${RESET}"
-    for f in "${SKILL_FILES[@]}"; do
-        local tmp
-        tmp="$(fetch_to_tmp "$f")"
-        local toolkit_dest="$toolkit_home/$f"
-        mkdir -p "$(dirname "$toolkit_dest")"
-        safe_copy "$tmp" "$toolkit_dest"
-    done
-    if is_agent_selected claude; then
-        mkdir -p "$HOME/.claude/skills"
-        for name in "${TOOLKIT_SKILL_NAMES[@]}"; do
-            safe_symlink "$toolkit_home/skills/$name" "$HOME/.claude/skills/$name"
-        done
-    fi
-    if is_agent_selected copilot; then
-        # Copilot CLI reads personal skills from ~/.copilot/skills/
-        # (per docs.github.com/copilot/how-tos/copilot-cli/customize-copilot/add-skills).
-        # Symlink each skill from the toolkit so edits in ~/.ai-toolkit/skills/
-        # propagate to both Claude and Copilot.
-        mkdir -p "$HOME/.copilot/skills"
-        for name in "${TOOLKIT_SKILL_NAMES[@]}"; do
-            safe_symlink "$toolkit_home/skills/$name" "$HOME/.copilot/skills/$name"
-        done
-    fi
-
-    # --- Reference docs ---
-    info ""
-    info "${BOLD}Reference docs:${RESET}"
-    for f in "${DOC_FILES[@]}"; do
-        local dest="$toolkit_home/$f"
-        local tmp
-        tmp="$(fetch_to_tmp "$f")"
-        safe_copy "$tmp" "$dest"
-    done
-
-    # --- Decision log ---
-    info ""
-    info "${BOLD}Decision log:${RESET}"
-    for f in "${DECISION_FILES[@]}"; do
-        local dest="$toolkit_home/$f"
-        local tmp
-        tmp="$(fetch_to_tmp "$f")"
-        safe_copy "$tmp" "$dest"
-    done
-
-    # --- Repo templates ---
-    info ""
-    info "${BOLD}Repo templates:${RESET}"
-    for f in "${TEMPLATE_FILES[@]}"; do
-        local dest="$toolkit_home/templates/$(basename "$f")"
-        local tmp
-        tmp="$(fetch_to_tmp "$f")"
-        safe_copy "$tmp" "$dest"
-    done
-
-    # --- Settings ---
-    info ""
-    info "${BOLD}Settings:${RESET}"
-
-    # Claude global settings — only when claude is selected
-    if is_agent_selected claude; then
-        install_claude_global_settings
-    fi
-
-    # Per-profile settings templates (agent-neutral — used by all agents via project install)
-    for f in "${CLAUDE_SETTINGS_FILES[@]}"; do
-        local basename_f
-        basename_f="$(basename "$f")"
-        [ "$basename_f" = "settings-global.json" ] && continue
-        local dest="$toolkit_home/templates/settings/$basename_f"
-        local tmp
-        tmp="$(fetch_to_tmp "$f")"
-        safe_copy "$tmp" "$dest"
-    done
-
-    # Codex templates
-    if is_agent_selected codex; then
-        for f in "${CODEX_FILES[@]}"; do
-            local dest="$toolkit_home/templates/codex/$(basename "$f")"
-            local tmp
-            tmp="$(fetch_to_tmp "$f")"
-            safe_copy "$tmp" "$dest"
-        done
-    fi
-
-    # Copilot templates
-    if is_agent_selected copilot; then
-        for f in "${COPILOT_FILES[@]}"; do
-            local dest="$toolkit_home/templates/copilot/$(basename "$f")"
-            local tmp
-            tmp="$(fetch_to_tmp "$f")"
-            safe_copy "$tmp" "$dest"
-        done
-    fi
-
-    # Gemini templates
-    if is_agent_selected gemini; then
-        for f in "${GEMINI_FILES[@]}"; do
-            local dest="$toolkit_home/templates/gemini/$(basename "$f")"
-            local tmp
-            tmp="$(fetch_to_tmp "$f")"
-            safe_copy "$tmp" "$dest"
-        done
-    fi
-
-    # Cursor templates
-    if is_agent_selected cursor; then
-        for f in "${CURSOR_FILES[@]}"; do
-            local dest="$toolkit_home/templates/cursor/$(basename "$f")"
-            local tmp
-            tmp="$(fetch_to_tmp "$f")"
-            safe_copy "$tmp" "$dest"
-        done
-    fi
-
-    # --- Utility scripts ---
-    info ""
-    info "${BOLD}Scripts:${RESET}"
-    for f in "${SCRIPT_FILES[@]}"; do
-        local dest="$toolkit_home/$(basename "$f")"
-        local tmp
-        tmp="$(fetch_to_tmp "$f")"
-        safe_copy "$tmp" "$dest"
-        chmod +x "$dest"
-    done
-
-    # --- Stores registry ---
-    info ""
-    info "${BOLD}Stores registry:${RESET}"
-    local stores_tmp
-    stores_tmp="$(fetch_to_tmp "stores.yml")"
-    safe_copy "$stores_tmp" "$toolkit_home/stores.yml"
-
-    # --- Version stamp ---
-    info ""
-    info "${BOLD}Version stamp:${RESET}"
-    printf "%s\n" "$VERSION" > "$toolkit_home/version"
-    ok "version ($VERSION)"
-
-    # --- Summary ---
-    info ""
-    info "${BOLD}=== Global Install Complete ===${RESET}"
-    info ""
-    info "Agents configured: ${AGENTS_TO_INSTALL[*]}"
-    info ""
-    info "Next steps:"
-    info "  1. Start an agent in any repo — it will detect missing AGENTS.md and offer setup"
-    info "  2. Or run: ${BOLD}bash install.sh --project${RESET} from inside a repo"
-    info ""
-}
-
-install_claude_global_settings() {
-    local settings_tmp
-    settings_tmp="$(fetch_to_tmp "settings/claude/settings-global.json")"
-    local dest="$HOME/.claude/settings.json"
-
-    if [ ! -f "$dest" ]; then
-        mkdir -p "$HOME/.claude"
-        cp "$settings_tmp" "$dest"
-        ok "settings.json (new)"
-        return
-    fi
-
-    if diff -q "$settings_tmp" "$dest" >/dev/null 2>&1; then
-        ok "settings.json (unchanged)"
-        return
-    fi
-
-    if [ "$FORCE" = "1" ]; then
-        local backup="$dest.bak.$(date +%Y%m%d%H%M%S)"
-        cp "$dest" "$backup"
-        cp "$settings_tmp" "$dest"
-        ok "settings.json (replaced, backup: $backup)"
-        return
-    fi
-
-    if ! [ -t 0 ]; then
-        warn "settings.json differs — use --force to replace"
-        return
-    fi
-
-    info ""
-    info "  Your ~/.claude/settings.json differs from the toolkit version."
-    diff --unified=3 "$dest" "$settings_tmp" || true
-    info ""
-    info "  [k] Keep current  [r] Replace (with backup)  [m] Show paths for manual merge"
-    read -r -p "  Choose [k]: " choice
-    case "$choice" in
-        r|R)
-            local backup="$dest.bak.$(date +%Y%m%d%H%M%S)"
-            cp "$dest" "$backup"
-            cp "$settings_tmp" "$dest"
-            ok "settings.json (replaced, backup: $backup)"
-            ;;
-        m|M)
-            info "  Current:  $dest"
-            info "  Toolkit:  $settings_tmp"
-            ;;
-        *)
-            ok "settings.json (kept)"
-            ;;
+  local baseline="$HOME/.ai-toolkit/AGENTS.md" agent skill
+  for agent in "${AGENTS_TO_INSTALL[@]}"; do
+    case "$agent" in
+      claude)
+        install_file "$baseline" "$HOME/.claude/CLAUDE.md"
+        source="$(fetch_temp settings/claude/settings-global.json)"
+        install_file "$source" "$HOME/.claude/settings.json"
+        ;;
+      codex) install_file "$baseline" "$HOME/.codex/AGENTS.md" ;;
+      gemini) install_file "$baseline" "$HOME/.gemini/GEMINI.md" ;;
+      cursor) install_file "$baseline" "$HOME/.cursor/rules.md" ;;
+      copilot) install_file "$baseline" "$HOME/.copilot/copilot-instructions.md" ;;
     esac
+  done
+
+  while IFS= read -r skill; do
+    is_selected claude && install_link "$HOME/.ai-toolkit/skills/$skill" "$HOME/.claude/skills/$skill"
+    is_selected copilot && install_link "$HOME/.ai-toolkit/skills/$skill" "$HOME/.copilot/skills/$skill"
+  done < <(skill_names "$manifest")
+
+  # Commit the release stamp only after every requested artifact succeeds.
+  printf '%s\n' "$VERSION" > "$HOME/.ai-toolkit/version.tmp"
+  mv "$HOME/.ai-toolkit/version.tmp" "$HOME/.ai-toolkit/version"
+  record_ownership "$HOME/.ai-toolkit/version" file "$(fingerprint "$HOME/.ai-toolkit/version")"
+  info "Installed toolkit $VERSION for: ${AGENTS_TO_INSTALL[*]}"
 }
 
-# =============================================================================
-# PROJECT INSTALL
-# =============================================================================
-
-VALID_PROFILES=(terraform databricks fabric)
-
-prompt_profile() {
-    if [ -n "$PROFILE" ]; then
-        # Validate
-        for p in "${VALID_PROFILES[@]}"; do
-            [ "$p" = "$PROFILE" ] && return
-        done
-        err "Invalid profile: $PROFILE (must be one of: ${VALID_PROFILES[*]})"
-        exit 1
-    fi
-
-    if ! [ -t 0 ]; then
-        err "Non-interactive shell. Use --profile to specify platform."
-        exit 1
-    fi
-
-    info ""
-    info "${BOLD}Select platform profile:${RESET}"
-    for i in "${!VALID_PROFILES[@]}"; do
-        printf "  [%d] %s\n" "$((i + 1))" "${VALID_PROFILES[$i]}"
-    done
-    info ""
-    read -r -p "Profile [1]: " choice
-    choice="${choice:-1}"
-
-    if [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le ${#VALID_PROFILES[@]} ] 2>/dev/null; then
-        PROFILE="${VALID_PROFILES[$((choice - 1))]}"
-    else
-        err "Invalid choice"
-        exit 1
-    fi
+validate_profile() {
+  contains_word "$PROFILE" "$VALID_PROFILES" || fail "invalid profile '$PROFILE'; expected: ${VALID_PROFILES// /,}"
 }
 
-prompt_client_info() {
-    if [ -n "$CLIENT_NAME" ] && [ -n "$CLIENT_PREFIX" ]; then
-        return
-    fi
+replace_tokens() {
+  local source="$1" destination="$2" repo_type safe_client safe_prefix
+  case "$PROFILE" in terraform) repo_type="infrastructure" ;; *) repo_type="data-platform" ;; esac
+  safe_client="$(printf '%s' "$CLIENT_NAME" | sed 's/[&|\\]/\\&/g')"
+  safe_prefix="$(printf '%s' "$CLIENT_PREFIX" | sed 's/[&|\\]/\\&/g')"
+  sed -e "s|{CLIENT_NAME}|$safe_client|g" -e "s|{PLATFORM}|$PROFILE|g" -e "s|{REPO_TYPE}|$repo_type|g" -e "s|{prefix}|$safe_prefix|g" "$source" > "$destination"
+}
 
-    if ! [ -t 0 ]; then
-        err "Non-interactive shell. Client info requires interactive mode."
-        exit 1
-    fi
+project_destination() {
+  local path="$1"
+  case "$path" in
+    skills/*) printf '.claude/%s' "$path" ;;
+    settings/claude/scaffold/*) printf '.claude/%s' "${path#settings/claude/scaffold/}" ;;
+    *) return 1 ;;
+  esac
+}
 
-    info ""
-    read -r -p "Client name (e.g., PostNord, KOMBIT): " CLIENT_NAME
-    read -r -p "Resource prefix (e.g., pn, kbt): " CLIENT_PREFIX
-
-    if [ -z "$CLIENT_NAME" ] || [ -z "$CLIENT_PREFIX" ]; then
-        err "Client name and prefix are required."
-        exit 1
-    fi
+append_gitignore_exact() {
+  local entry="$1"
+  touch .gitignore
+  if ! grep -Fqx -- "$entry" .gitignore; then
+    printf '%s\n' "$entry" >> .gitignore
+    record_ownership "$(pwd)/.gitignore" line "$entry"
+  fi
 }
 
 install_project() {
-    info ""
-    info "${BOLD}=== Project Install ===${RESET}"
-    info ""
+  [ ! -f manifest.tsv ] || [ ! -f install.sh ] || [ ! -d skills ] || fail "the toolkit repository is exempt from --project installation"
+  local is_join=0
+  OWNERSHIP_FILE="$(pwd)/.mindflayer-managed.tsv"
+  if [ -f AGENTS.md ] && grep -q '<!-- template: AGENTS ' AGENTS.md; then is_join=1; fi
+  if [ "$is_join" -eq 1 ] && [ -z "$PROFILE" ]; then
+    PROFILE="$(sed -n 's/^[[:space:]]*- \*\*platform:\*\*[[:space:]]*//p' AGENTS.md | head -1)"
+  fi
+  [ -n "$PROFILE" ] || fail "--profile is required for a new project install"
+  validate_profile
+  if [ "$is_join" -eq 0 ]; then
+    [ -n "$CLIENT_NAME" ] || fail "--client is required for a new project install"
+    [ -n "$CLIENT_PREFIX" ] || fail "--prefix is required for a new project install"
+    local template rendered
+    template="$(fetch_temp templates/AGENTS.md)"
+    rendered="$(mktemp)"
+    replace_tokens "$template" "$rendered"
+    install_file "$rendered" AGENTS.md
+    rm -f "$rendered"
+  else
+    info " = AGENTS.md (join mode)"
+  fi
 
-    # --- Join-mode detection ----------------------------------------
-    # If AGENTS.md already exists and carries a toolkit template header,
-    # this repo was bootstrapped by Mindflayer already. Switch to
-    # "join mode": never touch AGENTS.md, only add agent-specific files
-    # the current user is missing. This is the new-teammate path.
-    local JOIN_MODE=0
-    if [ -f "./AGENTS.md" ] && grep -q '<!-- template:' "./AGENTS.md" 2>/dev/null; then
-        JOIN_MODE=1
-        info "${BOLD}Detected existing Mindflayer-managed repo${RESET} — join mode."
-        info "AGENTS.md will be preserved. Only your agent-specific files will be added."
-        info ""
-        # Infer profile from AGENTS.md body (the **platform:** line).
-        # Before v2.0.0 the template name encoded the platform (e.g. AGENTS-fabric);
-        # from v2.0.0 there is a single AGENTS.md template and platform lives in the body.
-        # Try the body-line approach first, then fall back to the legacy header for
-        # backwards compatibility with v1 repos.
-        if [ -z "${PROFILE:-}" ]; then
-            local inferred
-            inferred="$(sed -n 's/^[[:space:]]*-[[:space:]]*\*\*platform:\*\*[[:space:]]*\([a-z0-9-]*\).*/\1/p' ./AGENTS.md | head -1)"
-            if [ -z "$inferred" ]; then
-                # Legacy v1 fallback: platform encoded in header comment as AGENTS-<platform>
-                inferred="$(sed -n 's/.*template: AGENTS-\([a-z-]*\).*/\1/p' ./AGENTS.md | head -1)"
-            fi
-            if [ -n "$inferred" ]; then
-                PROFILE="$inferred"
-                info "  Inferred profile from AGENTS.md: ${BOLD}${PROFILE}${RESET}"
-            fi
-        fi
-    fi
+  local manifest path type consumers source destination
+  manifest="$(fetch_temp manifest.tsv)"
+  if is_selected claude || is_selected copilot; then
+    while IFS=$'\t' read -r path type _version consumers _ownership; do
+      case "$type" in skill|skill-resource) ;; *) continue ;; esac
+      source="$(fetch_temp "$path")"
+      destination="$(project_destination "$path")"
+      install_file "$source" "$destination"
+    done < <(manifest_rows "$manifest")
+  fi
 
-    prompt_profile
-    if [ "$JOIN_MODE" != "1" ]; then
-        prompt_client_info
-    fi
-
-    info ""
-    info "Setting up ${BOLD}${CLIENT_NAME}${RESET} (${PROFILE}) repo..."
-    info ""
-
-    # --- AGENTS.md ---
-    local template_tmp=""
-    if [ "$JOIN_MODE" = "1" ]; then
-        ok "AGENTS.md (preserved — join mode)"
-    else
-        template_tmp="$(fetch_to_tmp "templates/AGENTS.md")"
-
-        if [ -f "./AGENTS.md" ] && [ "$FORCE" != "1" ]; then
-            # Safe default: preserve existing AGENTS.md unless --force.
-            warn "AGENTS.md exists — preserved. Use --force to overwrite."
-            template_tmp=""
-        fi
-    fi
-
-    if [ -n "$template_tmp" ]; then
-        # Escape sed special characters in user input to prevent injection
-        local safe_name safe_prefix
-        safe_name="$(printf '%s' "$CLIENT_NAME" | sed 's/[&/\]/\\&/g')"
-        safe_prefix="$(printf '%s' "$CLIENT_PREFIX" | sed 's/[&/\]/\\&/g')"
-
-        # Per-platform repo_type
-        local repo_type
-        case "$PROFILE" in
-            fabric|databricks) repo_type="data-platform" ;;
-            terraform)         repo_type="infrastructure" ;;
-            *)                 repo_type="unknown" ;;
-        esac
-
-        # Per-platform ADR list — injected into {ADR_LIST}
-        # Uses a newline-delimited list rendered with awk to avoid sed newline issues.
-        local adr_list
-        case "$PROFILE" in
-            fabric)
-                adr_list="- ADR-0012: Fabric Medallion Layers
-- ADR-0013: Fabric Semantic Model Design
-- ADR-0014: Fabric Git Integration Policy
-- ADR-0015: Fabric ADR Triggers"
-                ;;
-            databricks)
-                adr_list="- ADR-0016: Databricks Unity Catalog Structure
-- ADR-0017: Databricks Compute Defaults
-- ADR-0018: Databricks ADR Triggers
-- ADR-0025: Databricks VNet Injection
-- ADR-0029: Five-Layer Medallion Container Layout
-- ADR-0030: Unity Catalog External Locations per Container
-- ADR-0031: Databricks Access Connector Managed Identity
-- ADR-0033: Key Vault-Backed Databricks Secret Scope
-- ADR-0034: Personal Compute Cluster Policy"
-                ;;
-            terraform)
-                adr_list="- ADR-0020: Terraform ADR Triggers
-- ADR-0021: AzureRM Remote State Backend
-- ADR-0022: OIDC Federated Workload Identity
-- ADR-0023: Single-Root Terraform with Modules
-- ADR-0024: Per-Environment tfvars Strategy
-- ADR-0026: Service Endpoints over Private Endpoints
-- ADR-0027: NAT Gateway Egress from Databricks Subnets
-- ADR-0028: ADLS Gen2 with Hierarchical Namespace
-- ADR-0032: Key Vault RBAC Authorization Model
-- ADR-0035: Optional Modules via Feature Flags
-- ADR-0036: Dual CI/CD — GitHub Actions and Azure DevOps
-- ADR-0037: Agent IP Allowlisting During Plan/Apply
-- ADR-0038: Pinned Terraform and Provider Versions"
-                ;;
-            *)
-                adr_list="- (no platform ADRs registered for profile '${PROFILE}')"
-                ;;
-        esac
-
-        # Substitute identity tokens first via sed, then inject ADR list via awk.
-        # awk's -v cannot safely carry newlines; write the ADR list to a temp
-        # file and have awk splice it in at the {ADR_LIST} marker.
-        local adr_list_file
-        adr_list_file="$(mktemp)"
-        printf '%s\n' "$adr_list" > "$adr_list_file"
-
-        sed "s/{CLIENT_NAME}/${safe_name}/g; s/{PLATFORM}/${PROFILE}/g; s/{REPO_TYPE}/${repo_type}/g; s/{prefix}/${safe_prefix}/g" \
-            "$template_tmp" | \
-        awk -v listfile="$adr_list_file" '
-            BEGIN {
-                list = ""
-                while ((getline line < listfile) > 0) {
-                    list = list (list == "" ? "" : "\n") line
-                }
-                close(listfile)
-            }
-            /\{ADR_LIST\}/ { print list; next }
-            { print }
-        ' > ./AGENTS.md
-        rm -f "$adr_list_file"
-        ok "AGENTS.md (universal template, profile: ${PROFILE})"
-    fi
-
-    # --- Per-project skills (committed to repo, agent-neutral) ---
-    # Copilot CLI and Claude Code both read project-level skills from
-    # .claude/skills/ (per Copilot CLI docs:
-    #   docs.github.com/copilot/how-tos/copilot-cli/customize-copilot/add-skills
-    # and Claude Code's auto-discovery). Skills are copied as real files so they
-    # are visible in the repo, travel with git clones (including to Claude Cowork
-    # cloud VMs), and can be inspected in PRs.
-    # ADR: per-project-claude-layout (cross-agent project skills).
-    if is_agent_selected claude || is_agent_selected copilot; then
-        info "  ${BOLD}Skills (project):${RESET}"
-        for f in "${SKILL_FILES[@]}"; do
-            local skill_src skill_dest
-            skill_src="$(fetch_to_tmp "$f")"
-            # f is "skills/<name>/..." — prefix with ".claude/"
-            # to get ".claude/skills/<name>/..."
-            skill_dest=".claude/$f"
-            mkdir -p "$(dirname "$skill_dest")"
-            safe_copy "$skill_src" "$skill_dest"
-        done
-    fi
-
-    # --- Tool-specific project configs ---
-    for agent in "${AGENTS_TO_INSTALL[@]}"; do
-        case "$agent" in
-            claude)
-                local settings_tmp
-                settings_tmp="$(fetch_to_tmp "settings/claude/settings-${PROFILE}.json")"
-                mkdir -p .claude
-                safe_copy "$settings_tmp" ".claude/settings.json"
-
-                # --- Scaffold folders (rules/commands/agents/hooks) ---
-                # Pointer READMEs only; clients populate as needed.
-                # Claude-specific layout — Copilot does not consume these.
-                info "  ${BOLD}Scaffold folders:${RESET}"
-                for f in "${SCAFFOLD_FILES[@]}"; do
-                    local scaffold_src scaffold_dest folder
-                    scaffold_src="$(fetch_to_tmp "$f")"
-                    # f is "settings/claude/scaffold/<folder>/README.md"
-                    folder="$(basename "$(dirname "$f")")"
-                    scaffold_dest=".claude/${folder}/README.md"
-                    mkdir -p "$(dirname "$scaffold_dest")"
-                    safe_copy "$scaffold_src" "$scaffold_dest"
-                done
-                ;;
-            codex)
-                local codex_tmp
-                codex_tmp="$(fetch_to_tmp "settings/codex/codex.md")"
-                safe_copy "$codex_tmp" "./codex.md"
-                ;;
-            copilot)
-                mkdir -p .github
-                if [ ! -L ".github/copilot-instructions.md" ]; then
-                    ln -sf ../AGENTS.md .github/copilot-instructions.md
-                    ok "copilot-instructions.md (symlink to AGENTS.md)"
-                else
-                    ok "copilot-instructions.md (symlink exists)"
-                fi
-                ;;
-            gemini)
-                local gemini_tmp
-                gemini_tmp="$(fetch_to_tmp "settings/gemini/gemini.md")"
-                safe_copy "$gemini_tmp" "./gemini.md"
-                ;;
-            cursor)
-                mkdir -p .cursor/rules
-                local cursor_tmp
-                cursor_tmp="$(fetch_to_tmp "settings/cursor/cursor.md")"
-                safe_copy "$cursor_tmp" ".cursor/rules/project.md"
-                ;;
-        esac
-    done
-
-    # --- Project directories ---
+  local agent
+  for agent in "${AGENTS_TO_INSTALL[@]}"; do
+    case "$agent" in
+      claude)
+        source="$(fetch_temp "settings/claude/settings-$PROFILE.json")"
+        install_file "$source" .claude/settings.json
+        while IFS=$'\t' read -r path type _version consumers _ownership; do
+          [ "$type" = scaffold ] || continue
+          source="$(fetch_temp "$path")"; destination="$(project_destination "$path")"
+          install_file "$source" "$destination"
+        done < <(manifest_rows "$manifest")
+        ;;
+      codex) source="$(fetch_temp settings/codex/codex.md)"; install_file "$source" codex.md ;;
+      gemini) source="$(fetch_temp settings/gemini/gemini.md)"; install_file "$source" gemini.md ;;
+      cursor) source="$(fetch_temp settings/cursor/cursor.md)"; install_file "$source" .cursor/rules/project.md ;;
+      copilot) install_link ../AGENTS.md .github/copilot-instructions.md ;;
+    esac
+  done
+  if [ ! -d docs/adr ]; then
     mkdir -p docs/adr
-    ok "docs/adr/"
-
-    # --- .gitignore ---
-    local gitignore_entries=(".claude/settings.local.json" "CLAUDE.local.md")
-    for entry in "${gitignore_entries[@]}"; do
-        if [ -f .gitignore ] && grep -qF "$entry" .gitignore; then
-            continue
-        fi
-        echo "$entry" >> .gitignore
-        ok ".gitignore += $entry"
-    done
-
-    # --- Summary ---
-    info ""
-    if [ "$JOIN_MODE" = "1" ]; then
-        info "${BOLD}=== Joined Existing Project ===${RESET}"
-    else
-        info "${BOLD}=== Project Setup Complete ===${RESET}"
-    fi
-    info ""
-    if [ "$JOIN_MODE" = "1" ]; then
-        info "Profile: ${PROFILE} (inferred from AGENTS.md)"
-    else
-        info "Profile: ${PROFILE} | Client: ${CLIENT_NAME} (${CLIENT_PREFIX})"
-    fi
-    info ""
-    info "Created files:"
-    [ -f ./AGENTS.md ] && info "  AGENTS.md"
-    [ -f .claude/settings.json ] && info "  .claude/settings.json"
-    [ -d .claude/skills ] && info "  .claude/skills/ ($(ls -1 .claude/skills 2>/dev/null | wc -l | tr -d ' ') skills)"
-    [ -f .claude/rules/README.md ] && info "  .claude/rules/ (scaffold)"
-    [ -f .claude/commands/README.md ] && info "  .claude/commands/ (scaffold)"
-    [ -f .claude/agents/README.md ] && info "  .claude/agents/ (scaffold)"
-    [ -f .claude/hooks/README.md ] && info "  .claude/hooks/ (scaffold)"
-    [ -f ./codex.md ] && info "  codex.md"
-    [ -f ./gemini.md ] && info "  gemini.md"
-    [ -f .cursor/rules/project.md ] && info "  .cursor/rules/project.md"
-    [ -L .github/copilot-instructions.md ] && info "  .github/copilot-instructions.md -> AGENTS.md"
-    info "  docs/adr/"
-    info ""
-    if [ "$JOIN_MODE" != "1" ]; then
-        info "${YELLOW}TODO:${RESET} Open AGENTS.md and fill in remaining {placeholders}."
-        info ""
-    fi
-
-    # --- Template drift check (informational) -----------------------
-    if [ -x "$HOME/.ai-toolkit/check-template-update.sh" ] && [ -f ./AGENTS.md ]; then
-        info "${BOLD}Template version check:${RESET}"
-        bash "$HOME/.ai-toolkit/check-template-update.sh" 2>&1 | sed 's/^/  /' || true
-        info ""
-    fi
+    record_ownership "$(pwd)/docs/adr" directory empty-only
+  fi
+  append_gitignore_exact .claude/settings.local.json
+  append_gitignore_exact CLAUDE.local.md
+  info "Configured project for: ${AGENTS_TO_INSTALL[*]}"
 }
 
-# =============================================================================
-# MAIN
-# =============================================================================
-
 main() {
-    parse_args "$@"
-    resolve_source
-
-    # If local mode, ensure SCRIPT_DIR is set
-    if [ "$LOCAL" = "1" ] && [ -z "${SCRIPT_DIR:-}" ]; then
-        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    fi
-
-    # Remote mode requires curl
-    if [ "$LOCAL" != "1" ] && ! command -v curl >/dev/null 2>&1; then
-        err "curl is required for remote install. Install curl or use --local."
-        exit 1
-    fi
-
-    info ""
-    info "${BOLD}=== Consultant Toolkit Installer v${VERSION} ===${RESET}"
-
-    detect_agents
-    prompt_install_mode
-    prompt_agent_selection
-
-    case "$INSTALL_MODE" in
-        global)  install_global ;;
-        project) install_project ;;
-    esac
+  parse_args "$@"
+  [ -n "$INSTALL_MODE" ] || fail "specify exactly one of --global or --project"
+  validate_tools
+  case "$INSTALL_MODE" in global) install_global ;; project) install_project ;; esac
 }
 
 main "$@"

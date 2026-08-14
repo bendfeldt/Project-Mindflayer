@@ -1,28 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Bash(databricks bundle validate*)",
-      "Bash(databricks bundle summary*)",
-      "Bash(databricks bundle schema*)",
-      "Bash(databricks workspace list*)",
-      "Bash(databricks clusters list*)",
-      "Bash(databricks jobs list*)",
-      "Bash(databricks pipelines list*)",
-      "Bash(databricks unity-catalog *list*)",
-      "Bash(databricks unity-catalog *get*)",
-      "Bash(databricks auth *)",
-      "Bash(python -m pytest*)",
-      "Bash(ruff check*)",
-      "Bash(ruff format --check*)"
+      "Bash(databricks * list *--profile *)", "Bash(databricks * get *--profile *)",
+      "Bash(databricks bundle validate *--profile *)", "Bash(databricks bundle summary *--profile *)",
+      "Bash(python -m pytest*)", "Bash(ruff check*)", "Bash(ruff format --check*)"
     ],
     "deny": [
-      "Bash(databricks bundle deploy*)",
-      "Bash(databricks bundle run*)",
-      "Bash(databricks bundle destroy*)",
-      "Bash(databricks clusters delete*)",
-      "Bash(databricks clusters start*)",
-      "Bash(databricks jobs run-now*)",
-      "Bash(databricks pipelines start*)"
+      "Bash(databricks auth login*)", "Bash(databricks auth logout*)", "Bash(databricks configure*)",
+      "Bash(databricks bundle deploy*)", "Bash(databricks bundle run*)", "Bash(databricks bundle destroy*)",
+      "Bash(databricks * create*)", "Bash(databricks * update*)", "Bash(databricks * delete*)",
+      "Bash(databricks * start*)", "Bash(databricks * stop*)", "Bash(databricks * run-now*)"
     ]
   }
 }

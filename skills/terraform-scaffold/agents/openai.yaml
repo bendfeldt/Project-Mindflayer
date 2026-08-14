@@ -1,0 +1,7 @@
+interface:
+  display_name: "Terraform Scaffold"
+  short_description: "Create portable pinned Terraform scaffolding"
+  default_prompt: "Use $terraform-scaffold to create portable pinned Terraform scaffolding."
+policy:
+  allow_implicit_invocation: true
+

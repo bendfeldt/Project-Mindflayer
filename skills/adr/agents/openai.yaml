@@ -1,0 +1,7 @@
+interface:
+  display_name: "ADR"
+  short_description: "Create or revise an architecture decision record"
+  default_prompt: "Use $adr to create or revise an architecture decision record."
+policy:
+  allow_implicit_invocation: true
+

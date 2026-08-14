@@ -1,0 +1,7 @@
+interface:
+  display_name: "Promote Skill"
+  short_description: "Generalize and promote a complete skill"
+  default_prompt: "Use $promote-skill to generalize and promote a complete skill."
+policy:
+  allow_implicit_invocation: true
+

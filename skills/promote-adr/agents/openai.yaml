@@ -1,0 +1,7 @@
+interface:
+  display_name: "Promote ADR"
+  short_description: "Generalize a repository decision"
+  default_prompt: "Use $promote-adr to generalize a repository decision."
+policy:
+  allow_implicit_invocation: true
+

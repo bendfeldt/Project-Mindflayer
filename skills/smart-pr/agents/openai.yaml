@@ -1,0 +1,7 @@
+interface:
+  display_name: "Smart PR"
+  short_description: "Prepare and create a reviewed pull request"
+  default_prompt: "Use $smart-pr to prepare and create a reviewed pull request."
+policy:
+  allow_implicit_invocation: true
+

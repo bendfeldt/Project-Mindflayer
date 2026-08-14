@@ -1,0 +1,7 @@
+interface:
+  display_name: "Kimball Model"
+  short_description: "Design a dimensional model"
+  default_prompt: "Use $kimball-model to design a dimensional model."
+policy:
+  allow_implicit_invocation: true
+

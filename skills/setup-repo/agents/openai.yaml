@@ -1,0 +1,7 @@
+interface:
+  display_name: "Set Up Repository"
+  short_description: "Install toolkit project configuration"
+  default_prompt: "Use $setup-repo to install toolkit project configuration."
+policy:
+  allow_implicit_invocation: true
+
