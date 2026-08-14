@@ -17,18 +17,18 @@ Project-Mindflayer has three layers:
 | `path` | Repository-relative source path |
 | `type` | Artifact class, such as baseline, template, skill, resource, setting, or script |
 | `version` | Artifact lifecycle version |
-| `consumers` | Comma-separated installation scopes |
+| `consumers` | Comma-separated installation scopes or capabilities |
 | `ownership` | Uninstall ownership class |
 
-Global shared artifacts install under `~/.ai-toolkit/`. Skills remain canonical in `~/.ai-toolkit/skills/`; selected consumers receive verified per-skill symlinks in `~/.claude/skills/`, `~/.agents/skills/`, or `~/.copilot/skills/`.
+Global shared artifacts install under `~/.ai-toolkit/`. Skill rows use the `global,project:skills` capability instead of repeating tool names. A single tool-and-scope mapping resolves the discovery roots for every selected skill-aware consumer.
 
-Project installs copy complete skill directories as real files. Codex discovers them under `.agents/skills/`; Claude and Copilot use `.claude/skills/`. Mixed tool selections may therefore create both roots, while tools sharing a root are copied only once. Nested scripts, references, and metadata follow the owning skill.
+Global skills remain canonical in `~/.ai-toolkit/skills/` and are linked into each selected discovery root. Project installs copy complete skill directories as real files: Codex uses `.agents/skills/`, while Claude and Copilot use `.claude/skills/`. The installer fetches each artifact once and deduplicates shared roots.
 
 The installer fetches the manifest first and then fetches exactly its selected rows. Local and remote modes therefore share one inventory. A successful global install writes the toolkit release stamp last.
 
 ## Ownership lifecycle
 
-Existing paths are preserved by default. Explicit `--force` replacement first creates a timestamped backup. Installation records each managed path with its ownership class and either a content fingerprint or symlink target. Uninstall removes only artifacts whose recorded ownership proof still matches and prunes empty managed parent directories.
+Existing paths are preserved by default. Explicit `--force` replacement first creates a timestamped backup. Installation records each managed path with its ownership class and either a content fingerprint or symlink target. Drift and synchronization derive project roots from that ledger and reject unsafe or unmanaged paths. Uninstall removes only artifacts whose recorded ownership proof still matches and prunes empty managed parent directories.
 
 The root distribution repository is deliberately exempt from project installation: generated client `.claude/` and `.agents/` layouts would mix distribution sources with installed artifacts.
 

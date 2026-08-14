@@ -20,7 +20,7 @@ bash /path/to/Project-Mindflayer/install.sh --project \
 
 Remote installation uses the same flags without `--local`. Existing files are skipped by default; `--force` explicitly authorizes replacement and creates timestamped backups.
 
-Global skills live in the canonical `~/.ai-toolkit/skills/` store. The installer exposes them through each selected tool's discovery root, including `~/.agents/skills/` for Codex. Project installs commit complete skill trees to `.agents/skills/` for Codex and `.claude/skills/` for Claude or Copilot.
+Global skills live in the canonical `~/.ai-toolkit/skills/` store. One capability-driven workflow exposes them through the discovery roots of every selected skill-aware tool. Project installs commit each complete skill tree once per distinct discovery root.
 
 ## Contents
 
@@ -35,7 +35,7 @@ See [architecture](docs/architecture.md), [operating standards](docs/operating-s
 
 ## Safety
 
-The installer never silently replaces existing agent configuration. Uninstall is dry-run by default and removes only verified toolkit-owned artifacts. The toolkit repository deliberately does not install its own generated `.claude/` or `.agents/` client layout.
+The installer never silently replaces existing agent configuration. Drift, synchronization, and uninstall operate only on paths recorded as toolkit-owned. Uninstall is dry-run by default, and the toolkit repository deliberately does not install its own generated `.claude/` or `.agents/` client layout.
 
 ## Validate
 

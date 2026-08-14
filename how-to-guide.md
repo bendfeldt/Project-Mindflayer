@@ -8,7 +8,7 @@ Choose tools explicitly; names are validated and duplicates are rejected.
 bash install.sh --global --tools claude,codex,copilot --local
 ```
 
-The canonical skills remain under `~/.ai-toolkit/skills/`. Selected consumers receive verified links: Codex under `~/.agents/skills/`, Claude under `~/.claude/skills/`, and Copilot under `~/.copilot/skills/`.
+The canonical skills remain under `~/.ai-toolkit/skills/`. A shared capability workflow creates verified links for selected consumers: Codex under `~/.agents/skills/`, Claude under `~/.claude/skills/`, and Copilot under `~/.copilot/skills/`.
 
 Replacements are opt-in:
 
@@ -44,7 +44,7 @@ Run project drift and synchronization commands from the project root:
 ~/.ai-toolkit/uninstall.sh --global --confirm
 ```
 
-Drift checks compare every existing managed skill root and complete skill directories, including `agents/`, `references/`, and `scripts/`. Synchronization updates only roots already present in the project. Uninstall previews by default and preserves modified files unless forced removal is explicitly requested.
+Drift checks compare complete skill directories, including `agents/`, `references/`, and `scripts/`. Drift and synchronization derive their roots exclusively from `.mindflayer-managed.tsv`; they refuse conventionally named but unmanaged directories. Uninstall previews by default and preserves modified files unless forced removal is explicitly requested.
 
 ## Adding an artifact
 

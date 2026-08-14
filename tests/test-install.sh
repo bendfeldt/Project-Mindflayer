@@ -37,7 +37,7 @@ while IFS=$'\t' read -r artifact artifact_type artifact_version consumers owners
   [ -n "$artifact_type" ] && [ -n "$artifact_version" ] && [ -n "$consumers" ] && [ -n "$ownership" ] || fail "complete manifest row: $artifact"
   case "$artifact_type" in
     skill|skill-resource)
-      assert "Codex consumers: $artifact" sh -c "printf '%s' '$consumers' | grep -Fq 'global:codex' && printf '%s' '$consumers' | grep -Fq 'project:codex'"
+      assert "skill capability consumers: $artifact" test "$consumers" = 'global,project:skills'
       ;;
   esac
 done < "$ROOT/manifest.tsv"
@@ -71,6 +71,7 @@ printf '%s\n' '#!/usr/bin/env bash' \
   'url=""; output=""' \
   'while [ $# -gt 0 ]; do case "$1" in -o) shift; output="$1" ;; http*) url="$1" ;; esac; shift; done' \
   'relative="${url#*Project-Mindflayer/main/}"' \
+  '[ -z "${FAKE_FETCH_LOG:-}" ] || printf "%s\n" "$relative" >> "$FAKE_FETCH_LOG"' \
   '[ "${FAIL_ARTIFACT:-}" != "$relative" ] || exit 22' \
   'cp "$FAKE_REPO/$relative" "$output"' > "$fakebin/curl"
 chmod +x "$fakebin/curl"
@@ -80,25 +81,31 @@ assert 'incomplete remote install fails' test "$rc" -ne 0
 assert 'incomplete install has no version stamp' test ! -f "$HOME/.ai-toolkit/version"
 unset FAIL_ARTIFACT
 assert 'remote-style install succeeds' env PATH="$fakebin:$PATH" FAKE_REPO="$ROOT" HOME="$HOME" bash "$ROOT/install.sh" --global --tools codex
-assert 'remote completion stamp written last' test "$(cat "$HOME/.ai-toolkit/version")" = 3.0.1
+assert 'remote completion stamp written last' test "$(cat "$HOME/.ai-toolkit/version")" = 3.0.2
 assert 'Codex-only global skill symlink' test "$(readlink "$HOME/.agents/skills/adr")" = "$HOME/.ai-toolkit/skills/adr"
 assert 'Codex-only global install omits Claude skills' test ! -d "$HOME/.claude/skills"
+export FAKE_FETCH_LOG="$sandbox/fetch.log"
+: > "$FAKE_FETCH_LOG"
+assert 'mixed project remote install succeeds' sh -c "cd '$sandbox/project' && PATH='$fakebin:$PATH' HOME='$HOME' bash '$ROOT/install.sh' --project --tools claude,codex --profile terraform --client Client --prefix cl >/dev/null"
+assert 'project skill artifact fetched once' test "$(grep -Fc 'skills/adr/SKILL.md' "$FAKE_FETCH_LOG")" -eq 1
+unset FAKE_FETCH_LOG
 unset FAKE_REPO
 teardown
 
 printf '%s\n' '--- global install and ownership ---'
 setup
 assert 'global install all tools' run_install --global --tools claude,codex,gemini,cursor,copilot --local
-assert 'version written' test "$(cat "$HOME/.ai-toolkit/version")" = 3.0.1
+assert 'version written' test "$(cat "$HOME/.ai-toolkit/version")" = 3.0.2
 assert 'manifest installed' test -f "$HOME/.ai-toolkit/manifest.tsv"
 assert 'installer installed' test -f "$HOME/.ai-toolkit/install.sh"
+assert 'shared skill lifecycle installed' test -f "$HOME/.ai-toolkit/skill-lifecycle.sh"
 assert 'ownership state' test -f "$HOME/.ai-toolkit/managed.tsv"
 assert 'nested release script' test -f "$HOME/.ai-toolkit/skills/release-notes/scripts/config.py"
 assert 'nested skill metadata' test -f "$HOME/.ai-toolkit/skills/adr/agents/openai.yaml"
-assert 'Claude skill symlink target' test "$(readlink "$HOME/.claude/skills/adr")" = "$HOME/.ai-toolkit/skills/adr"
-assert 'Codex skill symlink target' test "$(readlink "$HOME/.agents/skills/adr")" = "$HOME/.ai-toolkit/skills/adr"
+for skill_root in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.copilot/skills"; do
+  assert "skill symlink target: $skill_root" test "$(readlink "$skill_root/adr")" = "$HOME/.ai-toolkit/skills/adr"
+done
 assert 'Codex nested skill resource visible' test -f "$HOME/.agents/skills/release-notes/scripts/config.py"
-assert 'Copilot skill symlink target' test "$(readlink "$HOME/.copilot/skills/adr")" = "$HOME/.ai-toolkit/skills/adr"
 
 printf 'user config\n' > "$HOME/.codex/AGENTS.md"
 run_install --global --tools codex --local >/dev/null
@@ -132,12 +139,15 @@ for tools in claude codex gemini cursor copilot claude,codex,gemini,cursor,copil
   setup
   assert "project install: $tools" sh -c "cd '$sandbox/project' && HOME='$HOME' bash '$ROOT/install.sh' --project --tools '$tools' --profile terraform --client Client --prefix cl --local >/dev/null"
   assert "project agents: $tools" test -f "$sandbox/project/AGENTS.md"
-  case "$tools" in
-    *claude*|*copilot*) assert "Claude-compatible nested skill: $tools" test -f "$sandbox/project/.claude/skills/release-notes/scripts/config.py" ;;
-  esac
-  case "$tools" in
-    *codex*) assert "Codex nested skill: $tools" test -f "$sandbox/project/.agents/skills/release-notes/scripts/config.py" ;;
-  esac
+  for skill_mapping in 'claude:.claude/skills' 'codex:.agents/skills' 'copilot:.claude/skills'; do
+    skill_tool="${skill_mapping%%:*}"
+    skill_root="${skill_mapping#*:}"
+    case ",$tools," in
+      *",$skill_tool,"*)
+        assert "nested skill: $tools -> $skill_root" test -f "$sandbox/project/$skill_root/release-notes/scripts/config.py"
+        ;;
+    esac
+  done
   if [ "$tools" = codex ]; then
     assert 'Codex-only install omits Claude settings' test ! -e "$sandbox/project/.claude/settings.json"
     assert 'Codex-only install omits Claude skill root' test ! -d "$sandbox/project/.claude/skills"
@@ -147,6 +157,7 @@ done
 
 setup
 (cd "$sandbox/project" && run_install --project --tools claude,codex --profile databricks --client Client --prefix cl --local) >/dev/null
+assert 'shared project root recorded once' test "$(grep -Fc $'.claude/skills/adr/SKILL.md\t' "$sandbox/project/.mindflayer-managed.tsv")" -eq 1
 export MINDFlAYER_HOME="$ROOT"
 assert 'full directory initially synced' sh -c "cd '$sandbox/project' && '$ROOT/tools/check-skills-update.sh' >/dev/null"
 printf 'drift\n' >> "$sandbox/project/.agents/skills/adr/agents/openai.yaml"
@@ -160,6 +171,31 @@ assert 'Claude nested drift detected' test "$rc" -ne 0
 (cd "$sandbox/project" && "$ROOT/tools/sync-skills.sh" --force >/dev/null)
 assert 'all managed roots repaired' sh -c "cd '$sandbox/project' && '$ROOT/tools/check-skills-update.sh' >/dev/null"
 unset MINDFlAYER_HOME
+teardown
+
+printf '%s\n' '--- lifecycle ownership boundaries ---'
+setup
+mkdir -p "$sandbox/project/.agents/skills/adr"
+printf 'user skill\n' > "$sandbox/project/.agents/skills/adr/SKILL.md"
+export MINDFLAYER_HOME="$ROOT"
+rc=0; (cd "$sandbox/project" && "$ROOT/tools/check-skills-update.sh" >/dev/null 2>&1) || rc=$?
+assert 'check rejects unmanaged skill root' test "$rc" -ne 0
+rc=0; (cd "$sandbox/project" && "$ROOT/tools/sync-skills.sh" --force >/dev/null 2>&1) || rc=$?
+assert 'sync rejects unmanaged skill root' test "$rc" -ne 0
+assert 'unmanaged skill remains unchanged' contains "$sandbox/project/.agents/skills/adr/SKILL.md" 'user skill'
+unset MINDFLAYER_HOME
+teardown
+
+setup
+printf '%s\tfile\tproof\n' \
+  '/tmp/outside/skills/adr/SKILL.md' \
+  '../outside/skills/adr/SKILL.md' > "$sandbox/project/.mindflayer-managed.tsv"
+export MINDFLAYER_HOME="$ROOT"
+rc=0; (cd "$sandbox/project" && "$ROOT/tools/check-skills-update.sh" >/dev/null 2>&1) || rc=$?
+assert 'check rejects unsafe ownership paths' test "$rc" -ne 0
+rc=0; (cd "$sandbox/project" && "$ROOT/tools/sync-skills.sh" --force >/dev/null 2>&1) || rc=$?
+assert 'sync rejects unsafe ownership paths' test "$rc" -ne 0
+unset MINDFLAYER_HOME
 teardown
 
 setup

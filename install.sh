@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="3.0.1"
+VERSION="3.0.2"
 REPO_URL="https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main"
 KNOWN_TOOLS="claude codex gemini cursor copilot"
 VALID_PROFILES="terraform databricks fabric"
@@ -228,6 +228,25 @@ skill_names() {
   awk -F '\t' '$2 == "skill" {sub("skills/", "", $1); sub("/SKILL.md", "", $1); print $1}' "$1"
 }
 
+skill_root_records() {
+  printf '%s\t%s\t%s\n' \
+    claude global "$HOME/.claude/skills" \
+    codex global "$HOME/.agents/skills" \
+    copilot global "$HOME/.copilot/skills" \
+    claude project '.claude/skills' \
+    codex project '.agents/skills' \
+    copilot project '.claude/skills'
+}
+
+selected_skill_roots() {
+  local scope="$1" tool record_scope root
+  while IFS=$'\t' read -r tool record_scope root; do
+    [ "$record_scope" = "$scope" ] || continue
+    is_selected "$tool" || continue
+    printf '%s\n' "$root"
+  done < <(skill_root_records) | awk '!seen[$0]++'
+}
+
 global_destination() {
   local path="$1"
   case "$path" in
@@ -267,7 +286,7 @@ install_global() {
     [ "$type" != script ] || chmod +x "$destination"
   done < <(manifest_rows "$manifest")
 
-  local baseline="$HOME/.ai-toolkit/AGENTS.md" agent skill
+  local baseline="$HOME/.ai-toolkit/AGENTS.md" agent skill skill_root
   for agent in "${AGENTS_TO_INSTALL[@]}"; do
     case "$agent" in
       claude)
@@ -282,11 +301,11 @@ install_global() {
     esac
   done
 
-  while IFS= read -r skill; do
-    is_selected claude && install_link "$HOME/.ai-toolkit/skills/$skill" "$HOME/.claude/skills/$skill"
-    is_selected codex && install_link "$HOME/.ai-toolkit/skills/$skill" "$HOME/.agents/skills/$skill"
-    is_selected copilot && install_link "$HOME/.ai-toolkit/skills/$skill" "$HOME/.copilot/skills/$skill"
-  done < <(skill_names "$manifest")
+  while IFS= read -r skill_root; do
+    while IFS= read -r skill; do
+      install_link "$HOME/.ai-toolkit/skills/$skill" "$skill_root/$skill"
+    done < <(skill_names "$manifest")
+  done < <(selected_skill_roots global)
 
   # Commit the release stamp only after every requested artifact succeeds.
   printf '%s\n' "$VERSION" > "$HOME/.ai-toolkit/version.tmp"
@@ -314,15 +333,6 @@ claude_project_destination() {
     settings/claude/scaffold/*) printf '.claude/%s' "${path#settings/claude/scaffold/}" ;;
     *) return 1 ;;
   esac
-}
-
-project_skill_roots() {
-  if is_selected claude || is_selected copilot; then
-    printf '%s\n' '.claude/skills'
-  fi
-  if is_selected codex; then
-    printf '%s\n' '.agents/skills'
-  fi
 }
 
 append_gitignore_exact() {
@@ -358,15 +368,24 @@ install_project() {
   fi
 
   local manifest path type consumers source destination skill_root
+  local skill_roots=()
   manifest="$(fetch_temp manifest.tsv)"
+
   while IFS= read -r skill_root; do
+    skill_roots+=("$skill_root")
+  done < <(selected_skill_roots project)
+
+  if [ "${#skill_roots[@]}" -gt 0 ]; then
     while IFS=$'\t' read -r path type _version consumers _ownership; do
       case "$type" in skill|skill-resource) ;; *) continue ;; esac
+      consumer_matches "$consumers" project:skills || continue
       source="$(fetch_temp "$path")"
-      destination="$skill_root/${path#skills/}"
-      install_file "$source" "$destination"
+      for skill_root in "${skill_roots[@]}"; do
+        destination="$skill_root/${path#skills/}"
+        install_file "$source" "$destination"
+      done
     done < <(manifest_rows "$manifest")
-  done < <(project_skill_roots)
+  fi
 
   local agent
   for agent in "${AGENTS_TO_INSTALL[@]}"; do
