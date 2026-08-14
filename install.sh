@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="3.0.0"
+VERSION="3.0.1"
 REPO_URL="https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main"
 KNOWN_TOOLS="claude codex gemini cursor copilot"
 VALID_PROFILES="terraform databricks fabric"
@@ -284,6 +284,7 @@ install_global() {
 
   while IFS= read -r skill; do
     is_selected claude && install_link "$HOME/.ai-toolkit/skills/$skill" "$HOME/.claude/skills/$skill"
+    is_selected codex && install_link "$HOME/.ai-toolkit/skills/$skill" "$HOME/.agents/skills/$skill"
     is_selected copilot && install_link "$HOME/.ai-toolkit/skills/$skill" "$HOME/.copilot/skills/$skill"
   done < <(skill_names "$manifest")
 
@@ -306,13 +307,22 @@ replace_tokens() {
   sed -e "s|{CLIENT_NAME}|$safe_client|g" -e "s|{PLATFORM}|$PROFILE|g" -e "s|{REPO_TYPE}|$repo_type|g" -e "s|{prefix}|$safe_prefix|g" "$source" > "$destination"
 }
 
-project_destination() {
+claude_project_destination() {
   local path="$1"
   case "$path" in
     skills/*) printf '.claude/%s' "$path" ;;
     settings/claude/scaffold/*) printf '.claude/%s' "${path#settings/claude/scaffold/}" ;;
     *) return 1 ;;
   esac
+}
+
+project_skill_roots() {
+  if is_selected claude || is_selected copilot; then
+    printf '%s\n' '.claude/skills'
+  fi
+  if is_selected codex; then
+    printf '%s\n' '.agents/skills'
+  fi
 }
 
 append_gitignore_exact() {
@@ -347,16 +357,16 @@ install_project() {
     info " = AGENTS.md (join mode)"
   fi
 
-  local manifest path type consumers source destination
+  local manifest path type consumers source destination skill_root
   manifest="$(fetch_temp manifest.tsv)"
-  if is_selected claude || is_selected copilot; then
+  while IFS= read -r skill_root; do
     while IFS=$'\t' read -r path type _version consumers _ownership; do
       case "$type" in skill|skill-resource) ;; *) continue ;; esac
       source="$(fetch_temp "$path")"
-      destination="$(project_destination "$path")"
+      destination="$skill_root/${path#skills/}"
       install_file "$source" "$destination"
     done < <(manifest_rows "$manifest")
-  fi
+  done < <(project_skill_roots)
 
   local agent
   for agent in "${AGENTS_TO_INSTALL[@]}"; do
@@ -366,7 +376,7 @@ install_project() {
         install_file "$source" .claude/settings.json
         while IFS=$'\t' read -r path type _version consumers _ownership; do
           [ "$type" = scaffold ] || continue
-          source="$(fetch_temp "$path")"; destination="$(project_destination "$path")"
+          source="$(fetch_temp "$path")"; destination="$(claude_project_destination "$path")"
           install_file "$source" "$destination"
         done < <(manifest_rows "$manifest")
         ;;

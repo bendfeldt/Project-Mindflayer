@@ -8,28 +8,32 @@ Choose tools explicitly; names are validated and duplicates are rejected.
 bash install.sh --global --tools claude,codex,copilot --local
 ```
 
+The canonical skills remain under `~/.ai-toolkit/skills/`. Selected consumers receive verified links: Codex under `~/.agents/skills/`, Claude under `~/.claude/skills/`, and Copilot under `~/.copilot/skills/`.
+
 Replacements are opt-in:
 
 ```bash
 bash install.sh --global --tools claude,codex,copilot --force --local
 ```
 
-Every replaced file receives a timestamped sibling backup. The version stamp changes only after complete success.
+Every replaced path receives a timestamped sibling backup. The version stamp changes only after the complete installation succeeds.
 
 ## Project installation
 
-Run from the target client repository, never from Project-Mindflayer itself:
+Run this in the target client repository, never from Project-Mindflayer itself:
 
 ```bash
-bash /path/to/install.sh --project --tools claude,copilot \
+bash /path/to/install.sh --project --tools claude,codex \
   --profile databricks --client "Client" --prefix cl --local
 ```
 
-Profiles are `terraform`, `databricks`, and `fabric`. They select permission settings, not Databricks authentication. Every actual Databricks command still requires an explicitly user-selected `--profile <name>`.
+The supported profiles are `terraform`, `databricks`, and `fabric`. They select permission settings, not Databricks authentication. Every actual Databricks command still requires an explicitly user-selected `--profile <name>`.
 
-Existing managed projects enter join mode: `AGENTS.md` is preserved while missing selected-tool artifacts are added. Project skills are real files under `.claude/skills/`.
+Existing managed projects enter join mode: `AGENTS.md` is preserved while missing selected-tool artifacts are added. Project skills are complete real-file trees under `.agents/skills/` for Codex and `.claude/skills/` for Claude or Copilot. A mixed install writes both trees once.
 
 ## Lifecycle
+
+Run project drift and synchronization commands from the project root:
 
 ```bash
 ~/.ai-toolkit/check-skills-update.sh
@@ -40,13 +44,13 @@ Existing managed projects enter join mode: `AGENTS.md` is preserved while missin
 ~/.ai-toolkit/uninstall.sh --global --confirm
 ```
 
-Drift checks compare complete skill directories, including `agents/`, `references/`, and `scripts/`. Uninstall previews by default and preserves modified files unless forced removal is explicitly requested.
+Drift checks compare every existing managed skill root and complete skill directories, including `agents/`, `references/`, and `scripts/`. Synchronization updates only roots already present in the project. Uninstall previews by default and preserves modified files unless forced removal is explicitly requested.
 
 ## Adding an artifact
 
 1. Add the source file.
-2. Add exactly one `manifest.tsv` row with type, lifecycle version, consumers, and ownership.
-3. Add or update validation.
+2. Add exactly one `manifest.tsv` row with its type, lifecycle version, consumers, and ownership.
+3. Add or update validation for all declared consumers.
 4. Run the complete test suite.
 
-Do not add a second file list to lifecycle scripts or documentation.
+Do not maintain a second file list in lifecycle scripts or documentation.

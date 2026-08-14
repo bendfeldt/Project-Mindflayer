@@ -1,6 +1,6 @@
 # Project Instructions
 
-<!-- template: AGENTS | version: 3.0.0 -->
+<!-- template: AGENTS | version: 3.1.0 -->
 
 ## Repository identity
 
@@ -30,4 +30,4 @@
 
 ## Tool layout
 
-Claude and Copilot may consume committed skills from `.claude/skills/`. Tool-specific instruction files are compatibility shims; this file remains authoritative.
+Codex consumes committed skills from `.agents/skills/`; Claude and Copilot use `.claude/skills/`. Tool-specific instruction files are compatibility shims; this file remains authoritative.

@@ -35,6 +35,11 @@ while IFS=$'\t' read -r artifact artifact_type artifact_version consumers owners
   manifest_count=$((manifest_count + 1))
   assert "manifest file: $artifact" test -f "$ROOT/$artifact"
   [ -n "$artifact_type" ] && [ -n "$artifact_version" ] && [ -n "$consumers" ] && [ -n "$ownership" ] || fail "complete manifest row: $artifact"
+  case "$artifact_type" in
+    skill|skill-resource)
+      assert "Codex consumers: $artifact" sh -c "printf '%s' '$consumers' | grep -Fq 'global:codex' && printf '%s' '$consumers' | grep -Fq 'project:codex'"
+      ;;
+  esac
 done < "$ROOT/manifest.tsv"
 assert 'manifest has artifacts' test "$manifest_count" -gt 40
 
@@ -48,6 +53,7 @@ for skill_file in "$ROOT"/skills/*/SKILL.md; do
   assert "$skill metadata interface" contains "$ROOT/skills/$skill/agents/openai.yaml" 'interface:'
 done
 assert 'no stale ADR IDs' sh -c "! rg -n 'ADR-00(0[4-9]|1[0-9]|2[0-9]|3[0-9])|docs/decisions/(platform|templates)' '$ROOT' --glob '!.git/**' --glob '!plan.md'"
+assert 'Copilot repository guidance is a compatibility shim' test "$(wc -l < "$ROOT/.github/copilot-instructions.md" | tr -d ' ')" -le 5
 assert 'no skill lifecycle in frontmatter' sh -c "! rg -n '^(version|updated):' '$ROOT/skills' -g 'SKILL.md'"
 
 printf '%s\n' '--- argument validation ---'
@@ -74,20 +80,24 @@ assert 'incomplete remote install fails' test "$rc" -ne 0
 assert 'incomplete install has no version stamp' test ! -f "$HOME/.ai-toolkit/version"
 unset FAIL_ARTIFACT
 assert 'remote-style install succeeds' env PATH="$fakebin:$PATH" FAKE_REPO="$ROOT" HOME="$HOME" bash "$ROOT/install.sh" --global --tools codex
-assert 'remote completion stamp written last' test "$(cat "$HOME/.ai-toolkit/version")" = 3.0.0
+assert 'remote completion stamp written last' test "$(cat "$HOME/.ai-toolkit/version")" = 3.0.1
+assert 'Codex-only global skill symlink' test "$(readlink "$HOME/.agents/skills/adr")" = "$HOME/.ai-toolkit/skills/adr"
+assert 'Codex-only global install omits Claude skills' test ! -d "$HOME/.claude/skills"
 unset FAKE_REPO
 teardown
 
 printf '%s\n' '--- global install and ownership ---'
 setup
 assert 'global install all tools' run_install --global --tools claude,codex,gemini,cursor,copilot --local
-assert 'version written' test "$(cat "$HOME/.ai-toolkit/version")" = 3.0.0
+assert 'version written' test "$(cat "$HOME/.ai-toolkit/version")" = 3.0.1
 assert 'manifest installed' test -f "$HOME/.ai-toolkit/manifest.tsv"
 assert 'installer installed' test -f "$HOME/.ai-toolkit/install.sh"
 assert 'ownership state' test -f "$HOME/.ai-toolkit/managed.tsv"
 assert 'nested release script' test -f "$HOME/.ai-toolkit/skills/release-notes/scripts/config.py"
 assert 'nested skill metadata' test -f "$HOME/.ai-toolkit/skills/adr/agents/openai.yaml"
 assert 'Claude skill symlink target' test "$(readlink "$HOME/.claude/skills/adr")" = "$HOME/.ai-toolkit/skills/adr"
+assert 'Codex skill symlink target' test "$(readlink "$HOME/.agents/skills/adr")" = "$HOME/.ai-toolkit/skills/adr"
+assert 'Codex nested skill resource visible' test -f "$HOME/.agents/skills/release-notes/scripts/config.py"
 assert 'Copilot skill symlink target' test "$(readlink "$HOME/.copilot/skills/adr")" = "$HOME/.ai-toolkit/skills/adr"
 
 printf 'user config\n' > "$HOME/.codex/AGENTS.md"
@@ -103,6 +113,18 @@ bash "$ROOT/tools/uninstall.sh" --global --confirm >/dev/null
 assert 'modified managed file preserved' test -f "$HOME/.codex/AGENTS.md"
 assert 'ownership retained for modified file' test -f "$HOME/.ai-toolkit/managed.tsv"
 assert 'verified skill symlink removed' test ! -L "$HOME/.claude/skills/adr"
+assert 'verified Codex skill symlink removed' test ! -L "$HOME/.agents/skills/adr"
+teardown
+
+printf '%s\n' '--- Codex global symlink replacement safety ---'
+setup
+mkdir -p "$HOME/.agents/skills" "$sandbox/wrong-target"
+ln -s "$sandbox/wrong-target" "$HOME/.agents/skills/adr"
+run_install --global --tools codex --local >/dev/null
+assert 'wrong Codex symlink preserved by default' test "$(readlink "$HOME/.agents/skills/adr")" = "$sandbox/wrong-target"
+run_install --global --tools codex --force --local >/dev/null
+assert 'wrong Codex symlink replaced with verified target' test "$(readlink "$HOME/.agents/skills/adr")" = "$HOME/.ai-toolkit/skills/adr"
+assert 'wrong Codex symlink backed up' sh -c "find '$HOME/.agents/skills' -name 'adr.bak.*' -type l | grep -q ."
 teardown
 
 printf '%s\n' '--- project combinations and nested drift ---'
@@ -110,19 +132,33 @@ for tools in claude codex gemini cursor copilot claude,codex,gemini,cursor,copil
   setup
   assert "project install: $tools" sh -c "cd '$sandbox/project' && HOME='$HOME' bash '$ROOT/install.sh' --project --tools '$tools' --profile terraform --client Client --prefix cl --local >/dev/null"
   assert "project agents: $tools" test -f "$sandbox/project/AGENTS.md"
-  case "$tools" in *claude*|*copilot*) assert "project nested skill: $tools" test -f "$sandbox/project/.claude/skills/release-notes/scripts/config.py" ;; esac
+  case "$tools" in
+    *claude*|*copilot*) assert "Claude-compatible nested skill: $tools" test -f "$sandbox/project/.claude/skills/release-notes/scripts/config.py" ;;
+  esac
+  case "$tools" in
+    *codex*) assert "Codex nested skill: $tools" test -f "$sandbox/project/.agents/skills/release-notes/scripts/config.py" ;;
+  esac
+  if [ "$tools" = codex ]; then
+    assert 'Codex-only install omits Claude settings' test ! -e "$sandbox/project/.claude/settings.json"
+    assert 'Codex-only install omits Claude skill root' test ! -d "$sandbox/project/.claude/skills"
+  fi
   teardown
 done
 
 setup
-(cd "$sandbox/project" && run_install --project --tools claude --profile databricks --client Client --prefix cl --local) >/dev/null
+(cd "$sandbox/project" && run_install --project --tools claude,codex --profile databricks --client Client --prefix cl --local) >/dev/null
 export MINDFlAYER_HOME="$ROOT"
 assert 'full directory initially synced' sh -c "cd '$sandbox/project' && '$ROOT/tools/check-skills-update.sh' >/dev/null"
+printf 'drift\n' >> "$sandbox/project/.agents/skills/adr/agents/openai.yaml"
+rc=0; (cd "$sandbox/project" && "$ROOT/tools/check-skills-update.sh" >/dev/null) || rc=$?
+assert 'Codex nested drift detected' test "$rc" -ne 0
+(cd "$sandbox/project" && "$ROOT/tools/sync-skills.sh" --force >/dev/null)
+assert 'Codex nested drift repaired' sh -c "cd '$sandbox/project' && '$ROOT/tools/check-skills-update.sh' >/dev/null"
 printf 'drift\n' >> "$sandbox/project/.claude/skills/adr/agents/openai.yaml"
 rc=0; (cd "$sandbox/project" && "$ROOT/tools/check-skills-update.sh" >/dev/null) || rc=$?
-assert 'nested drift detected' test "$rc" -ne 0
+assert 'Claude nested drift detected' test "$rc" -ne 0
 (cd "$sandbox/project" && "$ROOT/tools/sync-skills.sh" --force >/dev/null)
-assert 'nested drift repaired' sh -c "cd '$sandbox/project' && '$ROOT/tools/check-skills-update.sh' >/dev/null"
+assert 'all managed roots repaired' sh -c "cd '$sandbox/project' && '$ROOT/tools/check-skills-update.sh' >/dev/null"
 unset MINDFlAYER_HOME
 teardown
 
@@ -131,6 +167,9 @@ printf '%s\n' '# user rules' '.claude/settings.local.json' > "$sandbox/project/.
 mkdir -p "$sandbox/project/docs/adr"
 (cd "$sandbox/project" && run_install --project --tools codex --profile terraform --client Client --prefix cl --local) >/dev/null
 (cd "$sandbox/project" && bash "$ROOT/tools/uninstall.sh" --project --confirm) >/dev/null
+assert 'Codex project skills removed' test ! -e "$sandbox/project/.agents/skills/adr/SKILL.md"
+assert 'empty Codex managed directories removed' test ! -d "$sandbox/project/.agents"
+assert 'Codex project shim removed' test ! -e "$sandbox/project/codex.md"
 assert 'pre-existing gitignore line preserved' contains "$sandbox/project/.gitignore" '.claude/settings.local.json'
 assert 'toolkit gitignore line removed' not_contains "$sandbox/project/.gitignore" 'CLAUDE.local.md'
 assert 'pre-existing docs/adr preserved' test -d "$sandbox/project/docs/adr"

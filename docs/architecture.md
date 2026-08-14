@@ -2,8 +2,8 @@
 
 Project-Mindflayer has three layers:
 
-1. A portable installed baseline containing universal working, safety, and architecture rules.
-2. A thin repository `AGENTS.md` containing engagement-specific configuration.
+1. A portable installed baseline with universal working, safety, and architecture rules.
+2. A thin repository `AGENTS.md` for engagement-specific configuration.
 3. Ten reusable skills containing operational workflows and nested resources.
 
 `AGENTS.md` is the substantive repository contract. Claude, Codex, Gemini, Cursor, and Copilot compatibility files contain only routing notes.
@@ -15,23 +15,25 @@ Project-Mindflayer has three layers:
 | Field | Meaning |
 |---|---|
 | `path` | Repository-relative source path |
-| `type` | Baseline, template, skill, resource, document, setting, shim, script, or registry |
+| `type` | Artifact class, such as baseline, template, skill, resource, setting, or script |
 | `version` | Artifact lifecycle version |
 | `consumers` | Comma-separated installation scopes |
 | `ownership` | Uninstall ownership class |
 
-Global shared artifacts install under `~/.ai-toolkit/`. Claude and Copilot receive verified skill symlinks to that shared tree. Project installs copy full skill directories into `.claude/skills/` so cloud and cloned sessions receive nested resources.
+Global shared artifacts install under `~/.ai-toolkit/`. Skills remain canonical in `~/.ai-toolkit/skills/`; selected consumers receive verified per-skill symlinks in `~/.claude/skills/`, `~/.agents/skills/`, or `~/.copilot/skills/`.
 
-The installer fetches the manifest first, then fetches exactly the selected rows. Local and remote modes therefore share one inventory. A successful global install writes the toolkit release stamp last.
+Project installs copy complete skill directories as real files. Codex discovers them under `.agents/skills/`; Claude and Copilot use `.claude/skills/`. Mixed tool selections may therefore create both roots, while tools sharing a root are copied only once. Nested scripts, references, and metadata follow the owning skill.
+
+The installer fetches the manifest first and then fetches exactly its selected rows. Local and remote modes therefore share one inventory. A successful global install writes the toolkit release stamp last.
 
 ## Ownership lifecycle
 
-Existing files are preserved by default. Explicit `--force` replacement first creates a timestamped backup. Install records managed path, ownership class, content fingerprint, and symlink target. Drift and uninstall use this state rather than assuming that a familiar path is toolkit-owned.
+Existing paths are preserved by default. Explicit `--force` replacement first creates a timestamped backup. Installation records each managed path with its ownership class and either a content fingerprint or symlink target. Uninstall removes only artifacts whose recorded ownership proof still matches and prunes empty managed parent directories.
 
-The root distribution repository is deliberately exempt from project installation: generated client layout would duplicate its distribution sources and pollute its own governance.
+The root distribution repository is deliberately exempt from project installation: generated client `.claude/` and `.agents/` layouts would mix distribution sources with installed artifacts.
 
-## Versions
+## Version domains
 
-- Toolkit release: `VERSION` in `install.sh` and the completed-install stamp.
-- Template schema: the `templates/AGENTS.md` header.
-- Skill lifecycle: manifest rows for each skill tree.
+- `VERSION` in `install.sh`: toolkit release version.
+- The header in `templates/AGENTS.md`: repository-template schema version.
+- Skill and skill-resource rows in `manifest.tsv`: skill lifecycle version.

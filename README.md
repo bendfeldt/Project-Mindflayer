@@ -18,22 +18,24 @@ bash /path/to/Project-Mindflayer/install.sh --project \
   --client "Client name" --prefix client --local
 ```
 
-Remote installation uses the same flags without `--local`. Existing files are skipped by default. `--force` explicitly authorizes replacement and creates timestamped backups.
+Remote installation uses the same flags without `--local`. Existing files are skipped by default; `--force` explicitly authorizes replacement and creates timestamped backups.
+
+Global skills live in the canonical `~/.ai-toolkit/skills/` store. The installer exposes them through each selected tool's discovery root, including `~/.agents/skills/` for Codex. Project installs commit complete skill trees to `.agents/skills/` for Codex and `.claude/skills/` for Claude or Copilot.
 
 ## Contents
 
-- 10 public skills, including nested scripts and references.
+- Ten public skills, including their nested scripts and references.
 - One portable global baseline and one thin project template.
 - Consumer-specific settings and compatibility shims.
 - Manifest-driven install, drift, sync, update, store, and uninstall tooling.
 
-`manifest.tsv` is the canonical artifact inventory. Its version column tracks artifact lifecycle versions. `VERSION` in `install.sh` is the toolkit release. The header in `templates/AGENTS.md` is the template schema version.
+`manifest.tsv` is the canonical artifact inventory. Its version column tracks artifact lifecycle versions. `VERSION` in `install.sh` is the toolkit release, while the header in `templates/AGENTS.md` is the template schema version.
 
 See [architecture](docs/architecture.md), [operating standards](docs/operating-standards.md), and the [how-to guide](how-to-guide.md).
 
 ## Safety
 
-The installer never silently replaces existing agent configuration. Uninstall is dry-run by default and removes only verified toolkit-owned artifacts. The toolkit repository does not install its own generated `.claude/` client layout.
+The installer never silently replaces existing agent configuration. Uninstall is dry-run by default and removes only verified toolkit-owned artifacts. The toolkit repository deliberately does not install its own generated `.claude/` or `.agents/` client layout.
 
 ## Validate
 
