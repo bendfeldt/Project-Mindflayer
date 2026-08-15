@@ -6,23 +6,71 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install ShellCheck
-        if: runner.os == 'Linux'
-        run: sudo apt-get install -y shellcheck
+      - name: Install pinned ShellCheck
+        shell: bash
+        env:
+          SHELLCHECK_VERSION: 0.11.0
+        run: |
+          set -euo pipefail
 
-      - name: Install ShellCheck (macOS)
-        if: runner.os == 'macOS'
-        run: brew install shellcheck
+          case "${RUNNER_OS}:${RUNNER_ARCH}" in
+            Linux:X64)
+              platform="linux.x86_64"
+              expected_sha256="b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6"
+              ;;
+            Linux:ARM64)
+              platform="linux.aarch64"
+              expected_sha256="68a8133197a50beb8803f8d42f9908d1af1c5540d4bb05fdfca8c1fa47decefc"
+              ;;
+            macOS:X64)
+              platform="darwin.x86_64"
+              expected_sha256="c2c15e08df0e8fbc374c335b230a7ee958c313fa5714817a59aa59f1aa594f51"
+              ;;
+            macOS:ARM64)
+              platform="darwin.aarch64"
+              expected_sha256="339b930feb1ea764467013cc1f72d09cd6b869ebf1013296ba9055ab2ffbd26f"
+              ;;
+            *)
+              printf 'error: unsupported runner platform: %s:%s\n' "$RUNNER_OS" "$RUNNER_ARCH" >&2
+              exit 1
+              ;;
+          esac
+
+          archive="shellcheck-v${SHELLCHECK_VERSION}.${platform}.tar.gz"
+          archive_path="${RUNNER_TEMP}/${archive}"
+          download_url="https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${archive}"
+          install_directory="${RUNNER_TEMP}/shellcheck-v${SHELLCHECK_VERSION}"
+
+          curl --fail --show-error --silent --location "$download_url" --output "$archive_path"
+          actual_sha256="$(shasum -a 256 "$archive_path" | awk '{print $1}')"
+          if [ "$actual_sha256" != "$expected_sha256" ]; then
+            printf 'error: ShellCheck checksum mismatch: expected %s, got %s\n' "$expected_sha256" "$actual_sha256" >&2
+            exit 1
+          fi
+
+          tar -xzf "$archive_path" -C "$RUNNER_TEMP"
+          installed_version="$("${install_directory}/shellcheck" --version | awk '$1 == "version:" {print $2}')"
+          if [ "$installed_version" != "$SHELLCHECK_VERSION" ]; then
+            printf 'error: expected ShellCheck %s, got %s\n' "$SHELLCHECK_VERSION" "$installed_version" >&2
+            exit 1
+          fi
+          printf '%s\n' "$install_directory" >> "$GITHUB_PATH"
+          printf 'ShellCheck %s installed from verified official release asset\n' "$installed_version"
 
       - name: Run tests
         run: bash tests/test-install.sh

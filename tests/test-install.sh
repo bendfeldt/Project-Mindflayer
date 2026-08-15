@@ -3,6 +3,8 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONDONTWRITEBYTECODE=1
+EXPECTED_SHELLCHECK_VERSION="0.11.0"
+EXPECTED_TOOLKIT_VERSION="$(awk -F '\t' '$1 == "install.sh" {print $3; exit}' "$ROOT/manifest.tsv")"
 PASS=0
 FAIL=0
 
@@ -25,8 +27,15 @@ trap teardown EXIT
 run_install() { bash "$ROOT/install.sh" "$@" </dev/null; }
 
 printf '%s\n' '--- static and manifest ---'
-for script in "$ROOT/install.sh" "$ROOT"/tools/*.sh; do assert "bash syntax: ${script##*/}" bash -n "$script"; done
-if command -v shellcheck >/dev/null 2>&1; then assert 'shellcheck' shellcheck -x "$ROOT/install.sh" "$ROOT"/tools/*.sh; fi
+assert 'installer version matches manifest' grep -Fqx "VERSION=\"$EXPECTED_TOOLKIT_VERSION\"" "$ROOT/install.sh"
+for script in "$ROOT/install.sh" "$ROOT"/tools/*.sh "$ROOT"/tests/*.sh; do assert "bash syntax: ${script##*/}" bash -n "$script"; done
+if command -v shellcheck >/dev/null 2>&1; then
+  shellcheck_version="$(shellcheck --version | awk '$1 == "version:" {print $2}')"
+  assert 'shellcheck version' test "$shellcheck_version" = "$EXPECTED_SHELLCHECK_VERSION"
+  assert 'shellcheck' shellcheck -x "$ROOT/install.sh" "$ROOT"/tools/*.sh "$ROOT"/tests/*.sh
+else
+  fail "shellcheck $EXPECTED_SHELLCHECK_VERSION available"
+fi
 assert 'python syntax' python3 -c 'import ast, pathlib, sys; [ast.parse(pathlib.Path(p).read_text()) for p in sys.argv[1:]]' "$ROOT"/skills/release-notes/scripts/*.py
 
 manifest_count=0
@@ -34,7 +43,11 @@ while IFS=$'\t' read -r artifact artifact_type artifact_version consumers owners
   case "$artifact" in \#*|'') continue ;; esac
   manifest_count=$((manifest_count + 1))
   assert "manifest file: $artifact" test -f "$ROOT/$artifact"
-  [ -n "$artifact_type" ] && [ -n "$artifact_version" ] && [ -n "$consumers" ] && [ -n "$ownership" ] || fail "complete manifest row: $artifact"
+  if [ -n "$artifact_type" ] && [ -n "$artifact_version" ] && [ -n "$consumers" ] && [ -n "$ownership" ]; then
+    pass "complete manifest row: $artifact"
+  else
+    fail "complete manifest row: $artifact"
+  fi
   case "$artifact_type" in
     skill|skill-resource)
       assert "skill capability consumers: $artifact" test "$consumers" = 'global,project:skills'
@@ -81,7 +94,7 @@ assert 'incomplete remote install fails' test "$rc" -ne 0
 assert 'incomplete install has no version stamp' test ! -f "$HOME/.ai-toolkit/version"
 unset FAIL_ARTIFACT
 assert 'remote-style install succeeds' env PATH="$fakebin:$PATH" FAKE_REPO="$ROOT" HOME="$HOME" bash "$ROOT/install.sh" --global --tools codex
-assert 'remote completion stamp written last' test "$(cat "$HOME/.ai-toolkit/version")" = 3.0.2
+assert 'remote completion stamp written last' test "$(cat "$HOME/.ai-toolkit/version")" = "$EXPECTED_TOOLKIT_VERSION"
 assert 'Codex-only global skill symlink' test "$(readlink "$HOME/.agents/skills/adr")" = "$HOME/.ai-toolkit/skills/adr"
 assert 'Codex-only global install omits Claude skills' test ! -d "$HOME/.claude/skills"
 export FAKE_FETCH_LOG="$sandbox/fetch.log"
@@ -95,7 +108,7 @@ teardown
 printf '%s\n' '--- global install and ownership ---'
 setup
 assert 'global install all tools' run_install --global --tools claude,codex,gemini,cursor,copilot --local
-assert 'version written' test "$(cat "$HOME/.ai-toolkit/version")" = 3.0.2
+assert 'version written' test "$(cat "$HOME/.ai-toolkit/version")" = "$EXPECTED_TOOLKIT_VERSION"
 assert 'manifest installed' test -f "$HOME/.ai-toolkit/manifest.tsv"
 assert 'installer installed' test -f "$HOME/.ai-toolkit/install.sh"
 assert 'shared skill lifecycle installed' test -f "$HOME/.ai-toolkit/skill-lifecycle.sh"

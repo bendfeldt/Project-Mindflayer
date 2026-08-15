@@ -1,7 +1,7 @@
 # path	type	version	consumers	ownership
 manifest.tsv	manifest	1.0.0	global	managed-file
-install.sh	script	3.0.2	global	managed-file
-README.md	document	3.0.2	global	managed-file
+install.sh	script	3.0.3	global	managed-file
+README.md	document	3.0.3	global	managed-file
 how-to-guide.md	document	3.0.2	global	managed-file
 LICENSE	license	1.0.0	global	managed-file
 global/AGENTS.md	baseline	3.0.0	global:claude,global:codex,global:gemini,global:cursor,global:copilot	managed-file
@@ -30,7 +30,7 @@ settings/cursor/cursor.md	shim	1.0.0	project:cursor	managed-file
 stores.yml	registry	1.0.0	global	managed-file
 tools/check-template-update.sh	script	1.0.0	global	managed-file
 tools/check-skills-update.sh	script	1.2.0	global	managed-file
-tools/skill-lifecycle.sh	script	1.0.0	global	managed-file
+tools/skill-lifecycle.sh	script	1.0.1	global	managed-file
 tools/check-stores.sh	script	1.0.0	global	managed-file
 tools/sync-global.sh	script	1.0.0	global	managed-file
 tools/sync-skills.sh	script	1.2.0	global	managed-file

@@ -132,7 +132,9 @@ main() {
       [ "$type" = skill ] || continue
       name="${path#skills/}"
       name="${name%/SKILL.md}"
-      [ -n "$name" ] && [ "${name#*/}" = "$name" ] || fail "unsafe skill name in manifest: $name"
+      if [ -z "$name" ] || [ "${name#*/}" != "$name" ]; then
+        fail "unsafe skill name in manifest: $name"
+      fi
       [ -d "$SOURCE/$name" ] || fail "missing source skill: $name"
       if [ "$MODE" = check ]; then
         check_skill "$target" "$name" "$version"

@@ -39,6 +39,8 @@ The installer never silently replaces existing agent configuration. Drift, synch
 
 ## Validate
 
+The Bash test suite requires ShellCheck `0.11.0`, matching the pinned CI version.
+
 ```bash
 bash tests/test-install.sh
 python3 -m unittest discover -s tests -p 'test_*.py'

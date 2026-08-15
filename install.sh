@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="3.0.2"
+VERSION="3.0.3"
 REPO_URL="https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main"
 KNOWN_TOOLS="claude codex gemini cursor copilot"
 VALID_PROFILES="terraform databricks fabric"
@@ -48,7 +48,9 @@ cleanup() {
 trap cleanup EXIT
 
 require_value() {
-  [ $# -ge 2 ] && [ -n "$2" ] && [ "${2#--}" = "$2" ] || fail "$1 requires a value"
+  if [ $# -lt 2 ] || [ -z "$2" ] || [ "${2#--}" != "$2" ]; then
+    fail "$1 requires a value"
+  fi
 }
 
 parse_args() {
