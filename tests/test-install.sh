@@ -221,6 +221,7 @@ printf '#!/usr/bin/env bash\nprintf '\''{"tag_name":"v0.0.0"}'\''\n' > "$fakebin
 output="$(cd "$sandbox/project" && PATH="$fakebin:$PATH" bash "$ROOT/tools/check-stores.sh" 2>&1 || true)"
 assert 'store check prefers checkout' sh -c "printf '%s' '$output' | grep -Fq 'Registry: ./stores.yml'"
 assert 'release remote fixtures' sh -c "cd '$ROOT/skills/release-notes/scripts' && python3 test_remote.py >/dev/null"
+assert 'release task planning' sh -c "cd '$ROOT/skills/release-notes/scripts' && python3 test_tasks.py >/dev/null"
 teardown
 
 printf '\nPASS: %d  FAIL: %d\n' "$PASS" "$FAIL"

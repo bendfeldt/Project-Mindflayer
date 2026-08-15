@@ -56,11 +56,13 @@ skills/release-notes/references/providers.md	skill-resource	2.0.0	global,project
 skills/release-notes/references/templates.md	skill-resource	2.0.0	global,project:skills	managed-tree
 skills/release-notes/scripts/collect_evidence.py	skill-resource	2.0.0	global,project:skills	managed-tree
 skills/release-notes/scripts/config.py	skill-resource	2.0.0	global,project:skills	managed-tree
+skills/release-notes/scripts/manage_tasks.py	skill-resource	2.0.0	global,project:skills	managed-tree
 skills/release-notes/scripts/make_outlook_draft.applescript	skill-resource	2.0.0	global,project:skills	managed-tree
 skills/release-notes/scripts/merge_release.py	skill-resource	2.0.0	global,project:skills	managed-tree
 skills/release-notes/scripts/providers.py	skill-resource	2.0.0	global,project:skills	managed-tree
 skills/release-notes/scripts/publish_descriptions.py	skill-resource	2.0.0	global,project:skills	managed-tree
 skills/release-notes/scripts/test_remote.py	skill-resource	2.0.0	global,project:skills	managed-tree
+skills/release-notes/scripts/test_tasks.py	skill-resource	2.0.0	global,project:skills	managed-tree
 skills/setup-repo/SKILL.md	skill	2.0.0	global,project:skills	managed-tree
 skills/setup-repo/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree
 skills/smart-commit/SKILL.md	skill	2.0.0	global,project:skills	managed-tree

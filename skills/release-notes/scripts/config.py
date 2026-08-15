@@ -56,6 +56,22 @@ DEFAULT_TITLE_PREFIXES = {
     "notebook": ".Notebook",
 }
 
+# Canonical title prefix used when the skill creates a missing child task.
+# Parsing remains more permissive through DEFAULT_TITLE_PREFIXES.
+DEFAULT_TASK_TITLE_PREFIXES = {
+    ".SemanticModel": "Model",
+    ".Report": "Report",
+    ".DataPipeline": "Pipeline",
+    ".Dataflow": "Dataflow",
+    ".Notebook": "Notebook",
+    ".Lakehouse": "Lakehouse",
+    ".Warehouse": "Warehouse",
+    ".Environment": "Environment",
+    ".pbip": "Report",
+}
+
+DEFAULT_PARENT_TYPES = {"ado": ["User Story"], "github": []}
+
 # Subject lines of merge commits, per provider. Named groups `pr` and `title`
 # keep the contract identical across providers even where the squash form puts
 # the number last.
@@ -286,8 +302,10 @@ def default_repo_config(provider: str, project: str | None, language: str = "en"
         "work_item_project": project,
         "item_suffixes": list(DEFAULT_ITEM_SUFFIXES),
         "title_prefixes": dict(DEFAULT_TITLE_PREFIXES),
+        "task_title_prefixes": dict(DEFAULT_TASK_TITLE_PREFIXES),
         "merge_commit_patterns": list(DEFAULT_MERGE_PATTERNS[provider]),
         "child_types": list(DEFAULT_CHILD_TYPES[provider]),
+        "parent_types": list(DEFAULT_PARENT_TYPES[provider]),
     }
 
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Combine per-repo run artifacts into one test email skeleton.
+"""Combine per-pair and legacy per-repo artifacts into one test email skeleton.
 
-Each `publish_descriptions.py --run <slug>` writes one artifact per repo. This
-reads them all back and assembles a single email: shared opening, how-to-test,
-changes grouped by repo with one direct link per task, and the risk section.
+Applied release plans write one artifact per PR/User Story pair. Legacy
+`publish_descriptions.py --run <slug>` artifacts remain supported. This script
+combines both shapes into one email with direct Task, PR, and User Story links.
 
 It assembles structure, counts and links — never prose. Every place that needs
 judgement is left as a [PLACEHOLDER] for the agent to fill, which is the same
@@ -98,9 +98,46 @@ def load_artifacts(slug: str) -> list[dict]:
     return artifacts
 
 
+def artifact_label(artifact: dict) -> str:
+    pull_request = artifact.get("pull_request") or {}
+    parent = artifact.get("parent") or {}
+    if pull_request and parent:
+        return (
+            f"{artifact['repo']} — PR {pull_request['id']} → "
+            f"{parent.get('type') or 'User Story'} {parent['id']}"
+        )
+    return artifact["repo"]
+
+
+def artifact_links(artifact: dict) -> list[tuple[str, str]]:
+    links: list[tuple[str, str]] = []
+    pull_request = artifact.get("pull_request") or {}
+    parent = artifact.get("parent") or {}
+    if pull_request.get("url"):
+        links.append((f"{artifact['repo']} PR {pull_request['id']}", pull_request["url"]))
+    if parent.get("url"):
+        links.append(
+            (
+                f"{artifact['repo']} {parent.get('type') or 'User Story'} "
+                f"{parent['id']}",
+                parent["url"],
+            )
+        )
+    return links
+
+
+def repository_count(artifacts: list[dict]) -> int:
+    return len({(
+        artifact.get("provider"),
+        artifact.get("org"),
+        artifact.get("project"),
+        artifact["repo"],
+    ) for artifact in artifacts})
+
+
 def render_html(slug: str, artifacts: list[dict], s: dict) -> str:
     n_tasks = sum(len(a["tasks"]) for a in artifacts)
-    parts = [f"<p>{s['opening'].format(release=html.escape(slug), n_tasks=n_tasks, n_repos=len(artifacts))}</p>"]
+    parts = [f"<p>{s['opening'].format(release=html.escape(slug), n_tasks=n_tasks, n_repos=repository_count(artifacts))}</p>"]
 
     parts.append(f"<p><b>{s['how_to']}</b></p><ol>")
     parts += [f"<li>{html.escape(step)}</li>" for step in s["how_to_steps"]]
@@ -108,7 +145,7 @@ def render_html(slug: str, artifacts: list[dict], s: dict) -> str:
 
     parts.append(f"<p><b>{s['changed']}</b></p>")
     for art in artifacts:
-        parts.append(f"<p><i>{html.escape(art['repo'])}</i> — "
+        parts.append(f"<p><i>{html.escape(artifact_label(art))}</i> — "
                      f"{len(art['tasks'])} {s['tasks_word']}. {s['context']}</p><ul>")
         for task in art["tasks"]:
             title = html.escape(task.get("title") or f"#{task['id']}")
@@ -116,7 +153,8 @@ def render_html(slug: str, artifacts: list[dict], s: dict) -> str:
                          f'{html.escape(task["id"])} — {title}</a></li>')
         parts.append("</ul>")
 
-    unclaimed = [(a["repo"], f) for a in artifacts for f in a.get("unclaimed_folders", [])]
+    unclaimed = [(artifact_label(a), f) for a in artifacts
+                 for f in a.get("unclaimed_folders", [])]
     if unclaimed:
         parts.append(f"<p><b>{s['no_task']}</b></p><ul>")
         parts += [f"<li>{html.escape(repo)}: {html.escape(folder)}</li>"
@@ -125,8 +163,18 @@ def render_html(slug: str, artifacts: list[dict], s: dict) -> str:
 
     parts.append(f"<p><b>{s['attention']}</b></p><p>{s['attention_body']}</p>")
     parts.append(f"<p><b>{s['links']}</b></p><ul>")
-    parts += [f"<li>{html.escape(a['repo'])}: {html.escape(a.get('head') or '[PR]')}</li>"
-              for a in artifacts]
+    for artifact in artifacts:
+        links = artifact_links(artifact)
+        if links:
+            parts += [
+                f'<li><a href="{html.escape(url)}">{html.escape(label)}</a></li>'
+                for label, url in links
+            ]
+        else:
+            parts.append(
+                f"<li>{html.escape(artifact['repo'])}: "
+                f"{html.escape(artifact.get('head') or '[PR]')}</li>"
+            )
     parts.append("</ul>")
     parts.append("<p>" + s["signoff"].replace("\n", "<br>") + "</p>")
     return OUTLOOK_WRAPPER.format(body="\n".join(parts))
@@ -135,18 +183,22 @@ def render_html(slug: str, artifacts: list[dict], s: dict) -> str:
 def render_md(slug: str, artifacts: list[dict], s: dict) -> str:
     n_tasks = sum(len(a["tasks"]) for a in artifacts)
     strip = lambda t: t.replace("<b>", "**").replace("</b>", "**")  # noqa: E731
-    out = [strip(s["opening"].format(release=slug, n_tasks=n_tasks, n_repos=len(artifacts))), ""]
+    out = [strip(s["opening"].format(
+        release=slug, n_tasks=n_tasks, n_repos=repository_count(artifacts)
+    )), ""]
 
     out += [f"## {s['how_to']}", ""]
     out += [f"{i}. {step}" for i, step in enumerate(s["how_to_steps"], 1)]
     out += ["", f"## {s['changed']}", ""]
     for art in artifacts:
-        out += [f"### {art['repo']} — {len(art['tasks'])} {s['tasks_word']}", "", s["context"], ""]
+        out += [f"### {artifact_label(art)} — {len(art['tasks'])} {s['tasks_word']}",
+                "", s["context"], ""]
         out += [f"- [{t['id']} — {t.get('title') or t['id']}]({t['url']})"
                 for t in art["tasks"]]
         out.append("")
 
-    unclaimed = [(a["repo"], f) for a in artifacts for f in a.get("unclaimed_folders", [])]
+    unclaimed = [(artifact_label(a), f) for a in artifacts
+                 for f in a.get("unclaimed_folders", [])]
     if unclaimed:
         out += [f"## {s['no_task']}", ""]
         out += [f"- {repo}: {folder}" for repo, folder in unclaimed]
@@ -154,7 +206,12 @@ def render_md(slug: str, artifacts: list[dict], s: dict) -> str:
 
     out += [f"## {s['attention']}", "", s["attention_body"], ""]
     out += [f"## {s['links']}", ""]
-    out += [f"- {a['repo']}: {a.get('head') or '[PR]'}" for a in artifacts]
+    for artifact in artifacts:
+        links = artifact_links(artifact)
+        if links:
+            out += [f"- [{label}]({url})" for label, url in links]
+        else:
+            out.append(f"- {artifact['repo']}: {artifact.get('head') or '[PR]'}")
     out += ["", s["signoff"]]
     return "\n".join(out)
 
@@ -189,9 +246,10 @@ def main() -> None:
 
     n_tasks = sum(len(a["tasks"]) for a in artifacts)
     if args.format == "list":
-        print(f"release {args.release}: {len(artifacts)} repos, {n_tasks} tasks, lang {lang}")
+        print(f"release {args.release}: {repository_count(artifacts)} repos, "
+              f"{len(artifacts)} PR/User Story pairs, {n_tasks} tasks, lang {lang}")
         for art in artifacts:
-            print(f"  {art['repo']:24} {len(art['tasks']):3} tasks  "
+            print(f"  {artifact_label(art):48} {len(art['tasks']):3} tasks  "
                   f"{'applied' if art.get('applied') else 'dry run'}")
         return
 

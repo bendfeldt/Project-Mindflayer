@@ -22,6 +22,8 @@ Two things vary and must be settled before writing a single description:
 
 ## Task description — HTML (Azure DevOps `System.Description`)
 
+When planning missing child Tasks, store each rendered HTML body in `descriptions.json` under the corresponding evidence `task_key` (the deployable folder path).
+
 ```html
 <b>Ændringer</b>
 <ul>
@@ -119,7 +121,7 @@ Structure, in order:
    *"text fix only"*, *"four new expense pages"*).
 5. **Pay particular attention to** — 2-4 genuine risk points: moved items,
    behaviour that legitimately changes the numbers, and tasks needing almost no testing.
-6. **Links** — the PR per repo and each parent item.
+6. **Links** — every PR and its paired User Story; do not collapse multiple pairs from the same repository.
 7. **Sign-off** — `[CONTACT]` and `[SENDER]`.
 
 Placeholders are written in `[CAPITALS IN BRACKETS]` so they are impossible to

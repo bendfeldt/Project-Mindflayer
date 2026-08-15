@@ -7,10 +7,11 @@ the agent's job, this only supplies verifiable facts.
 
 Usage:
     collect_evidence.py --base origin/main --head origin/releases/rel_1 \
-        --tasks tasks.json --out evidence.json [--repo .] [--mapping-only]
+      --out evidence.json [--tasks tasks.json] [--repo .] [--mapping-only]
 
-tasks.json is either a list of {"id", "title"} objects (as produced by
-providers.py) or a raw Azure DevOps batch response ({"value": [...]}).
+When --tasks is omitted, evidence is keyed by deployable folder so descriptions
+can be prepared before child tasks exist. When supplied, tasks.json is either a
+list of {"id", "title"} objects or an Azure DevOps batch response.
 
 Folder conventions — item suffixes, task title prefixes and the merge-commit
 subject pattern — come from the repo's release-notes config when --config is
@@ -35,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config import (  # noqa: E402
     DEFAULT_ITEM_SUFFIXES, DEFAULT_MERGE_PATTERNS, DEFAULT_TITLE_PREFIXES,
+    DEFAULT_TASK_TITLE_PREFIXES,
     effective_config,
 )
 
@@ -49,6 +51,9 @@ class Conventions:
             k.casefold(): v
             for k, v in (cfg.get("title_prefixes") or DEFAULT_TITLE_PREFIXES).items()
         }
+        self.task_title_prefixes = (
+            cfg.get("task_title_prefixes") or DEFAULT_TASK_TITLE_PREFIXES
+        )
         patterns = cfg.get("merge_commit_patterns") or DEFAULT_MERGE_PATTERNS["ado"]
         self.merge_patterns = [re.compile(p) for p in patterns]
         self.child_types = cfg.get("child_types") or []
@@ -83,6 +88,41 @@ class Conventions:
             if suffix:
                 kind_suffix, rest = suffix, tail
         return kind_suffix, rest.strip().split("/")[-1].strip()
+
+    def task_titles(self, folders: set[str]) -> dict[str, str]:
+        """Build deterministic, shortest-unique titles for deployable folders."""
+        titles: dict[str, str] = {}
+        by_suffix: dict[str, list[str]] = defaultdict(list)
+        for folder in sorted(folders):
+            suffix = next((s for s in self.item_suffixes if folder.endswith(s)), None)
+            if suffix is None:
+                raise SystemExit(f"cannot generate task title for unrecognized folder: {folder}")
+            by_suffix[suffix].append(folder)
+
+        for suffix, peers in by_suffix.items():
+            prefix = self.task_title_prefixes.get(suffix)
+            if not prefix:
+                raise SystemExit(
+                    f"missing task_title_prefixes entry for item suffix {suffix}"
+                )
+            paths = {
+                folder: folder[: -len(suffix)].strip("/").split("/")
+                for folder in peers
+            }
+            for folder, parts in paths.items():
+                selected = parts
+                for width in range(1, len(parts) + 1):
+                    candidate = "/".join(parts[-width:]).casefold()
+                    matches = sum(
+                        "/".join(other[-width:]).casefold() == candidate
+                        for other in paths.values()
+                        if len(other) >= width
+                    )
+                    if matches == 1:
+                        selected = parts[-width:]
+                        break
+                titles[folder] = f"{prefix}: {'/'.join(selected)}"
+        return titles
 
 
 def repo_root(explicit: Path | None) -> Path:
@@ -160,7 +200,14 @@ def load_tasks(path: Path, child_types: list[str]) -> list[dict]:
     keeps every child, which is what GitHub sub-issues need.
     """
     raw = json.loads(path.read_text())
-    items = raw["value"] if isinstance(raw, dict) and "value" in raw else raw
+    if isinstance(raw, dict) and "value" in raw:
+        items = raw["value"]
+    elif isinstance(raw, dict) and "tasks" in raw:
+        items = raw["tasks"]
+    else:
+        items = raw
+    if not isinstance(items, list):
+        raise SystemExit(f"expected a task list in {path}")
     tasks: dict[str, dict] = {}
     dropped: list[str] = []
     for it in items:
@@ -347,7 +394,10 @@ def main() -> None:
                     help="repo path (default: the git repo containing the working directory)")
     ap.add_argument("--base", required=True, help="target ref of the release PR, e.g. origin/main")
     ap.add_argument("--head", required=True, help="source ref of the release PR")
-    ap.add_argument("--tasks", required=True, type=Path)
+    ap.add_argument(
+        "--tasks", type=Path,
+        help="existing child tasks JSON; omit to discover task candidates",
+    )
     ap.add_argument("--out", type=Path, help="evidence JSON output path")
     ap.add_argument("--pathspec", default=None,
                     help="limit folder discovery, e.g. 'solution' (default: whole diff)")
@@ -360,18 +410,34 @@ def main() -> None:
     repo = repo_root(args.repo)
     conv = Conventions(effective_config(repo) if args.config else None)
     git = Git(repo, args.base, args.head, conv)
-    tasks = load_tasks(args.tasks, conv.child_types)
-
     all_changed = git.changed(args.pathspec)
     folders = {k for _, p, _ in all_changed if (k := conv.group_key(p))}
     item_folders = {f for f in folders if f.endswith(conv.item_suffixes)}
 
-    mapping, problems = map_tasks(tasks, item_folders or folders, conv)
-    claimed = set(mapping.values())
-    unclaimed = sorted((item_folders or folders) - claimed)
+    if args.tasks:
+        tasks = load_tasks(args.tasks, conv.child_types)
+        mapping, problems = map_tasks(tasks, item_folders or folders, conv)
+        claimed = set(mapping.values())
+        unclaimed = sorted(folders - claimed)
+    else:
+        titles = conv.task_titles(item_folders)
+        tasks = [
+            {
+                "id": folder,
+                "task_key": folder,
+                "title": titles[folder],
+                "has_description": False,
+                "state": None,
+                "url": None,
+            }
+            for folder in sorted(item_folders)
+        ]
+        mapping = {folder: folder for folder in sorted(item_folders)}
+        problems = []
+        unclaimed = sorted(folders - item_folders)
 
     print(f"tasks: {len(tasks)}  mapped: {len(mapping)}  changed folders: {len(folders)}")
-    for tid, folder in sorted(mapping.items(), key=lambda kv: int(kv[0])):
+    for tid, folder in sorted(mapping.items(), key=lambda kv: str(kv[0])):
         title = next(t["title"] for t in tasks if t["id"] == tid)
         print(f"  {tid}  {title}  ->  {folder}")
     if unclaimed:

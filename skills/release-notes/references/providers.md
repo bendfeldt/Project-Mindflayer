@@ -73,6 +73,49 @@ checkboxes in the parent body instead. `providers.py` does not parse those — i
 `fetch_children` returns nothing for a parent that visibly has children, this is
 why. Say so plainly rather than guessing at the list.
 
+### Planning and creating Azure DevOps child Tasks
+
+Discover candidates without existing IDs, then create a saved dry-run plan:
+
+```bash
+python3 "$SKILL_DIR/scripts/collect_evidence.py" \
+  --base origin/main --head origin/releases/rel_1 \
+  --config --out evidence.json
+
+python3 "$SKILL_DIR/scripts/manage_tasks.py" plan \
+  --pr-id <PR_ID> --parent-id <USER_STORY_ID> \
+  --evidence evidence.json --descriptions descriptions.json \
+  --out pair-plan.json
+```
+
+`descriptions.json` maps each evidence `task_key` to an HTML description. Pair planning fetches PR and User Story state, verifies the evidence refs, reuses one unambiguous child match, and calls the Azure DevOps create endpoint with `validateOnly=true` for every missing Task. It writes no work items.
+
+Run those commands separately for every PR/User Story pair, then compose the only applicable plan type:
+
+```bash
+python3 "$SKILL_DIR/scripts/manage_tasks.py" compose \
+  --release rel_1 \
+  --pair-plan repo-a-pr-123.json \
+  --pair-plan repo-b-pr-456.json \
+  --out release-plan.json
+```
+
+Composition enforces a strict contextual 1:1 relationship: a PR and a User Story may each appear only once. Pairs may come from different repositories. If two PRs change the same deployable folder, each paired User Story keeps its own child Task.
+
+After the user reviews the printed actions and explicitly approves them:
+
+```bash
+python3 "$SKILL_DIR/scripts/manage_tasks.py" apply --plan release-plan.json
+```
+
+Apply rejects pair plans. It verifies the composed plan and every embedded pair, preflights all repositories, PRs, User Stories, and child Tasks before the first write, then applies pairs sequentially with resumable result state. New Tasks inherit the parent Area Path and Iteration Path; Azure DevOps process defaults set state and assignee.
+
+Each applied pair writes `<repo>-pr-<id>.json` under the release run directory. `merge_release.py` groups these artifacts by pair and links both the PR and User Story, including when several PRs belong to one repository.
+
+The create call uses Azure DevOps REST 7.1 JSON Patch with `System.Title`, `System.Description`, `System.AreaPath`, `System.IterationPath`, and a `System.LinkTypes.Hierarchy-Reverse` parent relation. GitHub child creation is not implemented; existing GitHub description behavior is unchanged.
+
+The default allowed parent type is `User Story`. Teams using another Azure DevOps process must set `parent_types` explicitly in repository config. Override generated title labels with the suffix-to-prefix `task_title_prefixes` mapping; parsing of existing titles continues to use `title_prefixes`.
+
 ### Writing a description
 
 ```bash

@@ -1,7 +1,6 @@
 interface:
   display_name: "Release Notes"
-  short_description: "Prepare provider-aware release notes"
-  default_prompt: "Use $release-notes to prepare provider-aware release notes."
+  short_description: "Plan release tasks and test notes"
+  default_prompt: "Use $release-notes to plan child tasks and prepare testable release notes from a release pull request."
 policy:
   allow_implicit_invocation: true
-

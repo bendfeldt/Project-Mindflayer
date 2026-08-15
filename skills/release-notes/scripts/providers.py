@@ -12,7 +12,8 @@ The two important asymmetries:
     hold Tasks, User Stories and Features and only Tasks are testable units.
     GitHub sub-issues carry no type, so every child qualifies.
 
-Reads are unrestricted; the single write path is `set_description`.
+Reads are unrestricted. Description updates and child creation are explicit
+write paths used only by the dry-run-gated command scripts.
 """
 from __future__ import annotations
 
@@ -53,9 +54,10 @@ class Provider:
     """Interface. Both implementations return the same shapes."""
 
     body_format = "markdown"
+    can_create_children = False
 
     def fetch_pr(self, pr_id: str) -> dict:
-        """-> {id, title, state, source, target, url} with refs already stripped."""
+        """Return normalized PR metadata, including repository and project."""
         raise NotImplementedError
 
     def fetch_children(self, parent_ids: list[str], child_types: list[str]) -> list[dict]:
@@ -64,6 +66,15 @@ class Provider:
         `child_types` filters by tracker item type; an empty list keeps everything.
         """
         raise NotImplementedError
+
+    def fetch_item(self, item_id: str) -> dict:
+        raise NotImplementedError
+
+    def validate_child(self, parent_id: str, task: dict) -> None:
+        raise ProviderError("provider does not support child creation")
+
+    def create_child(self, parent_id: str, task: dict) -> dict:
+        raise ProviderError("provider does not support child creation")
 
     def fetch_descriptions(self, ids: list[str]) -> dict[str, str]:
         raise NotImplementedError
@@ -80,6 +91,7 @@ class Provider:
 
 class AdoProvider(Provider):
     body_format = "html"
+    can_create_children = True
 
     def __init__(self, org: str, project: str) -> None:
         if not project:
@@ -103,19 +115,67 @@ class AdoProvider(Provider):
             args += ["--body", f"@{body_file}"]
         return run_json(args)
 
+    def _json_patch(self, url: str, patch: list[dict], method: str) -> dict:
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            json.dump(patch, fh, ensure_ascii=False)
+            tmp = fh.name
+        try:
+            return self._rest(
+                url,
+                method=method,
+                body_file=tmp,
+                content_type="application/json-patch+json",
+            )
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+
+    def _child_patch(self, parent_id: str, task: dict) -> list[dict]:
+        patch = [
+            {"op": "add", "path": "/fields/System.Title", "value": task["title"]},
+            {
+                "op": "add",
+                "path": "/fields/System.Description",
+                "value": task["description"],
+            },
+        ]
+        for field in ("System.AreaPath", "System.IterationPath"):
+            if task.get(field):
+                patch.append(
+                    {"op": "add", "path": f"/fields/{field}", "value": task[field]}
+                )
+        patch.append(
+            {
+                "op": "add",
+                "path": "/relations/-",
+                "value": {
+                    "rel": "System.LinkTypes.Hierarchy-Reverse",
+                    "url": f"{self._wit}/workItems/{parent_id}",
+                },
+            }
+        )
+        return patch
+
     def fetch_pr(self, pr_id: str) -> dict:
         data = run_json([
             "az", "repos", "pr", "show", "--id", str(pr_id),
             "--org", self.org_url, "-o", "json",
         ])
+        repository = data.get("repository") or {}
+        project = repository.get("project") or {}
+        repository_name = str(repository.get("name") or "")
+        project_name = str(project.get("name") or self.project)
         return {
             "id": str(pr_id),
             "title": data.get("title"),
             "state": data.get("status"),
             "source": strip_ref(data.get("sourceRefName") or ""),
             "target": strip_ref(data.get("targetRefName") or ""),
-            "url": f"{self.org_url}/{quote(self.project)}/_git/"
-                   f"{quote(str((data.get('repository') or {}).get('name') or ''))}"
+            "repository": repository_name,
+            "project": project_name,
+            "url": f"{self.org_url}/{quote(project_name)}/_git/"
+                   f"{quote(repository_name)}"
                    f"/pullrequest/{pr_id}",
         }
 
@@ -152,6 +212,7 @@ class AdoProvider(Provider):
             wid = str(item["id"])
             seen[wid] = {
                 "id": wid,
+                "rev": item.get("rev"),
                 "title": f.get("System.Title"),
                 "type": item_type,
                 "state": f.get("System.State"),
@@ -159,6 +220,43 @@ class AdoProvider(Provider):
                 "url": self.item_url(wid),
             }
         return sorted(seen.values(), key=lambda t: int(t["id"]))
+
+    def fetch_item(self, item_id: str) -> dict:
+        item = self._rest(
+            f"{self._wit}/workitems/{item_id}?api-version=7.1&$expand=all"
+        )
+        fields = item.get("fields", {})
+        return {
+            "id": str(item["id"]),
+            "rev": item.get("rev"),
+            "title": fields.get("System.Title"),
+            "type": fields.get("System.WorkItemType"),
+            "state": fields.get("System.State"),
+            "System.AreaPath": fields.get("System.AreaPath"),
+            "System.IterationPath": fields.get("System.IterationPath"),
+            "url": self.item_url(str(item["id"])),
+        }
+
+    def validate_child(self, parent_id: str, task: dict) -> None:
+        self._json_patch(
+            f"{self._wit}/workitems/$Task?validateOnly=true&api-version=7.1",
+            self._child_patch(parent_id, task),
+            "post",
+        )
+
+    def create_child(self, parent_id: str, task: dict) -> dict:
+        item = self._json_patch(
+            f"{self._wit}/workitems/$Task?api-version=7.1",
+            self._child_patch(parent_id, task),
+            "post",
+        )
+        return {
+            "id": str(item["id"]),
+            "rev": item.get("rev"),
+            "title": item.get("fields", {}).get("System.Title", task["title"]),
+            "description": task["description"],
+            "url": self.item_url(str(item["id"])),
+        }
 
     def fetch_descriptions(self, ids: list[str]) -> dict[str, str]:
         fields = "System.Id,System.Title,System.Description"
@@ -169,19 +267,10 @@ class AdoProvider(Provider):
 
     def set_description(self, item_id: str, body: str) -> str:
         patch = [{"op": "add", "path": "/fields/System.Description", "value": body}]
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
-                                         encoding="utf-8") as fh:
-            json.dump(patch, fh, ensure_ascii=False)
-            tmp = fh.name
-        try:
-            result = self._rest(
-                f"{self._wit}/workitems/{item_id}?api-version=7.0",
-                method="patch", body_file=tmp,
-                content_type="application/json-patch+json",
-            )
-            return f"rev {result.get('rev', '?')}"
-        finally:
-            Path(tmp).unlink(missing_ok=True)
+        result = self._json_patch(
+            f"{self._wit}/workitems/{item_id}?api-version=7.1", patch, "patch"
+        )
+        return f"rev {result.get('rev', '?')}"
 
     def item_url(self, item_id: str) -> str:
         return f"{self.org_url}/{quote(self.project)}/_workitems/edit/{item_id}"
@@ -232,6 +321,8 @@ class GitHubProvider(Provider):
             "state": data.get("state"),
             "source": data.get("headRefName"),
             "target": data.get("baseRefName"),
+            "repository": self.repo,
+            "project": None,
             "url": data.get("url"),
         }
 
