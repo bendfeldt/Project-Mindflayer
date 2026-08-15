@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="3.2.1"
+VERSION="3.3.0"
 REPO_URL="https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main"
 KNOWN_TOOLS="claude codex gemini cursor copilot"
 VALID_PROFILES="terraform databricks fabric"
@@ -9,6 +9,9 @@ VALID_PROFILES="terraform databricks fabric"
 INSTALL_MODE=""
 SELECTED_TOOLS=""
 PROFILE=""
+PROJECT_TYPES=""
+TECHNOLOGIES=""
+PROJECT_MODE=""
 CLIENT_NAME=""
 CLIENT_PREFIX=""
 LOCAL=0
@@ -28,7 +31,11 @@ Options:
   --global          Install user-level artifacts
   --project         Install artifacts in the current repository
   --tools LIST      claude,codex,gemini,cursor,copilot
-  --profile NAME    terraform, databricks, or fabric (project mode)
+  --project-types LIST
+                    infrastructure,data-platform,data-engineering (project mode)
+  --technologies LIST
+                    Comma-separated technology catalog identifiers (project mode)
+  --profile NAME    Deprecated: terraform, databricks, or fabric (project mode)
   --client NAME     Client name (new project install)
   --prefix PREFIX   Resource prefix (new project install)
   --force           Authorize replacement; existing files are backed up first
@@ -62,6 +69,8 @@ parse_args() {
         ;;
       --tools) require_value "$1" "${2:-}"; shift; SELECTED_TOOLS="$1" ;;
       --profile) require_value "$1" "${2:-}"; shift; PROFILE="$1" ;;
+      --project-types) require_value "$1" "${2:-}"; shift; PROJECT_TYPES="$1" ;;
+      --technologies) require_value "$1" "${2:-}"; shift; TECHNOLOGIES="$1" ;;
       --client) require_value "$1" "${2:-}"; shift; CLIENT_NAME="$1" ;;
       --prefix) require_value "$1" "${2:-}"; shift; CLIENT_PREFIX="$1" ;;
       --force) REPLACE=1 ;;
@@ -300,6 +309,7 @@ global_destination() {
     global/AGENTS.md) printf '%s/.ai-toolkit/AGENTS.md' "$HOME" ;;
     CLAUDE.md|GEMINI.md) printf '%s/.ai-toolkit/templates/%s' "$HOME" "$path" ;;
     templates/*) printf '%s/.ai-toolkit/%s' "$HOME" "$path" ;;
+    config/*) printf '%s/.ai-toolkit/%s' "$HOME" "$path" ;;
     docs/*) printf '%s/.ai-toolkit/%s' "$HOME" "$path" ;;
     skills/*) printf '%s/.ai-toolkit/%s' "$HOME" "$path" ;;
     tools/*) printf '%s/.ai-toolkit/%s' "$HOME" "${path#tools/}" ;;
@@ -307,6 +317,8 @@ global_destination() {
     settings/claude/settings-terraform.json|settings/claude/settings-databricks.json|settings/claude/settings-fabric.json)
       printf '%s/.ai-toolkit/templates/settings/%s' "$HOME" "$(basename "$path")" ;;
     settings/claude/settings-global.json)
+      printf '%s/.ai-toolkit/templates/settings/%s' "$HOME" "$(basename "$path")" ;;
+    settings/claude/technology-permissions.tsv)
       printf '%s/.ai-toolkit/templates/settings/%s' "$HOME" "$(basename "$path")" ;;
     settings/codex/*) printf '%s/.ai-toolkit/templates/codex/%s' "$HOME" "$(basename "$path")" ;;
     settings/gemini/*) printf '%s/.ai-toolkit/templates/gemini/%s' "$HOME" "$(basename "$path")" ;;
@@ -361,12 +373,132 @@ validate_profile() {
   contains_word "$PROFILE" "$VALID_PROFILES" || fail "invalid profile '$PROFILE'; expected: ${VALID_PROFILES// /,}"
 }
 
+catalog_values() {
+  local catalog="$1" group="$2"
+  awk -F '\t' -v group="$group" '
+    $1 !~ /^#/ && ((group == "project-type" && $2 == group) || (group == "technology" && $2 != "project-type")) {
+      printf "%s%s", separator, $1
+      separator = ","
+    }
+    END { print "" }
+  ' "$catalog"
+}
+
+canonicalize_catalog_list() {
+  local raw_list="$1" group="$2" flag="$3" catalog="$4"
+  local token canonical selected_file supported
+  local raw_values=()
+  selected_file="${catalog}.selected-${group}"
+  : > "$selected_file"
+  IFS=',' read -r -a raw_values <<< "$raw_list"
+  for token in "${raw_values[@]}"; do
+    token="$(printf '%s' "$token" | tr -d '[:space:]')"
+    [ -n "$token" ] || fail "$flag contains an empty value"
+    [ "$token" = "$(printf '%s' "$token" | tr '[:upper:]' '[:lower:]')" ] || fail "$flag value '$token' must be lowercase"
+    canonical="$(awk -F '\t' -v value="$token" -v group="$group" '
+      $1 !~ /^#/ && ((group == "project-type" && $2 == group) || (group == "technology" && $2 != "project-type")) {
+        if ($1 == value) { print $1; exit }
+        count = split($4, aliases, ",")
+        for (position = 1; position <= count; position++) {
+          if (aliases[position] != "-" && aliases[position] == value) { print $1; exit }
+        }
+      }
+    ' "$catalog")"
+    if [ -z "$canonical" ]; then
+      supported="$(catalog_values "$catalog" "$group")"
+      fail "unknown $flag value '$token'; expected one of: $supported"
+    fi
+    ! grep -Fqx -- "$canonical" "$selected_file" || fail "duplicate $flag value '$canonical'"
+    printf '%s\n' "$canonical" >> "$selected_file"
+  done
+  awk -F '\t' -v selected_file="$selected_file" '
+    BEGIN {
+      while ((getline selected < selected_file) > 0) wanted[selected] = 1
+      close(selected_file)
+    }
+    $1 !~ /^#/ && ($1 in wanted) {
+      printf "%s%s", separator, $1
+      separator = ","
+    }
+    END { print "" }
+  ' "$catalog"
+  rm -f "$selected_file"
+}
+
+compose_claude_settings() {
+  local policy="$1" destination="$2"
+  awk -F '\t' -v technologies="$TECHNOLOGIES" '
+    function json_escape(value) {
+      gsub(/\\/, "\\\\", value)
+      gsub(/\"/, "\\\"", value)
+      return value
+    }
+    BEGIN {
+      row_count = 0
+      count = split(technologies, values, ",")
+      for (position = 1; position <= count; position++) selected[values[position]] = 1
+    }
+    $1 !~ /^#/ && ($1 in selected) && ($2 == "allow" || $2 == "deny") {
+      effect[row_count] = $2
+      pattern[row_count] = $3
+      if ($2 == "deny") denied[$3] = 1
+      row_count++
+    }
+    END {
+      print "{"
+      print "  \"permissions\": {"
+      print "    \"allow\": ["
+      separator = ""
+      for (position = 0; position < row_count; position++) {
+        key = effect[position] SUBSEP pattern[position]
+        if (effect[position] == "allow" && !(pattern[position] in denied) && !(key in emitted)) {
+          printf "%s      \"%s\"", separator, json_escape(pattern[position])
+          separator = ",\n"
+          emitted[key] = 1
+        }
+      }
+      if (separator != "") print ""
+      print "    ],"
+      print "    \"deny\": ["
+      separator = ""
+      for (position = 0; position < row_count; position++) {
+        key = effect[position] SUBSEP pattern[position]
+        if (effect[position] == "deny" && !(key in emitted)) {
+          printf "%s      \"%s\"", separator, json_escape(pattern[position])
+          separator = ",\n"
+          emitted[key] = 1
+        }
+      }
+      if (separator != "") print ""
+      print "    ]"
+      print "  }"
+      print "}"
+    }
+  ' "$policy" > "$destination"
+}
+
 replace_tokens() {
   local source="$1" destination="$2" repo_type safe_client safe_prefix
   case "$PROFILE" in terraform) repo_type="infrastructure" ;; *) repo_type="data-platform" ;; esac
   safe_client="$(printf '%s' "$CLIENT_NAME" | sed 's/[&|\\]/\\&/g')"
   safe_prefix="$(printf '%s' "$CLIENT_PREFIX" | sed 's/[&|\\]/\\&/g')"
   sed -e "s|{CLIENT_NAME}|$safe_client|g" -e "s|{PLATFORM}|$PROFILE|g" -e "s|{REPO_TYPE}|$repo_type|g" -e "s|{prefix}|$safe_prefix|g" "$source" > "$destination"
+}
+
+replace_composable_tokens() {
+  local source="$1" destination="$2" safe_client safe_prefix resource_line
+  safe_client="$(printf '%s' "$CLIENT_NAME" | sed 's/[&|\\]/\\&/g')"
+  resource_line=""
+  if [ -n "$CLIENT_PREFIX" ]; then
+    safe_prefix="$(printf '%s' "$CLIENT_PREFIX" | sed 's/[&|\\]/\\&/g')"
+    resource_line="- **resource prefix:** \`$safe_prefix\`"
+  fi
+  sed \
+    -e "s|{CLIENT_NAME}|$safe_client|g" \
+    -e "s|{PROJECT_TYPES}|${PROJECT_TYPES//,/, }|g" \
+    -e "s|{TECHNOLOGIES}|${TECHNOLOGIES//,/, }|g" \
+    -e "s|{RESOURCE_PREFIX_LINE}|$resource_line|g" \
+    "$source" > "$destination"
 }
 
 append_gitignore_exact() {
@@ -400,21 +532,70 @@ migrate_legacy_project_artifacts() {
 
 install_project() {
   [ ! -f manifest.tsv ] || [ ! -f install.sh ] || [ ! -d skills ] || fail "the toolkit repository is exempt from --project installation"
-  local is_join=0
+  local is_join=0 legacy_platform stored_project_types stored_technologies catalog
   OWNERSHIP_FILE="$(pwd)/.mindflayer-managed.tsv"
   if [ -f AGENTS.md ] && grep -q '<!-- template: AGENTS ' AGENTS.md; then is_join=1; fi
-  if [ "$is_join" -eq 1 ] && [ -z "$PROFILE" ]; then
-    PROFILE="$(sed -n 's/^[[:space:]]*- \*\*platform:\*\*[[:space:]]*//p' AGENTS.md | head -1)"
+
+  [ -z "$PROFILE" ] || { [ -z "$PROJECT_TYPES" ] && [ -z "$TECHNOLOGIES" ]; } || fail "--profile cannot be combined with --project-types or --technologies"
+
+  if [ "$is_join" -eq 1 ]; then
+    legacy_platform="$(sed -n 's/^[[:space:]]*- \*\*platform:\*\*[[:space:]]*//p' AGENTS.md | head -1)"
+    stored_project_types="$(sed -n 's/^[[:space:]]*- \*\*project types:\*\*[[:space:]]*//p' AGENTS.md | head -1)"
+    stored_technologies="$(sed -n 's/^[[:space:]]*- \*\*technologies:\*\*[[:space:]]*//p' AGENTS.md | head -1)"
+    if [ -n "$stored_project_types" ] || [ -n "$stored_technologies" ]; then
+      [ -n "$stored_project_types" ] && [ -n "$stored_technologies" ] || fail "AGENTS.md contains partial composable project metadata"
+      [ -z "$PROFILE" ] || fail "--profile cannot be used with composable AGENTS.md metadata"
+      catalog="$(fetch_temp config/technology-catalog.tsv)"
+      stored_project_types="$(canonicalize_catalog_list "$stored_project_types" project-type --project-types "$catalog")"
+      stored_technologies="$(canonicalize_catalog_list "$stored_technologies" technology --technologies "$catalog")"
+      if [ -n "$PROJECT_TYPES" ]; then
+        PROJECT_TYPES="$(canonicalize_catalog_list "$PROJECT_TYPES" project-type --project-types "$catalog")"
+        [ "$PROJECT_TYPES" = "$stored_project_types" ] || fail "--project-types does not match AGENTS.md"
+      else
+        PROJECT_TYPES="$stored_project_types"
+      fi
+      if [ -n "$TECHNOLOGIES" ]; then
+        TECHNOLOGIES="$(canonicalize_catalog_list "$TECHNOLOGIES" technology --technologies "$catalog")"
+        [ "$TECHNOLOGIES" = "$stored_technologies" ] || fail "--technologies does not match AGENTS.md"
+      else
+        TECHNOLOGIES="$stored_technologies"
+      fi
+      PROJECT_MODE="composable"
+    else
+      [ -n "$legacy_platform" ] || fail "AGENTS.md does not contain supported project metadata"
+      [ -z "$PROJECT_TYPES" ] && [ -z "$TECHNOLOGIES" ] || fail "composable flags cannot be used with legacy AGENTS.md metadata"
+      if [ -n "$PROFILE" ]; then
+        [ "$PROFILE" = "$legacy_platform" ] || fail "--profile does not match AGENTS.md"
+      else
+        PROFILE="$legacy_platform"
+      fi
+      validate_profile
+      PROJECT_MODE="legacy"
+    fi
+  elif [ -n "$PROFILE" ]; then
+    validate_profile
+    PROJECT_MODE="legacy"
+  else
+    [ -n "$PROJECT_TYPES" ] || fail "--project-types is required for a new project install"
+    [ -n "$TECHNOLOGIES" ] || fail "--technologies is required for a new project install"
+    catalog="$(fetch_temp config/technology-catalog.tsv)"
+    PROJECT_TYPES="$(canonicalize_catalog_list "$PROJECT_TYPES" project-type --project-types "$catalog")"
+    TECHNOLOGIES="$(canonicalize_catalog_list "$TECHNOLOGIES" technology --technologies "$catalog")"
+    PROJECT_MODE="composable"
   fi
-  [ -n "$PROFILE" ] || fail "--profile is required for a new project install"
-  validate_profile
+
   if [ "$is_join" -eq 0 ]; then
     [ -n "$CLIENT_NAME" ] || fail "--client is required for a new project install"
-    [ -n "$CLIENT_PREFIX" ] || fail "--prefix is required for a new project install"
+    [ "$PROJECT_MODE" != legacy ] || [ -n "$CLIENT_PREFIX" ] || fail "--prefix is required for a legacy profile install"
     local template rendered
-    template="$(fetch_temp templates/AGENTS.md)"
     rendered="$(mktemp)"
-    replace_tokens "$template" "$rendered"
+    if [ "$PROJECT_MODE" = legacy ]; then
+      template="$(fetch_temp templates/AGENTS.md)"
+      replace_tokens "$template" "$rendered"
+    else
+      template="$(fetch_temp templates/AGENTS-composable.md)"
+      replace_composable_tokens "$template" "$rendered"
+    fi
     install_file "$rendered" AGENTS.md
     rm -f "$rendered"
   else
@@ -445,8 +626,14 @@ install_project() {
   for agent in "${AGENTS_TO_INSTALL[@]}"; do
     case "$agent" in
       claude)
-        source="$(fetch_temp "settings/claude/settings-$PROFILE.json")"
+        if [ "$PROJECT_MODE" = legacy ]; then
+          source="$(fetch_temp "settings/claude/settings-$PROFILE.json")"
+        else
+          source="$(mktemp)"
+          compose_claude_settings "$(fetch_temp settings/claude/technology-permissions.tsv)" "$source"
+        fi
         install_file "$source" .claude/settings.json
+        [ "$PROJECT_MODE" = legacy ] || rm -f "$source"
         source="$(fetch_temp CLAUDE.md)"
         install_file "$source" CLAUDE.md
         migrate_legacy_project_artifacts claude

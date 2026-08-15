@@ -15,6 +15,13 @@ assert() { local label="$1"; shift; if "$@"; then pass "$label"; else fail "$lab
 contains() { grep -Fq -- "$2" "$1"; }
 not_contains() { ! grep -Fq -- "$2" "$1"; }
 checksum() { cksum "$1" | awk '{print $1 ":" $2}'; }
+adr_reference_exists() {
+  local reference="$1" decision_file
+  for decision_file in "$ROOT"/docs/decisions/[0-9][0-9][0-9][0-9]-*.md; do
+    grep -Fq "# $reference:" "$decision_file" && return 0
+  done
+  return 1
+}
 
 sandbox=""
 original_home="$HOME"
@@ -75,7 +82,17 @@ for skill_file in "$ROOT"/skills/*/SKILL.md; do
   assert "$skill openai metadata" test -f "$ROOT/skills/$skill/agents/openai.yaml"
   assert "$skill metadata interface" contains "$ROOT/skills/$skill/agents/openai.yaml" 'interface:'
 done
-assert 'no stale ADR IDs' sh -c "! rg -n 'ADR-00(0[4-9]|1[0-9]|2[0-9]|3[0-9])|docs/decisions/(platform|templates)' '$ROOT' --glob '!.git/**' --glob '!plan.md'"
+for decision_file in "$ROOT"/docs/decisions/[0-9][0-9][0-9][0-9]-*.md; do
+  filename_id="$(basename "$decision_file")"
+  filename_id="${filename_id%%-*}"
+  heading_id="$(sed -n 's/^# ADR-\([0-9][0-9][0-9][0-9]\):.*/\1/p' "$decision_file" | head -1)"
+  assert "decision filename matches heading: $filename_id" test "$filename_id" = "$heading_id"
+done
+while IFS= read -r adr_reference; do
+  assert "resolved decision reference: $adr_reference" adr_reference_exists "$adr_reference"
+done < <(rg -o --no-filename 'ADR-[0-9]{4}' "$ROOT" --glob '!.git/**' --glob '!plan.md' | sort -u)
+assert 'retired platform decision tree absent' test ! -e "$ROOT/docs/decisions/platform"
+assert 'retired decision templates absent' test ! -e "$ROOT/docs/decisions/templates"
 assert 'no skill lifecycle in frontmatter' sh -c "! rg -n '^(version|updated):' '$ROOT/skills' -g 'SKILL.md'"
 
 assert 'Claude repository shim exact import' grep -Fqx '@AGENTS.md' "$ROOT/CLAUDE.md"
@@ -97,12 +114,25 @@ combined_instruction_bytes="$(wc -c < "$ROOT/global/AGENTS.md")"
 combined_instruction_bytes=$((combined_instruction_bytes + $(wc -c < "$ROOT/templates/AGENTS.md")))
 assert 'combined instruction byte budget' test "$combined_instruction_bytes" -lt 32768
 assert 'no runtime discovery scaffolds in manifest' sh -c "! grep -Fq 'settings/claude/scaffold/' '$ROOT/manifest.tsv'"
+assert 'composable template inventoried' contains "$ROOT/manifest.tsv" $'templates/AGENTS-composable.md\ttemplate\t5.0.0'
+assert 'technology catalog inventoried' contains "$ROOT/manifest.tsv" $'config/technology-catalog.tsv\tregistry\t1.0.0'
+assert 'technology policy inventoried' contains "$ROOT/manifest.tsv" $'settings/claude/technology-permissions.tsv\tsetting\t1.0.0'
+assert 'all three project types cataloged' sh -c "test \"\$(awk -F '\t' '\$2 == \"project-type\" {count++} END {print count+0}' '$ROOT/config/technology-catalog.tsv')\" -eq 3"
+assert 'ambiguous dlt alias absent' sh -c "! awk -F '\t' '\$4 == \"dlt\" {found=1} END {exit found ? 0 : 1}' '$ROOT/config/technology-catalog.tsv'"
 
 printf '%s\n' '--- argument validation ---'
 rc=0; run_install --global --project --tools claude --local >/dev/null 2>&1 || rc=$?; assert 'conflicting modes rejected' test "$rc" -ne 0
 rc=0; run_install --global --tools unknown --local >/dev/null 2>&1 || rc=$?; assert 'unknown tool rejected' test "$rc" -ne 0
 rc=0; run_install --global --tools claude,claude --local >/dev/null 2>&1 || rc=$?; assert 'duplicate tool rejected' test "$rc" -ne 0
 rc=0; (cd "$ROOT" && run_install --project --tools claude --profile terraform --client X --prefix x --local) >/dev/null 2>&1 || rc=$?; assert 'root project exemption' test "$rc" -ne 0
+
+setup
+rc=0; (cd "$sandbox/project" && run_install --project --tools cursor --project-types infrastructure --client Client --local) >/dev/null 2>&1 || rc=$?; assert 'technologies required for composable install' test "$rc" -ne 0
+rc=0; (cd "$sandbox/project" && run_install --project --tools cursor --technologies sql --client Client --local) >/dev/null 2>&1 || rc=$?; assert 'project types required for composable install' test "$rc" -ne 0
+rc=0; (cd "$sandbox/project" && run_install --project --tools cursor --profile terraform --project-types infrastructure --technologies terraform --client Client --prefix cl --local) >/dev/null 2>&1 || rc=$?; assert 'legacy and composable flags conflict' test "$rc" -ne 0
+rc=0; (cd "$sandbox/project" && run_install --project --tools cursor --project-types Infrastructure --technologies sql --client Client --local) >/dev/null 2>&1 || rc=$?; assert 'uppercase project type rejected' test "$rc" -ne 0
+rc=0; (cd "$sandbox/project" && run_install --project --tools cursor --project-types infrastructure --technologies postgresql,postgres --client Client --local) >/dev/null 2>&1 || rc=$?; assert 'alias duplicate rejected' test "$rc" -ne 0
+teardown
 
 printf '%s\n' '--- remote-style installation and completion stamp ---'
 setup
@@ -131,6 +161,11 @@ export FAKE_FETCH_LOG="$sandbox/fetch.log"
 : > "$FAKE_FETCH_LOG"
 assert 'streamed project remote install succeeds' sh -c "cd '$sandbox/project' && PATH='$fakebin:$PATH' HOME='$HOME' bash -s -- --project --tools claude,codex --profile terraform --client Client --prefix cl < '$ROOT/install.sh' >/dev/null"
 assert 'project skill artifact fetched once' test "$(grep -Fc 'skills/adr/SKILL.md' "$FAKE_FETCH_LOG")" -eq 1
+: > "$FAKE_FETCH_LOG"
+mkdir -p "$sandbox/project-new"
+assert 'streamed composable project install succeeds' sh -c "cd '$sandbox/project-new' && PATH='$fakebin:$PATH' HOME='$HOME' bash -s -- --project --tools claude --project-types infrastructure,data-engineering --technologies terraform,python,sql --client Client < '$ROOT/install.sh' >/dev/null"
+assert 'remote composable catalog fetched' contains "$FAKE_FETCH_LOG" 'config/technology-catalog.tsv'
+assert 'remote composable policy fetched' contains "$FAKE_FETCH_LOG" 'settings/claude/technology-permissions.tsv'
 unset FAKE_FETCH_LOG
 unset FAKE_REPO
 unset FAKE_REPO_URL
@@ -196,6 +231,83 @@ for tools in claude codex gemini cursor copilot claude,codex,gemini,cursor,copil
     assert 'Codex-only install omits Claude settings' test ! -e "$sandbox/project/.claude/settings.json"
     assert 'Codex-only install omits Claude skill root' test ! -d "$sandbox/project/.claude/skills"
   fi
+  teardown
+done
+
+printf '%s\n' '--- composable project classification ---'
+setup
+all_types='infrastructure,data-platform,data-engineering'
+mixed_technologies='databricks,dabs,microsoft-fabric,snowflake,postgres,terraform,dbt,dlthub,podman,py,sql'
+(cd "$sandbox/project" && run_install --project --tools claude,codex,gemini,cursor,copilot \
+  --project-types data-engineering,infrastructure,data-platform \
+  --technologies "$mixed_technologies" --client Client --local) >/dev/null
+assert 'all project types canonicalized' contains "$sandbox/project/AGENTS.md" '**project types:** infrastructure, data-platform, data-engineering'
+assert 'technologies canonicalized' contains "$sandbox/project/AGENTS.md" '**technologies:** databricks, databricks:asset-bundles, fabric, snowflake, postgresql, terraform, dbt, dlthub, podman, python, sql'
+assert 'optional prefix omitted' not_contains "$sandbox/project/AGENTS.md" '**resource prefix:**'
+assert 'composed settings valid JSON' sh -c "python3 -m json.tool '$sandbox/project/.claude/settings.json' >/dev/null"
+assert 'composed settings deduplicated and deny-disjoint' python3 -c 'import json,sys; p=json.load(open(sys.argv[1]))["permissions"]; assert len(p["allow"]) == len(set(p["allow"])); assert len(p["deny"]) == len(set(p["deny"])); assert not set(p["allow"]) & set(p["deny"])' "$sandbox/project/.claude/settings.json"
+assert 'Databricks allows require profile' python3 -c 'import json,sys; a=json.load(open(sys.argv[1]))["permissions"]["allow"]; assert all("--profile " in rule for rule in a if "databricks " in rule)' "$sandbox/project/.claude/settings.json"
+assert 'Snowflake allows require connection when present' python3 -c 'import json,sys; a=json.load(open(sys.argv[1]))["permissions"]["allow"]; assert all("--connection " in rule or " -c " in rule for rule in a if "snow " in rule)' "$sandbox/project/.claude/settings.json"
+
+mkdir -p "$sandbox/project-reordered"
+(cd "$sandbox/project-reordered" && run_install --project --tools claude \
+  --project-types "$all_types" \
+  --technologies sql,python,podman,dlthub,dbt,terraform,postgresql,snowflake,fabric,databricks:asset-bundles,databricks \
+  --client Client --local) >/dev/null
+assert 'project metadata input-order invariant' cmp "$sandbox/project/AGENTS.md" "$sandbox/project-reordered/AGENTS.md"
+assert 'composed settings input-order invariant' cmp "$sandbox/project/.claude/settings.json" "$sandbox/project-reordered/.claude/settings.json"
+
+agents_checksum_before="$(checksum "$sandbox/project/AGENTS.md")"
+(cd "$sandbox/project" && run_install --project --tools claude --local) >/dev/null
+assert 'composable join preserves AGENTS' test "$(checksum "$sandbox/project/AGENTS.md")" = "$agents_checksum_before"
+rc=0; (cd "$sandbox/project" && run_install --project --tools claude --project-types infrastructure --technologies "$mixed_technologies" --local) >/dev/null 2>&1 || rc=$?; assert 'composable join rejects mismatched project types' test "$rc" -ne 0
+teardown
+
+printf '%s\n' '--- all project type combinations ---'
+setup
+for project_types in \
+  infrastructure data-platform data-engineering \
+  infrastructure,data-platform infrastructure,data-engineering data-platform,data-engineering \
+  infrastructure,data-platform,data-engineering; do
+  project_path="$sandbox/project-${project_types//,/-}"
+  mkdir -p "$project_path"
+  assert "project types: $project_types" sh -c "cd '$project_path' && HOME='$HOME' bash '$ROOT/install.sh' --project --tools cursor --project-types '$project_types' --technologies sql --client Client --local >/dev/null"
+done
+assert 'non-Claude composable install omits settings' test ! -e "$sandbox/project-infrastructure/.claude/settings.json"
+teardown
+
+printf '%s\n' '--- component permissions and composable ownership ---'
+setup
+(cd "$sandbox/project" && run_install --project --tools claude \
+  --project-types data-platform --technologies databricks:asset-bundles \
+  --client Client --local) >/dev/null
+assert 'component permission included' contains "$sandbox/project/.claude/settings.json" 'Bash(databricks bundle validate *--profile *)'
+assert 'component does not inherit parent permission' not_contains "$sandbox/project/.claude/settings.json" 'Bash(databricks * list *--profile *)'
+printf '\n{"user":"change"}\n' >> "$sandbox/project/.claude/settings.json"
+(cd "$sandbox/project" && run_install --project --tools claude --local) >/dev/null
+assert 'modified composed settings preserved by default' contains "$sandbox/project/.claude/settings.json" '"user":"change"'
+(cd "$sandbox/project" && run_install --project --tools claude --force --local) >/dev/null
+assert 'composed settings restored with force' sh -c "python3 -m json.tool '$sandbox/project/.claude/settings.json' >/dev/null"
+assert 'composed settings replacement backed up' sh -c "find '$sandbox/project/.claude' -name 'settings.json.bak.*' -type f | grep -q ."
+(cd "$sandbox/project" && bash "$ROOT/tools/uninstall.sh" --project --confirm) >/dev/null
+assert 'verified composed settings removed' test ! -e "$sandbox/project/.claude/settings.json"
+assert 'verified composable AGENTS removed' test ! -e "$sandbox/project/AGENTS.md"
+teardown
+
+printf '%s\n' '--- partial composable join metadata ---'
+setup
+printf '%s\n' '# Project Instructions' '<!-- template: AGENTS | version: 5.0.0 -->' '- **project types:** data-engineering' > "$sandbox/project/AGENTS.md"
+rc=0; (cd "$sandbox/project" && run_install --project --tools cursor --local) >/dev/null 2>&1 || rc=$?; assert 'partial composable metadata rejected' test "$rc" -ne 0
+teardown
+
+printf '%s\n' '--- legacy profile equivalence and join ---'
+for legacy_profile in terraform databricks fabric; do
+  setup
+  (cd "$sandbox/project" && run_install --project --tools claude --profile "$legacy_profile" --client Client --prefix cl --local) >/dev/null
+  assert "legacy settings unchanged: $legacy_profile" cmp "$sandbox/project/.claude/settings.json" "$ROOT/settings/claude/settings-$legacy_profile.json"
+  legacy_agents_checksum="$(checksum "$sandbox/project/AGENTS.md")"
+  (cd "$sandbox/project" && run_install --project --tools claude --local) >/dev/null
+  assert "legacy join preserves AGENTS: $legacy_profile" test "$(checksum "$sandbox/project/AGENTS.md")" = "$legacy_agents_checksum"
   teardown
 done
 

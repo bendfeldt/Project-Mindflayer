@@ -1,0 +1,35 @@
+# id	category	ecosystem	aliases	display_name
+infrastructure	project-type	-	-	Infrastructure
+data-platform	project-type	-	-	Data platform
+data-engineering	project-type	-	-	Data engineering
+databricks	ecosystem	databricks	-	Databricks
+databricks:unity-catalog	component	databricks	unity-catalog	Unity Catalog
+databricks:asset-bundles	component	databricks	dabs	Databricks Asset Bundles
+databricks:lakeflow-jobs	component	databricks	databricks-jobs	Lakeflow Jobs
+databricks:lakeflow-pipelines	component	databricks	databricks-pipelines	Lakeflow Spark Declarative Pipelines
+databricks:dbsql	component	databricks	databricks-sql	Databricks SQL
+databricks:mlflow	component	databricks	-	MLflow
+databricks:apps	component	databricks	-	Databricks Apps
+databricks:lakebase	component	databricks	-	Lakebase
+databricks:vector-search	component	databricks	-	Vector Search
+fabric	ecosystem	fabric	microsoft-fabric	Microsoft Fabric
+fabric:lakehouse	component	fabric	-	Fabric Lakehouse
+fabric:warehouse	component	fabric	-	Fabric Warehouse
+fabric:data-factory	component	fabric	fabric-pipelines	Fabric Data Factory
+fabric:notebooks	component	fabric	fabric-spark	Fabric notebooks and Spark
+fabric:semantic-models	component	fabric	-	Fabric semantic models
+fabric:power-bi	component	fabric	power-bi	Power BI
+snowflake	ecosystem	snowflake	-	Snowflake
+snowflake:warehouses	component	snowflake	-	Snowflake databases and warehouses
+snowflake:snowpark	component	snowflake	-	Snowpark
+snowflake:dynamic-tables	component	snowflake	-	Snowflake Dynamic Tables
+snowflake:streams-tasks	component	snowflake	-	Snowflake Streams and Tasks
+snowflake:snowpipe	component	snowflake	-	Snowpipe
+snowflake:cortex-ai	component	snowflake	-	Snowflake Cortex AI
+postgresql	ecosystem	postgresql	postgres	PostgreSQL
+terraform	tool	-	-	Terraform
+dbt	tool	-	-	dbt
+dlthub	tool	-	-	dltHub
+podman	tool	-	-	Podman
+python	language	-	py	Python
+sql	language	-	-	SQL
