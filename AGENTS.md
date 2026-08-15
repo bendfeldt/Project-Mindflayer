@@ -20,17 +20,6 @@ Project-Mindflayer distributes portable AI-assistant guidance, skills, settings,
 5. Preserve existing flags and the five supported consumers: Claude, Codex, Gemini, Cursor, and Copilot.
 6. Never read prohibited secret files or values. See `docs/operating-standards.md`.
 7. For Databricks examples, require an explicit `--profile <name>`; never select a profile automatically.
-8. Validate shell, Python, JSON, YAML, HCL, Markdown links, manifest completeness, skills, installation, drift, sync, and uninstall before completion.
-
-## Repository layout
-
-- `install.sh`: local and remote installer.
-- `manifest.tsv`: artifact, type, lifecycle version, consumers, ownership.
-- `global/`: portable installed baseline.
-- `skills/`: ten public skills and nested resources.
-- `settings/`: consumer-specific settings and shims.
-- `templates/`: generated client-repository artifacts.
-- `tools/`: update, sync, drift, store, and uninstall lifecycle tools.
-- `docs/decisions/`: current repository ADRs only.
+8. Before completion, run `bash tests/test-install.sh` and `python3 -m unittest discover -s tests -p 'test_*.py'`.
 
 Do not reorganize the repository, deploy, publish, commit, or change external systems without explicit authorization.

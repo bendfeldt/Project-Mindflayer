@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONDONTWRITEBYTECODE=1
 EXPECTED_SHELLCHECK_VERSION="0.11.0"
 EXPECTED_TOOLKIT_VERSION="$(awk -F '\t' '$1 == "install.sh" {print $3; exit}' "$ROOT/manifest.tsv")"
+EXPECTED_REPO_URL="https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main"
 PASS=0
 FAIL=0
 
@@ -13,6 +14,7 @@ fail() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
 assert() { local label="$1"; shift; if "$@"; then pass "$label"; else fail "$label"; fi; }
 contains() { grep -Fq -- "$2" "$1"; }
 not_contains() { ! grep -Fq -- "$2" "$1"; }
+checksum() { cksum "$1" | awk '{print $1 ":" $2}'; }
 
 sandbox=""
 original_home="$HOME"
@@ -28,6 +30,14 @@ run_install() { bash "$ROOT/install.sh" "$@" </dev/null; }
 
 printf '%s\n' '--- static and manifest ---'
 assert 'installer version matches manifest' grep -Fqx "VERSION=\"$EXPECTED_TOOLKIT_VERSION\"" "$ROOT/install.sh"
+assert 'installer uses canonical GitHub repository' grep -Fqx "REPO_URL=\"$EXPECTED_REPO_URL\"" "$ROOT/install.sh"
+assert 'local mode hidden from public help' sh -c "! bash '$ROOT/install.sh' --help | grep -Fq -- '--local'"
+for public_install_file in "$ROOT/README.md" "$ROOT/how-to-guide.md" "$ROOT/skills/setup-repo/SKILL.md"; do
+  assert "canonical GitHub bootstrap: ${public_install_file##*/}" contains "$public_install_file" "$EXPECTED_REPO_URL/install.sh"
+  assert "no public local mode: ${public_install_file##*/}" not_contains "$public_install_file" '--local'
+  assert "no checkout installer path: ${public_install_file##*/}" sh -c "! rg -n '/path/to/|bash install\\.sh' '$public_install_file'"
+done
+assert 'internal local mode retained' grep -Fq -- '--local) LOCAL=1' "$ROOT/install.sh"
 for script in "$ROOT/install.sh" "$ROOT"/tools/*.sh "$ROOT"/tests/*.sh; do assert "bash syntax: ${script##*/}" bash -n "$script"; done
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck_version="$(shellcheck --version | awk '$1 == "version:" {print $2}')"
@@ -66,8 +76,27 @@ for skill_file in "$ROOT"/skills/*/SKILL.md; do
   assert "$skill metadata interface" contains "$ROOT/skills/$skill/agents/openai.yaml" 'interface:'
 done
 assert 'no stale ADR IDs' sh -c "! rg -n 'ADR-00(0[4-9]|1[0-9]|2[0-9]|3[0-9])|docs/decisions/(platform|templates)' '$ROOT' --glob '!.git/**' --glob '!plan.md'"
-assert 'Copilot repository guidance is a compatibility shim' test "$(wc -l < "$ROOT/.github/copilot-instructions.md" | tr -d ' ')" -le 5
 assert 'no skill lifecycle in frontmatter' sh -c "! rg -n '^(version|updated):' '$ROOT/skills' -g 'SKILL.md'"
+
+assert 'Claude repository shim exact import' grep -Fqx '@AGENTS.md' "$ROOT/CLAUDE.md"
+assert 'Gemini repository shim exact import' grep -Fqx '@AGENTS.md' "$ROOT/GEMINI.md"
+assert 'shim canonical target exists' test -f "$ROOT/AGENTS.md"
+assert 'Claude repository shim is one line' test "$(wc -l < "$ROOT/CLAUDE.md" | tr -d ' ')" -eq 1
+assert 'Gemini repository shim is one line' test "$(wc -l < "$ROOT/GEMINI.md" | tr -d ' ')" -eq 1
+assert 'repository instructions do not import compatibility shims' sh -c "! rg -n '^@(CLAUDE|GEMINI)\\.md$' '$ROOT/AGENTS.md'"
+assert 'duplicate Claude template absent' test ! -e "$ROOT/templates/CLAUDE.md"
+assert 'duplicate Gemini template absent' test ! -e "$ROOT/templates/GEMINI.md"
+assert 'Cursor project shim source absent' test ! -e "$ROOT/settings/cursor/cursor.md"
+assert 'Copilot project shim source absent' test ! -e "$ROOT/settings/copilot/copilot-instructions.md"
+assert 'Cursor project shim not distributed' sh -c "! grep -Fq 'settings/cursor/cursor.md' '$ROOT/manifest.tsv'"
+assert 'Copilot project shim not distributed' sh -c "! grep -Fq 'settings/copilot/copilot-instructions.md' '$ROOT/manifest.tsv'"
+for instruction_file in "$ROOT/global/AGENTS.md" "$ROOT/AGENTS.md" "$ROOT/templates/AGENTS.md"; do
+  assert "instruction line budget: ${instruction_file##*/}" test "$(wc -l < "$instruction_file")" -lt 200
+done
+combined_instruction_bytes="$(wc -c < "$ROOT/global/AGENTS.md")"
+combined_instruction_bytes=$((combined_instruction_bytes + $(wc -c < "$ROOT/templates/AGENTS.md")))
+assert 'combined instruction byte budget' test "$combined_instruction_bytes" -lt 32768
+assert 'no runtime discovery scaffolds in manifest' sh -c "! grep -Fq 'settings/claude/scaffold/' '$ROOT/manifest.tsv'"
 
 printf '%s\n' '--- argument validation ---'
 rc=0; run_install --global --project --tools claude --local >/dev/null 2>&1 || rc=$?; assert 'conflicting modes rejected' test "$rc" -ne 0
@@ -83,26 +112,28 @@ fakebin="$sandbox/bin"; mkdir -p "$fakebin"
 printf '%s\n' '#!/usr/bin/env bash' \
   'url=""; output=""' \
   'while [ $# -gt 0 ]; do case "$1" in -o) shift; output="$1" ;; http*) url="$1" ;; esac; shift; done' \
-  'relative="${url#*Project-Mindflayer/main/}"' \
+  'prefix="${FAKE_REPO_URL}/"' \
+  'case "$url" in "$prefix"*) relative="${url#"$prefix"}" ;; *) exit 23 ;; esac' \
   '[ -z "${FAKE_FETCH_LOG:-}" ] || printf "%s\n" "$relative" >> "$FAKE_FETCH_LOG"' \
   '[ "${FAIL_ARTIFACT:-}" != "$relative" ] || exit 22' \
   'cp "$FAKE_REPO/$relative" "$output"' > "$fakebin/curl"
 chmod +x "$fakebin/curl"
-export FAKE_REPO="$ROOT" FAIL_ARTIFACT="docs/architecture.md"
+export FAKE_REPO="$ROOT" FAKE_REPO_URL="$EXPECTED_REPO_URL" FAIL_ARTIFACT="docs/architecture.md"
 rc=0; PATH="$fakebin:$PATH" run_install --global --tools codex >/dev/null 2>&1 || rc=$?
 assert 'incomplete remote install fails' test "$rc" -ne 0
 assert 'incomplete install has no version stamp' test ! -f "$HOME/.ai-toolkit/version"
 unset FAIL_ARTIFACT
-assert 'remote-style install succeeds' env PATH="$fakebin:$PATH" FAKE_REPO="$ROOT" HOME="$HOME" bash "$ROOT/install.sh" --global --tools codex
+assert 'streamed global remote install succeeds' sh -c "PATH='$fakebin:$PATH' HOME='$HOME' bash -s -- --global --tools codex < '$ROOT/install.sh'"
 assert 'remote completion stamp written last' test "$(cat "$HOME/.ai-toolkit/version")" = "$EXPECTED_TOOLKIT_VERSION"
 assert 'Codex-only global skill symlink' test "$(readlink "$HOME/.agents/skills/adr")" = "$HOME/.ai-toolkit/skills/adr"
 assert 'Codex-only global install omits Claude skills' test ! -d "$HOME/.claude/skills"
 export FAKE_FETCH_LOG="$sandbox/fetch.log"
 : > "$FAKE_FETCH_LOG"
-assert 'mixed project remote install succeeds' sh -c "cd '$sandbox/project' && PATH='$fakebin:$PATH' HOME='$HOME' bash '$ROOT/install.sh' --project --tools claude,codex --profile terraform --client Client --prefix cl >/dev/null"
+assert 'streamed project remote install succeeds' sh -c "cd '$sandbox/project' && PATH='$fakebin:$PATH' HOME='$HOME' bash -s -- --project --tools claude,codex --profile terraform --client Client --prefix cl < '$ROOT/install.sh' >/dev/null"
 assert 'project skill artifact fetched once' test "$(grep -Fc 'skills/adr/SKILL.md' "$FAKE_FETCH_LOG")" -eq 1
 unset FAKE_FETCH_LOG
 unset FAKE_REPO
+unset FAKE_REPO_URL
 teardown
 
 printf '%s\n' '--- global install and ownership ---'
@@ -169,7 +200,13 @@ for tools in claude codex gemini cursor copilot claude,codex,gemini,cursor,copil
 done
 
 setup
-(cd "$sandbox/project" && run_install --project --tools claude,codex --profile databricks --client Client --prefix cl --local) >/dev/null
+(cd "$sandbox/project" && run_install --project --tools claude,codex,gemini,cursor,copilot --profile databricks --client Client --prefix cl --local) >/dev/null
+assert 'Claude project shim installed' grep -Fqx '@AGENTS.md' "$sandbox/project/CLAUDE.md"
+assert 'Gemini project shim installed' grep -Fqx '@AGENTS.md' "$sandbox/project/GEMINI.md"
+assert 'Codex uses native AGENTS without shim' test ! -e "$sandbox/project/codex.md"
+assert 'Cursor uses native AGENTS without shim' test ! -e "$sandbox/project/.cursor/rules/project.md"
+assert 'Copilot uses native AGENTS without shim' test ! -e "$sandbox/project/.github/copilot-instructions.md"
+assert 'Claude runtime scaffold README absent' test ! -e "$sandbox/project/.claude/rules/README.md"
 assert 'shared project root recorded once' test "$(grep -Fc $'.claude/skills/adr/SKILL.md\t' "$sandbox/project/.mindflayer-managed.tsv")" -eq 1
 export MINDFlAYER_HOME="$ROOT"
 assert 'full directory initially synced' sh -c "cd '$sandbox/project' && '$ROOT/tools/check-skills-update.sh' >/dev/null"
@@ -184,6 +221,91 @@ assert 'Claude nested drift detected' test "$rc" -ne 0
 (cd "$sandbox/project" && "$ROOT/tools/sync-skills.sh" --force >/dev/null)
 assert 'all managed roots repaired' sh -c "cd '$sandbox/project' && '$ROOT/tools/check-skills-update.sh' >/dev/null"
 unset MINDFlAYER_HOME
+teardown
+
+printf '%s\n' '--- project compatibility migration ---'
+setup
+mkdir -p \
+  "$sandbox/project/.claude/rules" \
+  "$sandbox/project/.claude/commands" \
+  "$sandbox/project/.claude/agents" \
+  "$sandbox/project/.claude/hooks" \
+  "$sandbox/project/.cursor/rules" \
+  "$sandbox/project/.github"
+ownership_file="$sandbox/project/.mindflayer-managed.tsv"
+for legacy_path in \
+  codex.md \
+  gemini.md \
+  .claude/rules/README.md \
+  .claude/commands/README.md \
+  .claude/agents/README.md \
+  .claude/hooks/README.md \
+  .cursor/rules/project.md; do
+  printf 'legacy managed artifact\n' > "$sandbox/project/$legacy_path"
+  printf '%s\tfile\t%s\n' "$legacy_path" "$(checksum "$sandbox/project/$legacy_path")" >> "$ownership_file"
+done
+printf 'user modification\n' >> "$sandbox/project/.claude/rules/README.md"
+ln -s ../AGENTS.md "$sandbox/project/.github/copilot-instructions.md"
+printf '%s\tsymlink\t%s\n' '.github/copilot-instructions.md' '../AGENTS.md' >> "$ownership_file"
+(cd "$sandbox/project" && run_install --project --tools claude,codex,gemini,cursor,copilot --profile terraform --client Client --prefix cl --local) >/dev/null
+assert 'legacy Codex shim removed' test ! -e "$sandbox/project/codex.md"
+assert 'legacy Gemini shim replaced with native casing' test "$(find "$sandbox/project" -maxdepth 1 -name 'GEMINI.md' -print | wc -l | tr -d ' ')" -eq 1
+assert 'legacy lowercase Gemini entry removed' test "$(find "$sandbox/project" -maxdepth 1 -name 'gemini.md' -print | wc -l | tr -d ' ')" -eq 0
+assert 'unchanged Claude command scaffold removed' test ! -e "$sandbox/project/.claude/commands/README.md"
+assert 'unchanged Claude agent scaffold removed' test ! -e "$sandbox/project/.claude/agents/README.md"
+assert 'unchanged Claude hook scaffold removed' test ! -e "$sandbox/project/.claude/hooks/README.md"
+assert 'modified Claude rule scaffold preserved' contains "$sandbox/project/.claude/rules/README.md" 'user modification'
+assert 'unchanged Cursor shim removed' test ! -e "$sandbox/project/.cursor/rules/project.md"
+assert 'unchanged Copilot symlink removed' test ! -e "$sandbox/project/.github/copilot-instructions.md"
+assert 'Cursor ownership record removed' not_contains "$ownership_file" '.cursor/rules/project.md'
+assert 'Copilot ownership record removed' not_contains "$ownership_file" '.github/copilot-instructions.md'
+teardown
+
+printf '%s\n' '--- modified legacy shim preservation ---'
+setup
+mkdir -p "$sandbox/project/.cursor/rules" "$sandbox/project/.github"
+ownership_file="$sandbox/project/.mindflayer-managed.tsv"
+printf 'legacy managed Cursor shim\n' > "$sandbox/project/.cursor/rules/project.md"
+printf '%s\tfile\t%s\n' '.cursor/rules/project.md' "$(checksum "$sandbox/project/.cursor/rules/project.md")" >> "$ownership_file"
+printf 'user modification\n' >> "$sandbox/project/.cursor/rules/project.md"
+ln -s ../AGENTS.md "$sandbox/project/.github/copilot-instructions.md"
+printf '%s\tsymlink\t%s\n' '.github/copilot-instructions.md' '../AGENTS.md' >> "$ownership_file"
+ln -sfn ../OTHER.md "$sandbox/project/.github/copilot-instructions.md"
+(cd "$sandbox/project" && run_install --project --tools cursor,copilot --profile terraform --client Client --prefix cl --local) >/dev/null
+assert 'modified Cursor shim preserved' contains "$sandbox/project/.cursor/rules/project.md" 'user modification'
+assert 'modified Cursor ownership retained' contains "$ownership_file" '.cursor/rules/project.md'
+assert 'changed Copilot symlink preserved' test "$(readlink "$sandbox/project/.github/copilot-instructions.md")" = '../OTHER.md'
+assert 'changed Copilot ownership retained' contains "$ownership_file" '.github/copilot-instructions.md'
+teardown
+
+printf '%s\n' '--- missing legacy ownership cleanup ---'
+setup
+ownership_file="$sandbox/project/.mindflayer-managed.tsv"
+printf '%s\tfile\t%s\n' '.cursor/rules/project.md' 'missing-proof' > "$ownership_file"
+printf '%s\tsymlink\t%s\n' '.github/copilot-instructions.md' '../AGENTS.md' >> "$ownership_file"
+(cd "$sandbox/project" && run_install --project --tools cursor,copilot --profile terraform --client Client --prefix cl --local) >/dev/null
+assert 'missing Cursor ownership forgotten' not_contains "$ownership_file" '.cursor/rules/project.md'
+assert 'missing Copilot ownership forgotten' not_contains "$ownership_file" '.github/copilot-instructions.md'
+teardown
+
+printf '%s\n' '--- unowned legacy shim preservation ---'
+setup
+mkdir -p "$sandbox/project/.cursor/rules" "$sandbox/project/.github"
+printf 'unowned Cursor guidance\n' > "$sandbox/project/.cursor/rules/project.md"
+printf 'unowned Copilot guidance\n' > "$sandbox/project/.github/copilot-instructions.md"
+(cd "$sandbox/project" && run_install --project --tools cursor,copilot --profile terraform --client Client --prefix cl --local) >/dev/null
+assert 'unowned Cursor shim preserved' contains "$sandbox/project/.cursor/rules/project.md" 'unowned Cursor guidance'
+assert 'unowned Copilot shim preserved' contains "$sandbox/project/.github/copilot-instructions.md" 'unowned Copilot guidance'
+teardown
+
+printf '%s\n' '--- project entrypoint uninstall ---'
+setup
+(cd "$sandbox/project" && run_install --project --tools claude,codex,gemini,cursor,copilot --profile fabric --client Client --prefix cl --local) >/dev/null
+(cd "$sandbox/project" && bash "$ROOT/tools/uninstall.sh" --project --confirm) >/dev/null
+assert 'Claude project shim removed' test ! -e "$sandbox/project/CLAUDE.md"
+assert 'Gemini project shim removed' test ! -e "$sandbox/project/GEMINI.md"
+assert 'Cursor project shim remains absent' test ! -e "$sandbox/project/.cursor/rules/project.md"
+assert 'Copilot project shim remains absent' test ! -e "$sandbox/project/.github/copilot-instructions.md"
 teardown
 
 printf '%s\n' '--- lifecycle ownership boundaries ---'
@@ -218,7 +340,7 @@ mkdir -p "$sandbox/project/docs/adr"
 (cd "$sandbox/project" && bash "$ROOT/tools/uninstall.sh" --project --confirm) >/dev/null
 assert 'Codex project skills removed' test ! -e "$sandbox/project/.agents/skills/adr/SKILL.md"
 assert 'empty Codex managed directories removed' test ! -d "$sandbox/project/.agents"
-assert 'Codex project shim removed' test ! -e "$sandbox/project/codex.md"
+assert 'Codex project shim remains absent' test ! -e "$sandbox/project/codex.md"
 assert 'pre-existing gitignore line preserved' contains "$sandbox/project/.gitignore" '.claude/settings.local.json'
 assert 'toolkit gitignore line removed' not_contains "$sandbox/project/.gitignore" 'CLAUDE.local.md'
 assert 'pre-existing docs/adr preserved' test -d "$sandbox/project/docs/adr"

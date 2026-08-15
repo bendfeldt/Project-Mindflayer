@@ -4,9 +4,9 @@ Use English for code, commits, documentation, and technical discussion. Match th
 
 ## Workflow
 
-- Write non-trivial plans to `plan.md` and wait for explicit approval before execution.
+- Write every non-lookup task plan to `plan.md` and wait for explicit approval before execution.
 - Ask and stop when a missing choice materially changes the result.
-- Prefer small, explicit, typed, single-purpose changes.
+- Keep the requested scope; prefer small, explicit, typed, single-purpose changes.
 - Re-plan when evidence invalidates the current approach.
 - Verify with tests, logs, and behavior before reporting completion.
 - Use Conventional Commits: `type(scope): imperative description`, maximum 72 characters.
@@ -19,12 +19,11 @@ Use English for code, commits, documentation, and technical discussion. Match th
 - Preserve existing user files unless replacement is explicitly authorized; back them up before replacement.
 - For Databricks, require the user to select a profile and pass `--profile <name>` on every command. Confirm authentication-changing commands.
 
-## Architecture
+## Routing
 
-- Prefer portable patterns and make vendor lock-in explicit.
-- Keep Dev, Test, and Prod structurally identical and configuration-driven.
-- Prefer medallion data layers and Kimball dimensional models where they fit the workload.
-- Use workload identity for automation, vault-backed secrets, pinned dependencies, and least privilege.
-- Flag relevant GDPR, NIS2, ISO 27001, DS 484, residency, retention, and audit implications without treating generic guidance as engagement-specific policy.
+- Use `setup-repo` for repository onboarding, `terraform-scaffold` for Terraform structure, and `kimball-model` for dimensional modeling.
+- Prefer portable, configuration-driven patterns; make vendor lock-in explicit and keep Dev, Test, and Prod structurally identical.
+- Prefer workload identity, vault-backed secrets, pinned dependencies, and least privilege.
+- Flag relevant compliance, residency, retention, and audit implications without inventing engagement policy.
 
 Client identity, naming, environments, build commands, branching, and regulatory specifics belong in the repository `AGENTS.md`.

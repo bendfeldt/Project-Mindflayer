@@ -2,11 +2,11 @@
 
 Project-Mindflayer has three layers:
 
-1. A portable installed baseline with universal working, safety, and architecture rules.
-2. A thin repository `AGENTS.md` for engagement-specific configuration.
+1. A portable installed baseline with universal workflow and safety rules plus task routing.
+2. A thin repository `AGENTS.md` for verified engagement-specific configuration and a standalone safety floor.
 3. Ten reusable skills containing operational workflows and nested resources.
 
-`AGENTS.md` is the substantive repository contract. Claude, Codex, Gemini, Cursor, and Copilot compatibility files contain only routing notes.
+`AGENTS.md` is the substantive repository contract. Claude and Gemini import it through one-line native files; Codex, Cursor, and Copilot read it directly. Runtime discovery directories contain real scoped extensions, never compatibility shims or instructional scaffolding.
 
 ## Distribution contract
 
@@ -24,7 +24,9 @@ Global shared artifacts install under `~/.ai-toolkit/`. Skill rows use the `glob
 
 Global skills remain canonical in `~/.ai-toolkit/skills/` and are linked into each selected discovery root. Project installs copy complete skill directories as real files: Codex uses `.agents/skills/`, while Claude and Copilot use `.claude/skills/`. The installer fetches each artifact once and deduplicates shared roots.
 
-The installer fetches the manifest first and then fetches exactly its selected rows. Local and remote modes therefore share one inventory. A successful global install writes the toolkit release stamp last.
+Public installation streams `install.sh` from `https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh`. The installer then fetches the manifest and exactly its selected rows from the same canonical GitHub repository. The local source mode is retained only for repository development and tests. A successful global install writes the toolkit release stamp last.
+
+Obsolete project artifacts are removed during upgrade only when their recorded ownership proof still matches. Modified or unowned files are preserved.
 
 ## Ownership lifecycle
 

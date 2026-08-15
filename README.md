@@ -4,21 +4,25 @@ Portable configuration and operational skills for Claude Code, Codex, Gemini CLI
 
 ## Install
 
-From a checkout:
+Install globally from GitHub:
 
 ```bash
-bash install.sh --global --tools claude,codex --local
+curl -fsSL --proto '=https' \
+  https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh \
+  | bash -s -- --global --tools claude,codex
 ```
 
 Into a client repository:
 
 ```bash
-bash /path/to/Project-Mindflayer/install.sh --project \
+curl -fsSL --proto '=https' \
+  https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh \
+  | bash -s -- --project \
   --tools claude,codex --profile terraform \
-  --client "Client name" --prefix client --local
+  --client "Client name" --prefix client
 ```
 
-Remote installation uses the same flags without `--local`. Existing files are skipped by default; `--force` explicitly authorizes replacement and creates timestamped backups.
+Run the project command from the target repository. The installer and installed copies fetch artifacts from the canonical GitHub repository. Existing files are skipped by default; `--force` explicitly authorizes replacement and creates timestamped backups.
 
 Global skills live in the canonical `~/.ai-toolkit/skills/` store. One capability-driven workflow exposes them through the discovery roots of every selected skill-aware tool. Project installs commit each complete skill tree once per distinct discovery root.
 
@@ -26,7 +30,7 @@ Global skills live in the canonical `~/.ai-toolkit/skills/` store. One capabilit
 
 - Ten public skills, including their nested scripts and references.
 - One portable global baseline and one thin project template.
-- Consumer-specific settings and compatibility shims.
+- Native project discovery: Claude and Gemini import `AGENTS.md`; Codex, Cursor, and Copilot read it directly.
 - Manifest-driven install, drift, sync, update, store, and uninstall tooling.
 
 `manifest.tsv` is the canonical artifact inventory. Its version column tracks artifact lifecycle versions. `VERSION` in `install.sh` is the toolkit release, while the header in `templates/AGENTS.md` is the template schema version.

@@ -5,7 +5,9 @@
 Choose tools explicitly; names are validated and duplicates are rejected.
 
 ```bash
-bash install.sh --global --tools claude,codex,copilot --local
+curl -fsSL --proto '=https' \
+  https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh \
+  | bash -s -- --global --tools claude,codex,copilot
 ```
 
 The canonical skills remain under `~/.ai-toolkit/skills/`. A shared capability workflow creates verified links for selected consumers: Codex under `~/.agents/skills/`, Claude under `~/.claude/skills/`, and Copilot under `~/.copilot/skills/`.
@@ -13,7 +15,9 @@ The canonical skills remain under `~/.ai-toolkit/skills/`. A shared capability w
 Replacements are opt-in:
 
 ```bash
-bash install.sh --global --tools claude,codex,copilot --force --local
+curl -fsSL --proto '=https' \
+  https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh \
+  | bash -s -- --global --tools claude,codex,copilot --force
 ```
 
 Every replaced path receives a timestamped sibling backup. The version stamp changes only after the complete installation succeeds.
@@ -23,13 +27,27 @@ Every replaced path receives a timestamped sibling backup. The version stamp cha
 Run this in the target client repository, never from Project-Mindflayer itself:
 
 ```bash
-bash /path/to/install.sh --project --tools claude,codex \
-  --profile databricks --client "Client" --prefix cl --local
+curl -fsSL --proto '=https' \
+  https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh \
+  | bash -s -- --project --tools claude,codex \
+  --profile databricks --client "Client" --prefix cl
 ```
 
-The supported profiles are `terraform`, `databricks`, and `fabric`. They select permission settings, not Databricks authentication. Every actual Databricks command still requires an explicitly user-selected `--profile <name>`.
+The supported profiles are `terraform`, `databricks`, and `fabric`. They select permission settings, not Databricks authentication. Every actual Databricks command still requires an explicitly user-selected `--profile <name>`. Run project installation from the target repository; all installer artifacts are fetched from GitHub.
 
 Existing managed projects enter join mode: `AGENTS.md` is preserved while missing selected-tool artifacts are added. Project skills are complete real-file trees under `.agents/skills/` for Codex and `.claude/skills/` for Claude or Copilot. A mixed install writes both trees once.
+
+Project instruction discovery is consumer-native:
+
+| Consumer | Project instruction entry point |
+|---|---|
+| Claude | `CLAUDE.md` imports `AGENTS.md` |
+| Gemini | `GEMINI.md` imports `AGENTS.md` |
+| Codex | Reads `AGENTS.md` directly |
+| Cursor | Reads `AGENTS.md` directly |
+| Copilot | Reads `AGENTS.md` directly |
+
+Upgrades remove legacy Cursor and Copilot shims only when their recorded ownership proof still matches. Modified or unowned files are preserved.
 
 ## Lifecycle
 

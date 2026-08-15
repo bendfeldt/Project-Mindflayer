@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="3.0.3"
+VERSION="3.2.1"
 REPO_URL="https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main"
 KNOWN_TOOLS="claude codex gemini cursor copilot"
 VALID_PROFILES="terraform databricks fabric"
@@ -32,7 +32,6 @@ Options:
   --client NAME     Client name (new project install)
   --prefix PREFIX   Resource prefix (new project install)
   --force           Authorize replacement; existing files are backed up first
-  --local           Read from this checkout instead of GitHub
   --help            Show this help
 
 Existing files are preserved unless --force explicitly authorizes replacement.
@@ -66,7 +65,7 @@ parse_args() {
       --client) require_value "$1" "${2:-}"; shift; CLIENT_NAME="$1" ;;
       --prefix) require_value "$1" "${2:-}"; shift; CLIENT_PREFIX="$1" ;;
       --force) REPLACE=1 ;;
-      --local) LOCAL=1 ;;
+      --local) LOCAL=1 ;; # Internal repository development and test mode.
       --help|-h) usage; exit 0 ;;
       *) fail "unknown option: $1" ;;
     esac
@@ -151,6 +150,50 @@ record_ownership() {
 
 is_recorded() {
   [ -n "$OWNERSHIP_FILE" ] && [ -f "$OWNERSHIP_FILE" ] && awk -F '\t' -v value="$1" '$1 == value {found=1} END {exit !found}' "$OWNERSHIP_FILE"
+}
+
+forget_ownership() {
+  local path="$1" temporary
+  [ -n "$OWNERSHIP_FILE" ] && [ -f "$OWNERSHIP_FILE" ] || return 0
+  temporary="${OWNERSHIP_FILE}.tmp"
+  awk -F '\t' -v value="$path" '$1 != value {print}' "$OWNERSHIP_FILE" > "$temporary"
+  mv "$temporary" "$OWNERSHIP_FILE"
+}
+
+remove_verified_owned_artifact() {
+  local path="$1" record kind proof
+  [ -n "$OWNERSHIP_FILE" ] && [ -f "$OWNERSHIP_FILE" ] || return 0
+  record="$(awk -F '\t' -v value="$path" '$1 == value {print $2 "\t" $3; exit}' "$OWNERSHIP_FILE")"
+  [ -n "$record" ] || return 0
+  IFS=$'\t' read -r kind proof <<< "$record"
+
+  if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+    forget_ownership "$path"
+    return 0
+  fi
+
+  case "$kind" in
+    file)
+      if [ ! -f "$path" ] || [ "$(fingerprint "$path")" != "$proof" ]; then
+        warn "preserved obsolete $path (modified or type changed)"
+        return 0
+      fi
+      ;;
+    symlink)
+      if [ ! -L "$path" ] || [ "$(readlink "$path")" != "$proof" ]; then
+        warn "preserved obsolete $path (target changed)"
+        return 0
+      fi
+      ;;
+    *)
+      warn "preserved obsolete $path (unsupported ownership class)"
+      return 0
+      ;;
+  esac
+
+  rm -f "$path"
+  forget_ownership "$path"
+  info " - $path (obsolete)"
 }
 
 backup_path() {
@@ -255,6 +298,7 @@ global_destination() {
     install.sh) printf '%s/.ai-toolkit/install.sh' "$HOME" ;;
     README.md|how-to-guide.md|LICENSE) printf '%s/.ai-toolkit/docs/%s' "$HOME" "$path" ;;
     global/AGENTS.md) printf '%s/.ai-toolkit/AGENTS.md' "$HOME" ;;
+    CLAUDE.md|GEMINI.md) printf '%s/.ai-toolkit/templates/%s' "$HOME" "$path" ;;
     templates/*) printf '%s/.ai-toolkit/%s' "$HOME" "$path" ;;
     docs/*) printf '%s/.ai-toolkit/%s' "$HOME" "$path" ;;
     skills/*) printf '%s/.ai-toolkit/%s' "$HOME" "$path" ;;
@@ -265,10 +309,7 @@ global_destination() {
     settings/claude/settings-global.json)
       printf '%s/.ai-toolkit/templates/settings/%s' "$HOME" "$(basename "$path")" ;;
     settings/codex/*) printf '%s/.ai-toolkit/templates/codex/%s' "$HOME" "$(basename "$path")" ;;
-    settings/copilot/*) printf '%s/.ai-toolkit/templates/copilot/%s' "$HOME" "$(basename "$path")" ;;
     settings/gemini/*) printf '%s/.ai-toolkit/templates/gemini/%s' "$HOME" "$(basename "$path")" ;;
-    settings/cursor/*) printf '%s/.ai-toolkit/templates/cursor/%s' "$HOME" "$(basename "$path")" ;;
-    settings/claude/scaffold/*) printf '%s/.ai-toolkit/templates/%s' "$HOME" "$path" ;;
     *) return 1 ;;
   esac
 }
@@ -328,15 +369,6 @@ replace_tokens() {
   sed -e "s|{CLIENT_NAME}|$safe_client|g" -e "s|{PLATFORM}|$PROFILE|g" -e "s|{REPO_TYPE}|$repo_type|g" -e "s|{prefix}|$safe_prefix|g" "$source" > "$destination"
 }
 
-claude_project_destination() {
-  local path="$1"
-  case "$path" in
-    skills/*) printf '.claude/%s' "$path" ;;
-    settings/claude/scaffold/*) printf '.claude/%s' "${path#settings/claude/scaffold/}" ;;
-    *) return 1 ;;
-  esac
-}
-
 append_gitignore_exact() {
   local entry="$1"
   touch .gitignore
@@ -344,6 +376,26 @@ append_gitignore_exact() {
     printf '%s\n' "$entry" >> .gitignore
     record_ownership "$(pwd)/.gitignore" line "$entry"
   fi
+}
+
+migrate_legacy_project_artifacts() {
+  local consumer="$1" path
+  case "$consumer" in
+    claude)
+      for path in \
+        .claude/rules/README.md \
+        .claude/commands/README.md \
+        .claude/agents/README.md \
+        .claude/hooks/README.md; do
+        remove_verified_owned_artifact "$path"
+      done
+      rmdir .claude/rules .claude/commands .claude/agents .claude/hooks 2>/dev/null || true
+      ;;
+    codex) remove_verified_owned_artifact codex.md ;;
+    gemini) remove_verified_owned_artifact gemini.md ;;
+    cursor) remove_verified_owned_artifact .cursor/rules/project.md ;;
+    copilot) remove_verified_owned_artifact .github/copilot-instructions.md ;;
+  esac
 }
 
 install_project() {
@@ -395,16 +447,14 @@ install_project() {
       claude)
         source="$(fetch_temp "settings/claude/settings-$PROFILE.json")"
         install_file "$source" .claude/settings.json
-        while IFS=$'\t' read -r path type _version consumers _ownership; do
-          [ "$type" = scaffold ] || continue
-          source="$(fetch_temp "$path")"; destination="$(claude_project_destination "$path")"
-          install_file "$source" "$destination"
-        done < <(manifest_rows "$manifest")
+        source="$(fetch_temp CLAUDE.md)"
+        install_file "$source" CLAUDE.md
+        migrate_legacy_project_artifacts claude
         ;;
-      codex) source="$(fetch_temp settings/codex/codex.md)"; install_file "$source" codex.md ;;
-      gemini) source="$(fetch_temp settings/gemini/gemini.md)"; install_file "$source" gemini.md ;;
-      cursor) source="$(fetch_temp settings/cursor/cursor.md)"; install_file "$source" .cursor/rules/project.md ;;
-      copilot) install_link ../AGENTS.md .github/copilot-instructions.md ;;
+      codex) migrate_legacy_project_artifacts codex; info " = AGENTS.md (Codex native)" ;;
+      gemini) source="$(fetch_temp GEMINI.md)"; migrate_legacy_project_artifacts gemini; install_file "$source" GEMINI.md ;;
+      cursor) migrate_legacy_project_artifacts cursor; info " = AGENTS.md (Cursor native)" ;;
+      copilot) migrate_legacy_project_artifacts copilot; info " = AGENTS.md (Copilot native)" ;;
     esac
   done
   if [ ! -d docs/adr ]; then
