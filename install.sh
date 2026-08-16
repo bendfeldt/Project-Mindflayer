@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="3.4.0"
-REPO_URL="https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main"
+VERSION="3.6.0"
 KNOWN_TOOLS="claude codex gemini cursor copilot"
 VALID_PROFILES="terraform databricks fabric"
 
@@ -14,11 +13,15 @@ TECHNOLOGIES=""
 PROJECT_MODE=""
 CLIENT_NAME=""
 CLIENT_PREFIX=""
-LOCAL=0
 REPLACE=0
 TMP_ROOT=""
 OWNERSHIP_FILE=""
+OWNERSHIP_SCOPE=""
+PROJECT_ROOT=""
+PREFLIGHT_MANIFEST=""
+BUNDLE_ROOT=""
 AGENTS_TO_INSTALL=()
+CURRENT_PLATFORM=""
 
 info() { printf '%s\n' "$*"; }
 warn() { printf ' ! %s\n' "$*"; }
@@ -43,6 +46,12 @@ Options:
 
 Existing files are preserved unless --force explicitly authorizes replacement.
 The toolkit repository itself is not a valid --project target.
+
+Requirements:
+  Linux or macOS with Bash 3.2+, standard Unix utilities, a complete verified
+  release bundle, and write access to the selected user or project paths.
+  Windows 10/11 uses install.ps1 with PowerShell 7.4+; see
+  docs/system-requirements.md for complete and capability-specific requirements.
 USAGE
 }
 
@@ -74,7 +83,7 @@ parse_args() {
       --client) require_value "$1" "${2:-}"; shift; CLIENT_NAME="$1" ;;
       --prefix) require_value "$1" "${2:-}"; shift; CLIENT_PREFIX="$1" ;;
       --force) REPLACE=1 ;;
-      --local) LOCAL=1 ;; # Internal repository development and test mode.
+      --local) : ;; # Backward-compatible no-op; installation is bundle-local.
       --help|-h) usage; exit 0 ;;
       *) fail "unknown option: $1" ;;
     esac
@@ -113,23 +122,11 @@ source_root() {
   cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
 }
 
-fetch() {
-  local path="$1" destination="$2"
-  mkdir -p "$(dirname "$destination")"
-  if [ "$LOCAL" -eq 1 ]; then
-    cp "$(source_root)/$path" "$destination"
-  else
-    command -v curl >/dev/null 2>&1 || fail "curl is required for remote installation"
-    curl -fsSL --proto '=https' "$REPO_URL/$path" -o "$destination"
-  fi
-}
-
 fetch_temp() {
   local path="$1"
-  if [ -z "$TMP_ROOT" ]; then TMP_ROOT="$(mktemp -d)"; fi
-  local destination="$TMP_ROOT/$path"
-  fetch "$path" "$destination"
-  printf '%s' "$destination"
+  local source="$BUNDLE_ROOT/$path"
+  [ -f "$source" ] || fail "bundle artifact not found: $path"
+  printf '%s' "$source"
 }
 
 timestamp() { date '+%Y%m%d%H%M%S'; }
@@ -138,11 +135,85 @@ fingerprint() {
   cksum "$1" | awk '{print $1 ":" $2}'
 }
 
+assert_ownership_file_safe() {
+  [ -n "$OWNERSHIP_FILE" ] || return 0
+  [ ! -L "$OWNERSHIP_FILE" ] || fail "ownership record must not be a symlink: $OWNERSHIP_FILE"
+}
+
+canonicalize_owned_path() {
+  local recorded="$1" candidate parent component suffix physical trimmed
+  case "$recorded" in
+    *$'\t'*|*$'\n'*|*$'\r'*|'') return 1 ;;
+  esac
+  case "$recorded" in
+    /*) candidate="$recorded" ;;
+    *) [ "$OWNERSHIP_SCOPE" = project ] || return 1; candidate="$PROJECT_ROOT/$recorded" ;;
+  esac
+  trimmed="${candidate#/}"
+  case "/$trimmed/" in
+    *'//'*) return 1 ;;
+    *'/./'*|*'/../'*) return 1 ;;
+  esac
+
+  parent="$(dirname "$candidate")"
+  suffix="/$(basename "$candidate")"
+  while [ ! -d "$parent" ]; do
+    component="$(basename "$parent")"
+    [ "$component" != / ] && [ "$component" != . ] || return 1
+    suffix="/$component$suffix"
+    candidate="$(dirname "$parent")"
+    [ "$candidate" != "$parent" ] || return 1
+    parent="$candidate"
+  done
+  physical="$(cd -P "$parent" && pwd -P)" || return 1
+  SAFE_PATH="$physical$suffix"
+}
+
+validate_owned_path() {
+  local recorded="$1" home_root
+  canonicalize_owned_path "$recorded" || fail "unsafe ownership path: $recorded"
+  if [ "$OWNERSHIP_SCOPE" = project ]; then
+    case "$SAFE_PATH" in
+      "$PROJECT_ROOT"/*) return 0 ;;
+      *) fail "ownership path escapes project root: $recorded" ;;
+    esac
+  fi
+  home_root="$(cd -P "$HOME" && pwd -P)"
+  case "$SAFE_PATH" in
+    "$home_root/.ai-toolkit"/*|"$home_root/.claude"/*|"$home_root/.codex"/*|\
+    "$home_root/.gemini"/*|"$home_root/.cursor"/*|"$home_root/.copilot"/*|\
+    "$home_root/.agents"/*) return 0 ;;
+    *) fail "ownership path escapes global managed roots: $recorded" ;;
+  esac
+}
+
+validate_ownership_file() {
+  local path kind proof extra
+  assert_ownership_file_safe
+  [ -f "$OWNERSHIP_FILE" ] || return 0
+  while IFS=$'\t' read -r path kind proof extra; do
+    [ -n "$path" ] || fail "ownership record contains an empty path"
+    [ -z "${extra:-}" ] || fail "ownership record must contain exactly three fields: $path"
+    [ -n "$proof" ] || fail "ownership record contains empty evidence: $path"
+    case "$kind" in file|symlink|directory|line) ;; *) fail "unknown ownership class for $path: $kind" ;; esac
+    validate_owned_path "$path"
+  done < "$OWNERSHIP_FILE"
+}
+
+ownership_temporary() {
+  local temporary
+  temporary="$(mktemp "${OWNERSHIP_FILE}.tmp.XXXXXX")" || fail "cannot create ownership temporary"
+  chmod 600 "$temporary"
+  printf '%s' "$temporary"
+}
+
 record_ownership() {
   local path="$1" kind="$2" proof="$3" temporary
   [ -n "$OWNERSHIP_FILE" ] || return 0
+  assert_ownership_file_safe
+  validate_owned_path "$path"
   mkdir -p "$(dirname "$OWNERSHIP_FILE")"
-  temporary="${OWNERSHIP_FILE}.tmp"
+  temporary="$(ownership_temporary)"
   if [ -f "$OWNERSHIP_FILE" ]; then
     if [ "$kind" = line ]; then
       awk -F '\t' -v value="$path" -v class="$kind" -v evidence="$proof" \
@@ -164,32 +235,37 @@ is_recorded() {
 forget_ownership() {
   local path="$1" temporary
   [ -n "$OWNERSHIP_FILE" ] && [ -f "$OWNERSHIP_FILE" ] || return 0
-  temporary="${OWNERSHIP_FILE}.tmp"
+  assert_ownership_file_safe
+  validate_owned_path "$path"
+  temporary="$(ownership_temporary)"
   awk -F '\t' -v value="$path" '$1 != value {print}' "$OWNERSHIP_FILE" > "$temporary"
   mv "$temporary" "$OWNERSHIP_FILE"
 }
 
 remove_verified_owned_artifact() {
-  local path="$1" record kind proof
+  local path="$1" record kind proof artifact
   [ -n "$OWNERSHIP_FILE" ] && [ -f "$OWNERSHIP_FILE" ] || return 0
+  assert_ownership_file_safe
+  validate_owned_path "$path"
+  artifact="$SAFE_PATH"
   record="$(awk -F '\t' -v value="$path" '$1 == value {print $2 "\t" $3; exit}' "$OWNERSHIP_FILE")"
   [ -n "$record" ] || return 0
   IFS=$'\t' read -r kind proof <<< "$record"
 
-  if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+  if [ ! -e "$artifact" ] && [ ! -L "$artifact" ]; then
     forget_ownership "$path"
     return 0
   fi
 
   case "$kind" in
     file)
-      if [ ! -f "$path" ] || [ "$(fingerprint "$path")" != "$proof" ]; then
+      if [ ! -f "$artifact" ] || [ "$(fingerprint "$artifact")" != "$proof" ]; then
         warn "preserved obsolete $path (modified or type changed)"
         return 0
       fi
       ;;
     symlink)
-      if [ ! -L "$path" ] || [ "$(readlink "$path")" != "$proof" ]; then
+      if [ ! -L "$artifact" ] || [ "$(readlink "$artifact")" != "$proof" ]; then
         warn "preserved obsolete $path (target changed)"
         return 0
       fi
@@ -200,7 +276,7 @@ remove_verified_owned_artifact() {
       ;;
   esac
 
-  rm -f "$path"
+  rm -f "$artifact"
   forget_ownership "$path"
   info " - $path (obsolete)"
 }
@@ -216,6 +292,7 @@ backup_path() {
 
 install_file() {
   local source="$1" destination="$2" label="${3:-$2}"
+  if [ -n "$OWNERSHIP_FILE" ]; then validate_owned_path "$destination"; fi
   mkdir -p "$(dirname "$destination")"
   if [ -f "$destination" ] && cmp -s "$source" "$destination"; then
     info " = $label"
@@ -236,6 +313,7 @@ install_file() {
 
 install_link() {
   local target="$1" link="$2"
+  if [ -n "$OWNERSHIP_FILE" ]; then validate_owned_path "$link"; fi
   mkdir -p "$(dirname "$link")"
   if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then
     info " = $link"
@@ -255,8 +333,67 @@ install_link() {
   info " + $link -> $target"
 }
 
+validate_manifest() {
+  awk -F '\t' '
+    function invalid_list(value, values, count, i) {
+      if (value == "" || value ~ /^,/ || value ~ /,$/ || value ~ /,,/) return 1
+      delete values
+      delete list_seen
+      count = split(value, values, ",")
+      for (i = 1; i <= count; i++) {
+        if (list_seen[values[i]]++) return 1
+      }
+      return 0
+    }
+    $1 !~ /^#/ && NF {
+      if (NF != 6) exit 2
+      if ($1 == "" || $1 ~ /^\// || $1 ~ /\\/ || $1 ~ /\/\// ||
+          $1 ~ /(^|\/)\.\.?($|\/)/ || $1 ~ /\/$/) exit 2
+      if (path_seen[$1]++) exit 2
+      if ($2 !~ /^(baseline|decision|document|license|manifest|registry|script|setting|shim|skill|skill-resource|template)$/) exit 2
+      if ($3 !~ /^[0-9]+\.[0-9]+\.[0-9]+$/) exit 2
+      if (invalid_list($4)) exit 2
+      consumer_count = split($4, consumers, ",")
+      for (consumer_index = 1; consumer_index <= consumer_count; consumer_index++) {
+        if (consumers[consumer_index] !~ /^(global|project|project:skills|global:(claude|codex|gemini|cursor|copilot)|project:(claude|gemini)|project:claude:(terraform|databricks|fabric))$/) exit 2
+      }
+      if ($5 !~ /^(managed-file|managed-tree)$/) exit 2
+      if (invalid_list($6)) exit 2
+      platform_count = split($6, platforms, ",")
+      for (platform_index = 1; platform_index <= platform_count; platform_index++) {
+        if (platforms[platform_index] !~ /^(linux|macos|windows)$/) exit 2
+      }
+      rows++
+    }
+    END { if (!rows) exit 2 }
+  ' "$1" || fail "manifest.tsv failed strict six-field validation"
+}
+
 manifest_rows() {
-  awk -F '\t' 'NF >= 5 && $1 !~ /^#/ {print}' "$1"
+  awk -F '\t' '$1 !~ /^#/ && NF {print}' "$1"
+}
+
+validate_bundle_sources() {
+  local manifest="$1" path platforms
+  while IFS=$'\t' read -r path _type _version _consumers _ownership platforms; do
+    platform_matches "$platforms" || continue
+    [ -f "$BUNDLE_ROOT/$path" ] || fail "bundle artifact not found: $path"
+  done < <(manifest_rows "$manifest")
+}
+
+detect_platform() {
+  case "$(uname -s)" in
+    Linux) CURRENT_PLATFORM=linux ;;
+    Darwin) CURRENT_PLATFORM=macos ;;
+    *) fail "unsupported platform; install.sh supports Linux and macOS" ;;
+  esac
+}
+
+platform_matches() {
+  local platforms="$1" item items
+  IFS=',' read -r -a items <<< "$platforms"
+  for item in "${items[@]}"; do [ "$item" = "$CURRENT_PLATFORM" ] && return 0; done
+  return 1
 }
 
 consumer_matches() {
@@ -278,8 +415,43 @@ global_consumer_selected() {
   return 1
 }
 
+global_consumer_included() {
+  local consumers="$1" item
+  IFS=',' read -r -a items <<< "$consumers"
+  for item in "${items[@]}"; do
+    case "$item" in global|global:*) return 0 ;; esac
+  done
+  return 1
+}
+
 skill_names() {
-  awk -F '\t' '$2 == "skill" {sub("skills/", "", $1); sub("/SKILL.md", "", $1); print $1}' "$1"
+  awk -F '\t' -v platform="$CURRENT_PLATFORM" '
+    $2 == "skill" {
+      split($6, platforms, ",")
+      for (platform_index in platforms) if (platforms[platform_index] == platform) {
+        sub("skills/", "", $1); sub("/SKILL.md", "", $1); print $1; break
+      }
+    }
+  ' "$1"
+}
+
+reconcile_skill_files() {
+  local manifest="$1" root="$2" expected snapshot path type consumers platforms
+  [ -n "$OWNERSHIP_FILE" ] && [ -f "$OWNERSHIP_FILE" ] || return 0
+  expected="$(mktemp)"
+  snapshot="$(mktemp)"
+  while IFS=$'\t' read -r path type _version consumers _ownership platforms; do
+    case "$type" in skill|skill-resource) ;; *) continue ;; esac
+    consumer_matches "$consumers" project:skills || continue
+    platform_matches "$platforms" || continue
+    printf '%s\n' "$root/${path#skills/}" >> "$expected"
+  done < <(manifest_rows "$manifest")
+  cp "$OWNERSHIP_FILE" "$snapshot"
+  while IFS=$'\t' read -r path _kind _proof; do
+    case "$path" in "$root"/*) ;; *) continue ;; esac
+    grep -Fqx "$path" "$expected" || remove_verified_owned_artifact "$path"
+  done < "$snapshot"
+  rm -f "$expected" "$snapshot"
 }
 
 skill_root_records() {
@@ -304,7 +476,7 @@ selected_skill_roots() {
 global_destination() {
   local path="$1"
   case "$path" in
-    install.sh) printf '%s/.ai-toolkit/install.sh' "$HOME" ;;
+    install.sh|install.ps1) printf '%s/.ai-toolkit/%s' "$HOME" "$path" ;;
     README.md|how-to-guide.md|LICENSE) printf '%s/.ai-toolkit/docs/%s' "$HOME" "$path" ;;
     global/AGENTS.md) printf '%s/.ai-toolkit/AGENTS.md' "$HOME" ;;
     CLAUDE.md|GEMINI.md) printf '%s/.ai-toolkit/templates/%s' "$HOME" "$path" ;;
@@ -326,15 +498,70 @@ global_destination() {
   esac
 }
 
+global_skill_roots() {
+  printf '%s\n' "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.copilot/skills"
+}
+
+build_global_expected() {
+  local manifest="$1" expected="$2" path consumers platforms destination root skill
+  while IFS=$'\t' read -r path _type _version consumers _ownership platforms; do
+    global_consumer_included "$consumers" || continue
+    platform_matches "$platforms" || continue
+    destination="$(global_destination "$path")" || fail "no global destination for $path"
+    printf '%s\n' "$destination" >> "$expected"
+  done < <(manifest_rows "$manifest")
+  printf '%s\n' \
+    "$HOME/.ai-toolkit/version" \
+    "$HOME/.claude/CLAUDE.md" "$HOME/.claude/settings.json" \
+    "$HOME/.codex/AGENTS.md" "$HOME/.gemini/GEMINI.md" \
+    "$HOME/.cursor/rules.md" "$HOME/.copilot/copilot-instructions.md" >> "$expected"
+  while IFS= read -r root; do
+    while IFS= read -r skill; do
+      printf '%s\n' "$root/$skill" >> "$expected"
+    done < <(skill_names "$manifest")
+  done < <(global_skill_roots)
+  awk '!seen[$0]++' "$expected" > "${expected}.unique"
+  mv "${expected}.unique" "$expected"
+}
+
+reconcile_global_owned_artifacts() {
+  local manifest="$1" expected snapshot path
+  [ -f "$OWNERSHIP_FILE" ] || return 0
+  validate_ownership_file
+  expected="$(mktemp)"
+  snapshot="$(mktemp)"
+  build_global_expected "$manifest" "$expected"
+  cp "$OWNERSHIP_FILE" "$snapshot"
+  while IFS=$'\t' read -r path _kind _proof; do
+    grep -Fqx -- "$path" "$expected" || remove_verified_owned_artifact "$path"
+  done < "$snapshot"
+  rm -f "$expected" "$snapshot"
+}
+
 install_global() {
-  local manifest source path type consumers destination
-  manifest="$(fetch_temp manifest.tsv)"
+  local manifest source path type consumers platforms destination
+  manifest="$PREFLIGHT_MANIFEST"
+  OWNERSHIP_SCOPE=global
+  [ ! -L "$HOME/.ai-toolkit" ] || fail "global toolkit root must not be a symlink: $HOME/.ai-toolkit"
   mkdir -p "$HOME/.ai-toolkit"
   OWNERSHIP_FILE="$HOME/.ai-toolkit/managed.tsv"
+  validate_ownership_file
+  reconcile_global_owned_artifacts "$manifest"
   install_file "$manifest" "$HOME/.ai-toolkit/manifest.tsv" "manifest.tsv"
 
-  while IFS=$'\t' read -r path type _version consumers _ownership; do
+  while IFS=$'\t' read -r path type _version consumers _ownership platforms; do
+    [ "$path" = manifest.tsv ] && continue
     global_consumer_selected "$consumers" || continue
+    platform_matches "$platforms" && continue
+    destination="$(global_destination "$path")" || fail "no global destination for $path"
+    remove_verified_owned_artifact "$destination"
+  done < <(manifest_rows "$manifest")
+  reconcile_skill_files "$manifest" "$HOME/.ai-toolkit/skills"
+
+  while IFS=$'\t' read -r path type _version consumers _ownership platforms; do
+    [ "$path" = manifest.tsv ] && continue
+    global_consumer_selected "$consumers" || continue
+    platform_matches "$platforms" || continue
     source="$(fetch_temp "$path")"
     destination="$(global_destination "$path")" || fail "no global destination for $path"
     install_file "$source" "$destination"
@@ -533,7 +760,10 @@ migrate_legacy_project_artifacts() {
 install_project() {
   [ ! -f manifest.tsv ] || [ ! -f install.sh ] || [ ! -d skills ] || fail "the toolkit repository is exempt from --project installation"
   local is_join=0 legacy_platform stored_project_types stored_technologies catalog
+  OWNERSHIP_SCOPE=project
+  PROJECT_ROOT="$(pwd -P)"
   OWNERSHIP_FILE="$(pwd)/.mindflayer-managed.tsv"
+  validate_ownership_file
   if [ -f AGENTS.md ] && grep -q '<!-- template: AGENTS ' AGENTS.md; then is_join=1; fi
 
   [ -z "$PROFILE" ] || { [ -z "$PROJECT_TYPES" ] && [ -z "$TECHNOLOGIES" ]; } || fail "--profile cannot be combined with --project-types or --technologies"
@@ -602,18 +832,22 @@ install_project() {
     info " = AGENTS.md (join mode)"
   fi
 
-  local manifest path type consumers source destination skill_root
+  local manifest path type consumers platforms source destination skill_root
   local skill_roots=()
-  manifest="$(fetch_temp manifest.tsv)"
+  manifest="$PREFLIGHT_MANIFEST"
 
   while IFS= read -r skill_root; do
     skill_roots+=("$skill_root")
   done < <(selected_skill_roots project)
 
   if [ "${#skill_roots[@]}" -gt 0 ]; then
-    while IFS=$'\t' read -r path type _version consumers _ownership; do
+    for skill_root in "${skill_roots[@]}"; do
+      reconcile_skill_files "$manifest" "$skill_root"
+    done
+    while IFS=$'\t' read -r path type _version consumers _ownership platforms; do
       case "$type" in skill|skill-resource) ;; *) continue ;; esac
       consumer_matches "$consumers" project:skills || continue
+      platform_matches "$platforms" || continue
       source="$(fetch_temp "$path")"
       for skill_root in "${skill_roots[@]}"; do
         destination="$skill_root/${path#skills/}"
@@ -650,13 +884,19 @@ install_project() {
   fi
   append_gitignore_exact .claude/settings.local.json
   append_gitignore_exact CLAUDE.local.md
+  append_gitignore_exact .mindflayer-managed.tsv
   info "Configured project for: ${AGENTS_TO_INSTALL[*]}"
 }
 
 main() {
   parse_args "$@"
   [ -n "$INSTALL_MODE" ] || fail "specify exactly one of --global or --project"
+  detect_platform
   validate_tools
+  BUNDLE_ROOT="$(source_root)"
+  PREFLIGHT_MANIFEST="$(fetch_temp manifest.tsv)"
+  validate_manifest "$PREFLIGHT_MANIFEST"
+  validate_bundle_sources "$PREFLIGHT_MANIFEST"
   case "$INSTALL_MODE" in global) install_global ;; project) install_project ;; esac
 }
 

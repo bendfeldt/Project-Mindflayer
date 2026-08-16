@@ -28,7 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from config import RUNS_DIR  # noqa: E402
+from config import RUNS_DIR, ConfigError, resolve_run_directory  # noqa: E402
 
 STRINGS = {
     "da": {
@@ -86,7 +86,7 @@ OUTLOOK_WRAPPER = ('<div style="font-family:Calibri,Arial,sans-serif;'
 
 
 def load_artifacts(slug: str) -> list[dict]:
-    run_dir = RUNS_DIR / slug
+    run_dir = resolve_run_directory(slug)
     if not run_dir.is_dir():
         raise SystemExit(2)
     artifacts = []
@@ -228,12 +228,16 @@ def main() -> None:
     args = ap.parse_args()
 
     try:
+        run_dir = resolve_run_directory(args.release)
         artifacts = load_artifacts(args.release)
+    except ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(2)
     except SystemExit:
-        print(f"no run artifacts under {RUNS_DIR / args.release}", file=sys.stderr)
+        print(f"no run artifacts under {run_dir}", file=sys.stderr)
         sys.exit(2)
     if not artifacts:
-        print(f"no run artifacts under {RUNS_DIR / args.release}", file=sys.stderr)
+        print(f"no run artifacts under {run_dir}", file=sys.stderr)
         sys.exit(2)
 
     languages = {a.get("language", "en") for a in artifacts}

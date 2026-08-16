@@ -3,7 +3,7 @@
 Use this order:
 
 1. `## Executive Assessment`
-2. `## Repository and Technology Overview`
+2. `## Repository Technology Overview`
 3. `## Engineering Scorecard`
 4. `## Prioritized Findings`
 5. `## Remediation Roadmap`

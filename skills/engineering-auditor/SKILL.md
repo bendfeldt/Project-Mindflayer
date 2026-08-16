@@ -49,4 +49,6 @@ python3 scripts/repository_inventory.py --root <repository> --file path/to/a.py 
 python3 scripts/validate_audit_report.py <audit-report.md>
 ```
 
+On native Windows, invoke the same scripts with `python` instead of `python3`.
+
 Resolve script paths relative to this skill directory, not the current working directory.

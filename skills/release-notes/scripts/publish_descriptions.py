@@ -30,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from config import RUNS_DIR, effective_config, repo_root  # noqa: E402
+from config import effective_config, repo_root, resolve_run_directory  # noqa: E402
 from providers import AdoProvider, GitHubProvider, from_config  # noqa: E402
 
 
@@ -71,7 +71,7 @@ def write_artifact(slug: str, cfg: dict, provider, texts: dict[str, str],
         "unclaimed_folders": (evidence or {}).get("unclaimed_folders", []),
         "tasks": tasks,
     }
-    run_dir = RUNS_DIR / slug
+    run_dir = resolve_run_directory(slug)
     run_dir.mkdir(parents=True, exist_ok=True)
     path = run_dir / f"{cfg['repo']}.json"
     path.write_text(json.dumps(artifact, ensure_ascii=False, indent=2) + "\n")

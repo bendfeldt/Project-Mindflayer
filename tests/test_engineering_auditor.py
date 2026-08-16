@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -12,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL_ROOT = ROOT / "skills" / "engineering-auditor"
 INVENTORY_SCRIPT = SKILL_ROOT / "scripts" / "repository_inventory.py"
 VALIDATOR_SCRIPT = SKILL_ROOT / "scripts" / "validate_audit_report.py"
+OUTPUT_CONTRACT = SKILL_ROOT / "references" / "output-format.md"
 
 
 def write_file(root: Path, relative_path: str, content: str = "") -> Path:
@@ -28,7 +30,7 @@ def valid_report() -> str:
 
 The repository has one material maintainability finding.
 
-## Repository and Technology Overview
+## Repository Technology Overview
 
 Python application with unit tests.
 
@@ -196,12 +198,36 @@ class AuditReportValidatorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("1 material finding", result.stdout)
 
+    def test_contract_sections_are_enforced_by_validator(self) -> None:
+        contract = OUTPUT_CONTRACT.read_text(encoding="utf-8")
+        sections = tuple(
+            re.findall(r"^\d+\. `## ([^`]+)`$", contract, re.MULTILINE)
+        )
+        self.assertEqual(
+            sections,
+            (
+                "Executive Assessment",
+                "Repository Technology Overview",
+                "Engineering Scorecard",
+                "Prioritized Findings",
+                "Remediation Roadmap",
+                "Architecture and Modularity Recommendations",
+            ),
+        )
+        for section in sections:
+            invalid_report = valid_report().replace(
+                f"## {section}", f"## Unexpected {section}", 1
+            )
+            result = self.run_validator(invalid_report)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn(f"missing section: {section}", result.stderr)
+
     def test_valid_no_findings_report(self) -> None:
         report = """# Engineering Audit Report
 
 ## Executive Assessment
 No material concerns were identified in the reviewed scope.
-## Repository and Technology Overview
+## Repository Technology Overview
 Small Python library.
 ## Engineering Scorecard
 Software Engineering: 9/10.

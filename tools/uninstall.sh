@@ -6,6 +6,10 @@ CONFIRM=0
 FORCE=0
 REMOVED=0
 PRESERVED=0
+PROJECT_ROOT=""
+HOME_ROOT=""
+SAFE_PATH=""
+SAFE_ROOT=""
 
 fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
 usage() {
@@ -34,6 +38,64 @@ done
 [ -n "$MODE" ] || fail "specify --global or --project"
 
 fingerprint() { cksum "$1" | awk '{print $1 ":" $2}'; }
+
+canonicalize_owned_path() {
+  local recorded="$1" candidate parent component suffix physical trimmed
+  case "$recorded" in *$'\t'*|*$'\n'*|*$'\r'*|'') return 1 ;; esac
+  case "$recorded" in
+    /*) candidate="$recorded" ;;
+    *) [ "$MODE" = project ] || return 1; candidate="$PROJECT_ROOT/$recorded" ;;
+  esac
+  trimmed="${candidate#/}"
+  case "/$trimmed/" in *'//'*) return 1 ;; *'/./'*|*'/../'*) return 1 ;; esac
+  parent="$(dirname "$candidate")"
+  suffix="/$(basename "$candidate")"
+  while [ ! -d "$parent" ]; do
+    component="$(basename "$parent")"
+    [ "$component" != / ] && [ "$component" != . ] || return 1
+    suffix="/$component$suffix"
+    candidate="$(dirname "$parent")"
+    [ "$candidate" != "$parent" ] || return 1
+    parent="$candidate"
+  done
+  physical="$(cd -P "$parent" && pwd -P)" || return 1
+  SAFE_PATH="$physical$suffix"
+}
+
+resolve_owned_path() {
+  local recorded="$1"
+  canonicalize_owned_path "$recorded" || fail "unsafe ownership path: $recorded"
+  if [ "$MODE" = project ]; then
+    case "$SAFE_PATH" in
+      "$PROJECT_ROOT"/*) SAFE_ROOT="$PROJECT_ROOT" ;;
+      *) fail "ownership path escapes project root: $recorded" ;;
+    esac
+    return
+  fi
+  case "$SAFE_PATH" in
+    "$HOME_ROOT/.ai-toolkit"/*) SAFE_ROOT="$HOME_ROOT/.ai-toolkit" ;;
+    "$HOME_ROOT/.claude"/*) SAFE_ROOT="$HOME_ROOT/.claude" ;;
+    "$HOME_ROOT/.codex"/*) SAFE_ROOT="$HOME_ROOT/.codex" ;;
+    "$HOME_ROOT/.gemini"/*) SAFE_ROOT="$HOME_ROOT/.gemini" ;;
+    "$HOME_ROOT/.cursor"/*) SAFE_ROOT="$HOME_ROOT/.cursor" ;;
+    "$HOME_ROOT/.copilot"/*) SAFE_ROOT="$HOME_ROOT/.copilot" ;;
+    "$HOME_ROOT/.agents"/*) SAFE_ROOT="$HOME_ROOT/.agents" ;;
+    *) fail "ownership path escapes global managed roots: $recorded" ;;
+  esac
+}
+
+validate_ownership_file() {
+  local path kind proof extra
+  [ ! -L "$STATE" ] || fail "ownership record must not be a symlink: $STATE"
+  [ -f "$STATE" ] || fail "ownership record not found: $STATE"
+  while IFS=$'\t' read -r path kind proof extra; do
+    [ -n "$path" ] || fail "ownership record contains an empty path"
+    [ -z "${extra:-}" ] || fail "ownership record must contain exactly three fields: $path"
+    [ -n "$proof" ] || fail "ownership record contains empty evidence: $path"
+    case "$kind" in file|symlink|directory|line) ;; *) fail "unknown ownership class for $path: $kind" ;; esac
+    resolve_owned_path "$path"
+  done < "$STATE"
+}
 backup() {
   local path="$1" candidate suffix=0
   candidate="${path}.bak.$(date '+%Y%m%d%H%M%S')"
@@ -47,7 +109,8 @@ remove_recorded() {
   if [ "$kind" = line ]; then
     [ -f "$path" ] || return
     if [ "$CONFIRM" -eq 1 ]; then
-      temporary="${path}.mindflayer.tmp"
+      temporary="$(mktemp "${path}.mindflayer.tmp.XXXXXX")"
+      chmod 600 "$temporary"
       awk -v value="$proof" '$0 != value {print}' "$path" > "$temporary"
       mv "$temporary" "$path"
       [ -s "$path" ] || rm -f "$path"
@@ -90,24 +153,28 @@ prune_empty_parents() {
   done
 }
 
+HOME_ROOT="$(cd -P "$HOME" && pwd -P)"
 if [ "$MODE" = global ]; then
   STATE="$HOME/.ai-toolkit/managed.tsv"
-  STOP="$HOME"
 else
-  STATE="$(pwd)/.mindflayer-managed.tsv"
-  STOP="$(pwd)"
+  PROJECT_ROOT="$(pwd -P)"
+  STATE="$PROJECT_ROOT/.mindflayer-managed.tsv"
 fi
 
-[ -f "$STATE" ] || fail "ownership record not found: $STATE"
+validate_ownership_file
 
 # Children are removed before parents; the state file itself is removed last.
-reverse_state="$(mktemp)"
+reverse_state="$(mktemp "${TMPDIR:-/tmp}/mindflayer-uninstall.XXXXXX")"
+chmod 600 "$reverse_state"
 trap 'rm -f "$reverse_state"' EXIT
 awk '{rows[NR]=$0} END {for (i=NR; i>=1; i--) print rows[i]}' "$STATE" > "$reverse_state"
 while IFS=$'\t' read -r path kind proof; do
   [ -n "$path" ] || continue
-  remove_recorded "$path" "$kind" "$proof"
-  [ "$CONFIRM" -ne 1 ] || prune_empty_parents "$path" "$STOP"
+  resolve_owned_path "$path"
+  artifact="$SAFE_PATH"
+  stop="$SAFE_ROOT"
+  remove_recorded "$artifact" "$kind" "$proof"
+  [ "$CONFIRM" -ne 1 ] || prune_empty_parents "$artifact" "$stop"
 done < "$reverse_state"
 
 if [ "$CONFIRM" -eq 1 ] && [ "$PRESERVED" -eq 0 ]; then

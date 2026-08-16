@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 
 from collect_evidence import Conventions
-from config import default_repo_config
+from config import ConfigError, default_repo_config, resolve_run_directory
 from manage_tasks import (
     TaskPlanError,
     apply_release,
@@ -20,8 +20,9 @@ from manage_tasks import (
     verify_release_plan,
     write_pair_artifact,
 )
-from merge_release import STRINGS, render_md
+from merge_release import STRINGS, load_artifacts, render_md
 from providers import AdoProvider, Provider
+from publish_descriptions import write_artifact as write_description_artifact
 
 
 class FakeProvider(Provider):
@@ -435,6 +436,66 @@ def test_cardinality_ref_and_integrity_failures() -> None:
     assert_raises(lambda: pair_plan(mismatch, "RepoD"), "does not match PR target")
 
 
+def test_release_slug_validation_and_containment() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        runs_dir = Path(directory) / "runs"
+        assert resolve_run_directory("R.1_test-2", runs_dir) == (
+            runs_dir / "R.1_test-2"
+        ).resolve()
+
+        invalid_slugs = [
+            "",
+            "_release",
+            "../release",
+            "release/child",
+            "release\\child",
+            "rélease",
+            "a" * 129,
+        ]
+        for slug in invalid_slugs:
+            try:
+                resolve_run_directory(slug, runs_dir)
+            except ConfigError:
+                pass
+            else:
+                raise AssertionError(f"expected invalid release slug: {slug!r}")
+
+        runs_dir.mkdir()
+        outside = Path(directory) / "outside"
+        outside.mkdir()
+        try:
+            (runs_dir / "release").symlink_to(outside, target_is_directory=True)
+        except OSError:
+            return
+        try:
+            resolve_run_directory("release", runs_dir)
+        except ConfigError as exc:
+            assert "outside configured root" in str(exc)
+        else:
+            raise AssertionError("expected an escaping run-directory symlink to fail")
+
+
+def test_compose_rejects_unsafe_release_slug() -> None:
+    assert_raises(lambda: compose_release("../release", []), "release slug must be")
+
+
+def test_publish_and_merge_reject_unsafe_release_slug() -> None:
+    provider = FakeProvider("1", "100", "RepoA")
+    operations = [
+        lambda: load_artifacts("../release"),
+        lambda: write_description_artifact(
+            "../release", config("RepoA"), provider, {}, None, False
+        ),
+    ]
+    for operation in operations:
+        try:
+            operation()
+        except ConfigError:
+            pass
+        else:
+            raise AssertionError("expected unsafe release slug to fail")
+
+
 def main() -> int:
     tests = [
         test_unique_titles,
@@ -444,6 +505,9 @@ def main() -> int:
         test_all_pairs_preflight_before_write,
         test_populated_description_is_preserved,
         test_cardinality_ref_and_integrity_failures,
+        test_release_slug_validation_and_containment,
+        test_compose_rejects_unsafe_release_slug,
+        test_publish_and_merge_reject_unsafe_release_slug,
     ]
     for test in tests:
         test()

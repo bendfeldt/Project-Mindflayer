@@ -9,7 +9,11 @@ Independent file arrays in install, sync, checks, tests, and documentation routi
 
 ## Decision
 
-`manifest.tsv` is the canonical inventory. Each row declares `path`, `type`, lifecycle `version`, `consumers`, and uninstall `ownership`. Lifecycle tools and completeness tests derive their artifact sets from it.
+`manifest.tsv` is the canonical inventory. Each row declares six fields: `path`,
+`type`, lifecycle `version`, `consumers`, uninstall `ownership`, and `platforms`.
+The `platforms` field contains one or more comma-separated values from `linux`,
+`macos`, and `windows`. Lifecycle tools and completeness tests derive their
+platform-specific artifact sets from this inventory.
 
 Toolkit release versions, template schema versions, and skill lifecycle versions are independent. The installer writes the toolkit release stamp only after all requested artifacts succeed.
 
@@ -18,4 +22,3 @@ Toolkit release versions, template schema versions, and skill lifecycle versions
 - Adding a distributable requires one inventory change.
 - Remote installation can fetch and interpret the manifest without additional dependencies.
 - The tab-separated schema is deliberately simple enough for portable shell tooling.
-

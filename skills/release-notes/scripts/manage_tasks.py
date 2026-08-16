@@ -24,7 +24,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from collect_evidence import Conventions  # noqa: E402
-from config import RUNS_DIR, effective_config, repo_root, slugify  # noqa: E402
+from config import (  # noqa: E402
+    RUNS_DIR,
+    ConfigError,
+    effective_config,
+    repo_root,
+    resolve_run_directory,
+    slugify,
+)
 from providers import Provider, from_config  # noqa: E402
 
 
@@ -331,8 +338,10 @@ def artifact_name(pair: dict) -> str:
 
 
 def compose_release(release: str, pair_plans: list[dict]) -> dict:
-    if not release.strip():
-        raise TaskPlanError("release slug must not be empty")
+    try:
+        resolve_run_directory(release)
+    except ConfigError as exc:
+        raise TaskPlanError(str(exc)) from None
     if not pair_plans:
         raise TaskPlanError("at least one --pair-plan is required")
 
@@ -627,7 +636,11 @@ def write_pair_artifact(
         "unclaimed_folders": pair.get("unclaimed_folders", []),
         "tasks": tasks,
     }
-    path = runs_dir / release / artifact_name(pair)
+    try:
+        run_dir = resolve_run_directory(release, runs_dir)
+    except ConfigError as exc:
+        raise TaskPlanError(str(exc)) from None
+    path = run_dir / artifact_name(pair)
     write_object(path, artifact)
     return path
 

@@ -16,7 +16,14 @@ Resolve all scripts relative to this skill directory, never the current working 
 7. Ask for explicit approval, then run `scripts/manage_tasks.py apply --plan <release-plan>`. Apply must consume the reviewed release plan, preflight every pair before writing, and stop on integrity, git, PR, parent, or child drift.
 8. Run `scripts/merge_release.py` using an absolute path derived from the skill directory; verify every PR and User Story link is present.
 9. Keep `publish_descriptions.py` for description-only updates to existing items. It dry-runs by default and refuses overwrite unless explicitly authorized.
-10. Ask before any remote write or Outlook draft creation.
-11. Report evidence gaps, pair conflicts, created/reused Tasks, and generated local artifacts.
+10. Resolve `email.tool` by platform: retain `outlook-macos` on macOS; use
+    `eml` on Linux and native Windows; do not select a draft mechanism for other
+    platforms.
+    Review the completed subject and HTML first. Ask before opening Outlook or
+    writing a `.eml`, then use `make_email_draft.py --write`; its default is a
+    non-writing dry run and replacement additionally requires `--overwrite`.
+11. Ask before any remote write or local draft creation. A draft must have no
+    recipients and must never be sent automatically.
+12. Report evidence gaps, pair conflicts, created/reused Tasks, and generated local artifacts.
 
 Use installed helpers from `~/.ai-toolkit/skills/release-notes/scripts/` for global installs or the installed project skill root for project installs.

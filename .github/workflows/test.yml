@@ -21,6 +21,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Set up Python 3.12
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: "3.12"
+
       - name: Install pinned ShellCheck
         shell: bash
         env:
@@ -72,5 +77,102 @@ jobs:
           printf '%s\n' "$install_directory" >> "$GITHUB_PATH"
           printf 'ShellCheck %s installed from verified official release asset\n' "$installed_version"
 
-      - name: Run tests
+      - name: Run Python unit tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Run Bash tests
         run: bash tests/test-install.sh
+
+      - name: Create Bash parity fixture
+        if: runner.os == 'Linux'
+        run: python tests/create_parity_fixture.py --runtime bash --output parity-bash
+
+      - name: Upload Bash parity fixture
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: parity-bash
+          path: parity-bash
+          if-no-files-found: error
+          retention-days: 3
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Verify PowerShell version
+        shell: pwsh
+        run: |
+          if ($PSVersionTable.PSVersion -lt [version]'7.4') {
+            throw "PowerShell 7.4 or newer is required; found $($PSVersionTable.PSVersion)."
+          }
+
+      - name: Run native Windows installer tests
+        shell: pwsh
+        run: ./tests/test-install.ps1
+
+      - name: Run Python unit tests
+        shell: pwsh
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Create PowerShell parity fixture
+        shell: pwsh
+        run: python tests/create_parity_fixture.py --runtime powershell --output parity-powershell
+
+      - name: Upload PowerShell parity fixture
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: parity-powershell
+          path: parity-powershell
+          if-no-files-found: error
+          retention-days: 3
+
+  powershell-74:
+    name: PowerShell 7.4 compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run portable suite on PowerShell 7.4
+        shell: bash
+        run: |
+          set -euo pipefail
+          image='mcr.microsoft.com/powershell:7.4-ubuntu-22.04'
+          docker run --rm --entrypoint pwsh "$image" -NoProfile -Command \
+            'if ($PSVersionTable.PSVersion.Major -ne 7 -or $PSVersionTable.PSVersion.Minor -ne 4) { throw "expected PowerShell 7.4" }'
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --workdir /workspace \
+            --entrypoint pwsh \
+            "$image" -NoProfile -File tests/test-install.ps1
+
+  parity:
+    name: Bash and PowerShell artifact parity
+    needs: [test, windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download Bash fixture
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: parity-bash
+          path: parity-bash
+
+      - name: Download PowerShell fixture
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: parity-powershell
+          path: parity-powershell
+
+      - name: Compare normalized outputs
+        shell: bash
+        run: diff -ru parity-bash parity-powershell

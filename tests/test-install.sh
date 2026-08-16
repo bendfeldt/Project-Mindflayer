@@ -5,7 +5,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONDONTWRITEBYTECODE=1
 EXPECTED_SHELLCHECK_VERSION="0.11.0"
 EXPECTED_TOOLKIT_VERSION="$(awk -F '\t' '$1 == "install.sh" {print $3; exit}' "$ROOT/manifest.tsv")"
-EXPECTED_REPO_URL="https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main"
+case "$(uname -s)" in
+  Darwin) TEST_PLATFORM=macos ;;
+  Linux) TEST_PLATFORM=linux ;;
+  *) printf 'error: unsupported test platform\n' >&2; exit 1 ;;
+esac
 PASS=0
 FAIL=0
 
@@ -35,16 +39,38 @@ trap teardown EXIT
 
 run_install() { bash "$ROOT/install.sh" "$@" </dev/null; }
 
+copy_test_bundle() {
+  local destination="$1" artifact _type _version _consumers _ownership _platforms
+  mkdir -p "$destination"
+  while IFS=$'\t' read -r artifact _type _version _consumers _ownership _platforms; do
+    case "$artifact" in \#*|'') continue ;; esac
+    mkdir -p "$destination/$(dirname "$artifact")"
+    cp "$ROOT/$artifact" "$destination/$artifact"
+  done < "$ROOT/manifest.tsv"
+}
+
 printf '%s\n' '--- static and manifest ---'
 assert 'installer version matches manifest' grep -Fqx "VERSION=\"$EXPECTED_TOOLKIT_VERSION\"" "$ROOT/install.sh"
-assert 'installer uses canonical GitHub repository' grep -Fqx "REPO_URL=\"$EXPECTED_REPO_URL\"" "$ROOT/install.sh"
+assert 'installer has no mutable-main fetch path' sh -c "! grep -Eq 'raw\.githubusercontent\.com/.*/main|curl .*manifest' '$ROOT/install.sh'"
+assert 'Bash help advertises Windows runtime' sh -c "bash '$ROOT/install.sh' --help | grep -Fq 'PowerShell 7.4+'"
+assert 'PowerShell installer distributed' grep -Fq $'install.ps1\tscript\t3.6.0' "$ROOT/manifest.tsv"
+# shellcheck disable=SC2016
+assert 'manifest uses six-field schema' awk -F '\t' '$1 !~ /^#/ && NF != 6 {exit 1}' "$ROOT/manifest.tsv"
+# shellcheck disable=SC2016
+assert 'manifest platform declarations are valid' awk -F '\t' '$1 !~ /^#/ {delete seen; count=split($6, values, ","); for (i=1; i<=count; i++) if (values[i] !~ /^(linux|macos|windows)$/ || seen[values[i]]++) exit 1}' "$ROOT/manifest.tsv"
+# shellcheck disable=SC2016
+assert 'Bash artifacts are Unix scoped' awk -F '\t' '$1 ~ /(^install\.sh$|^tools\/.*\.sh$)/ && $6 != "linux,macos" {exit 1}' "$ROOT/manifest.tsv"
+# shellcheck disable=SC2016
+assert 'PowerShell artifacts are Windows scoped' awk -F '\t' '$1 ~ /(^install\.ps1$|^tools\/.*\.ps1$)/ && $6 != "windows" {exit 1}' "$ROOT/manifest.tsv"
+assert 'AppleScript helper is macOS scoped' grep -Fqx $'skills/release-notes/scripts/make_outlook_draft.applescript\tskill-resource\t2.2.0\tglobal,project:skills\tmanaged-tree\tmacos' "$ROOT/manifest.tsv"
+assert 'email helper is Linux and Windows scoped' grep -Fqx $'skills/release-notes/scripts/make_email_draft.py\tskill-resource\t2.2.0\tglobal,project:skills\tmanaged-tree\tlinux,windows' "$ROOT/manifest.tsv"
+assert 'repository tests are not distributable' sh -c "! grep -Eq 'skills/.*/test_[^[:space:]]+\\.py' '$ROOT/manifest.tsv'"
+assert 'system requirements distributed' grep -Fq $'docs/system-requirements.md\tdocument\t1.2.0' "$ROOT/manifest.tsv"
 assert 'local mode hidden from public help' sh -c "! bash '$ROOT/install.sh' --help | grep -Fq -- '--local'"
 for public_install_file in "$ROOT/README.md" "$ROOT/how-to-guide.md" "$ROOT/skills/setup-repo/SKILL.md"; do
-  assert "canonical GitHub bootstrap: ${public_install_file##*/}" contains "$public_install_file" "$EXPECTED_REPO_URL/install.sh"
   assert "no public local mode: ${public_install_file##*/}" not_contains "$public_install_file" '--local'
-  assert "no checkout installer path: ${public_install_file##*/}" sh -c "! rg -n '/path/to/|bash install\\.sh' '$public_install_file'"
 done
-assert 'internal local mode retained' grep -Fq -- '--local) LOCAL=1' "$ROOT/install.sh"
+assert 'legacy local flag retained as no-op' grep -Fq -- '--local) :' "$ROOT/install.sh"
 for script in "$ROOT/install.sh" "$ROOT"/tools/*.sh "$ROOT"/tests/*.sh; do assert "bash syntax: ${script##*/}" bash -n "$script"; done
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck_version="$(shellcheck --version | awk '$1 == "version:" {print $2}')"
@@ -56,11 +82,11 @@ fi
 assert 'python syntax' python3 -c 'import ast, pathlib, sys; [ast.parse(pathlib.Path(p).read_text()) for p in sys.argv[1:]]' "$ROOT"/skills/*/scripts/*.py
 
 manifest_count=0
-while IFS=$'\t' read -r artifact artifact_type artifact_version consumers ownership; do
+while IFS=$'\t' read -r artifact artifact_type artifact_version consumers ownership platforms; do
   case "$artifact" in \#*|'') continue ;; esac
   manifest_count=$((manifest_count + 1))
   assert "manifest file: $artifact" test -f "$ROOT/$artifact"
-  if [ -n "$artifact_type" ] && [ -n "$artifact_version" ] && [ -n "$consumers" ] && [ -n "$ownership" ]; then
+  if [ -n "$artifact_type" ] && [ -n "$artifact_version" ] && [ -n "$consumers" ] && [ -n "$ownership" ] && [ -n "$platforms" ]; then
     pass "complete manifest row: $artifact"
   else
     fail "complete manifest row: $artifact"
@@ -134,41 +160,14 @@ rc=0; (cd "$sandbox/project" && run_install --project --tools cursor --project-t
 rc=0; (cd "$sandbox/project" && run_install --project --tools cursor --project-types infrastructure --technologies postgresql,postgres --client Client --local) >/dev/null 2>&1 || rc=$?; assert 'alias duplicate rejected' test "$rc" -ne 0
 teardown
 
-printf '%s\n' '--- remote-style installation and completion stamp ---'
+printf '%s\n' '--- local bundle preflight ---'
 setup
-fakebin="$sandbox/bin"; mkdir -p "$fakebin"
-# The single-quoted lines are the literal body of the fake curl executable.
-# shellcheck disable=SC2016
-printf '%s\n' '#!/usr/bin/env bash' \
-  'url=""; output=""' \
-  'while [ $# -gt 0 ]; do case "$1" in -o) shift; output="$1" ;; http*) url="$1" ;; esac; shift; done' \
-  'prefix="${FAKE_REPO_URL}/"' \
-  'case "$url" in "$prefix"*) relative="${url#"$prefix"}" ;; *) exit 23 ;; esac' \
-  '[ -z "${FAKE_FETCH_LOG:-}" ] || printf "%s\n" "$relative" >> "$FAKE_FETCH_LOG"' \
-  '[ "${FAIL_ARTIFACT:-}" != "$relative" ] || exit 22' \
-  'cp "$FAKE_REPO/$relative" "$output"' > "$fakebin/curl"
-chmod +x "$fakebin/curl"
-export FAKE_REPO="$ROOT" FAKE_REPO_URL="$EXPECTED_REPO_URL" FAIL_ARTIFACT="docs/architecture.md"
-rc=0; PATH="$fakebin:$PATH" run_install --global --tools codex >/dev/null 2>&1 || rc=$?
-assert 'incomplete remote install fails' test "$rc" -ne 0
-assert 'incomplete install has no version stamp' test ! -f "$HOME/.ai-toolkit/version"
-unset FAIL_ARTIFACT
-assert 'streamed global remote install succeeds' sh -c "PATH='$fakebin:$PATH' HOME='$HOME' bash -s -- --global --tools codex < '$ROOT/install.sh'"
-assert 'remote completion stamp written last' test "$(cat "$HOME/.ai-toolkit/version")" = "$EXPECTED_TOOLKIT_VERSION"
-assert 'Codex-only global skill symlink' test "$(readlink "$HOME/.agents/skills/adr")" = "$HOME/.ai-toolkit/skills/adr"
-assert 'Codex-only global install omits Claude skills' test ! -d "$HOME/.claude/skills"
-export FAKE_FETCH_LOG="$sandbox/fetch.log"
-: > "$FAKE_FETCH_LOG"
-assert 'streamed project remote install succeeds' sh -c "cd '$sandbox/project' && PATH='$fakebin:$PATH' HOME='$HOME' bash -s -- --project --tools claude,codex --profile terraform --client Client --prefix cl < '$ROOT/install.sh' >/dev/null"
-assert 'project skill artifact fetched once' test "$(grep -Fc 'skills/adr/SKILL.md' "$FAKE_FETCH_LOG")" -eq 1
-: > "$FAKE_FETCH_LOG"
-mkdir -p "$sandbox/project-new"
-assert 'streamed composable project install succeeds' sh -c "cd '$sandbox/project-new' && PATH='$fakebin:$PATH' HOME='$HOME' bash -s -- --project --tools claude --project-types infrastructure,data-engineering --technologies terraform,python,sql --client Client < '$ROOT/install.sh' >/dev/null"
-assert 'remote composable catalog fetched' contains "$FAKE_FETCH_LOG" 'config/technology-catalog.tsv'
-assert 'remote composable policy fetched' contains "$FAKE_FETCH_LOG" 'settings/claude/technology-permissions.tsv'
-unset FAKE_FETCH_LOG
-unset FAKE_REPO
-unset FAKE_REPO_URL
+bundle="$sandbox/bundle"
+copy_test_bundle "$bundle"
+printf '%s\n' $'../outside\tdocument\t1.0.0\tglobal\tmanaged-file\tlinux,macos' >> "$bundle/manifest.tsv"
+rc=0; HOME="$HOME" bash "$bundle/install.sh" --global --tools codex >/dev/null 2>&1 || rc=$?
+assert 'malicious manifest path rejected' test "$rc" -ne 0
+assert 'manifest failure precedes target writes' test ! -e "$HOME/.ai-toolkit"
 teardown
 
 printf '%s\n' '--- global install and ownership ---'
@@ -177,9 +176,39 @@ assert 'global install all tools' run_install --global --tools claude,codex,gemi
 assert 'version written' test "$(cat "$HOME/.ai-toolkit/version")" = "$EXPECTED_TOOLKIT_VERSION"
 assert 'manifest installed' test -f "$HOME/.ai-toolkit/manifest.tsv"
 assert 'installer installed' test -f "$HOME/.ai-toolkit/install.sh"
+assert 'PowerShell installer excluded on macOS' test ! -e "$HOME/.ai-toolkit/install.ps1"
 assert 'shared skill lifecycle installed' test -f "$HOME/.ai-toolkit/skill-lifecycle.sh"
+assert 'PowerShell lifecycle excluded on macOS' test ! -e "$HOME/.ai-toolkit/uninstall.ps1"
 assert 'ownership state' test -f "$HOME/.ai-toolkit/managed.tsv"
 assert 'nested release script' test -f "$HOME/.ai-toolkit/skills/release-notes/scripts/config.py"
+if [ "$TEST_PLATFORM" = macos ]; then
+  assert 'macOS helper installed' test -f "$HOME/.ai-toolkit/skills/release-notes/scripts/make_outlook_draft.applescript"
+  assert 'Linux Windows helper excluded on macOS' test ! -e "$HOME/.ai-toolkit/skills/release-notes/scripts/make_email_draft.py"
+else
+  assert 'macOS helper excluded on Linux' test ! -e "$HOME/.ai-toolkit/skills/release-notes/scripts/make_outlook_draft.applescript"
+  assert 'Linux helper installed' test -f "$HOME/.ai-toolkit/skills/release-notes/scripts/make_email_draft.py"
+fi
+assert 'repository test modules excluded' sh -c "! find '$HOME/.ai-toolkit/skills' -type f -name 'test_*.py' | grep -q ."
+cp "$ROOT/install.ps1" "$HOME/.ai-toolkit/install.ps1"
+printf '%s\tfile\t%s\n' "$HOME/.ai-toolkit/install.ps1" "$(checksum "$HOME/.ai-toolkit/install.ps1")" >> "$HOME/.ai-toolkit/managed.tsv"
+mkdir -p "$HOME/.ai-toolkit/skills/release-notes/scripts"
+cp "$ROOT/skills/release-notes/scripts/test_tasks.py" "$HOME/.ai-toolkit/skills/release-notes/scripts/test_tasks.py"
+printf '%s\tfile\t%s\n' "$HOME/.ai-toolkit/skills/release-notes/scripts/test_tasks.py" "$(checksum "$HOME/.ai-toolkit/skills/release-notes/scripts/test_tasks.py")" >> "$HOME/.ai-toolkit/managed.tsv"
+run_install --global --tools claude,codex,copilot --local >/dev/null
+assert 'verified wrong-platform artifact removed' test ! -e "$HOME/.ai-toolkit/install.ps1"
+assert 'verified retired test artifact removed' test ! -e "$HOME/.ai-toolkit/skills/release-notes/scripts/test_tasks.py"
+mkdir -p "$HOME/.ai-toolkit/docs"
+printf 'retired managed document\n' > "$HOME/.ai-toolkit/docs/retired.md"
+printf '%s\tfile\t%s\n' "$HOME/.ai-toolkit/docs/retired.md" "$(checksum "$HOME/.ai-toolkit/docs/retired.md")" >> "$HOME/.ai-toolkit/managed.tsv"
+printf 'unowned cache\n' > "$HOME/.ai-toolkit/docs/local.cache"
+run_install --global --tools codex --local >/dev/null
+assert 'verified retired global artifact removed' test ! -e "$HOME/.ai-toolkit/docs/retired.md"
+assert 'unowned global noise preserved' test -f "$HOME/.ai-toolkit/docs/local.cache"
+cp "$ROOT/install.ps1" "$HOME/.ai-toolkit/install.ps1"
+printf '%s\tfile\t%s\n' "$HOME/.ai-toolkit/install.ps1" "$(checksum "$HOME/.ai-toolkit/install.ps1")" >> "$HOME/.ai-toolkit/managed.tsv"
+printf '\nuser modification\n' >> "$HOME/.ai-toolkit/install.ps1"
+run_install --global --tools claude,codex,copilot --local >/dev/null 2>&1
+assert 'modified wrong-platform artifact preserved' test -f "$HOME/.ai-toolkit/install.ps1"
 assert 'nested skill metadata' test -f "$HOME/.ai-toolkit/skills/adr/agents/openai.yaml"
 assert 'nested auditor reference' test -f "$HOME/.ai-toolkit/skills/engineering-auditor/references/output-format.md"
 assert 'nested auditor script' test -f "$HOME/.ai-toolkit/skills/engineering-auditor/scripts/validate_audit_report.py"
@@ -228,6 +257,14 @@ for tools in claude codex gemini cursor copilot claude,codex,gemini,cursor,copil
       *",$skill_tool,"*)
         assert "nested skill: $tools -> $skill_root" test -f "$sandbox/project/$skill_root/release-notes/scripts/config.py"
         assert "nested auditor: $tools -> $skill_root" test -f "$sandbox/project/$skill_root/engineering-auditor/scripts/repository_inventory.py"
+        assert "project tests excluded: $tools -> $skill_root" sh -c "! find '$sandbox/project/$skill_root' -type f -name 'test_*.py' | grep -q ."
+        if [ "$TEST_PLATFORM" = macos ]; then
+          assert "project macOS helper: $tools -> $skill_root" test -f "$sandbox/project/$skill_root/release-notes/scripts/make_outlook_draft.applescript"
+          assert "project email helper excluded on macOS: $tools -> $skill_root" test ! -e "$sandbox/project/$skill_root/release-notes/scripts/make_email_draft.py"
+        else
+          assert "project AppleScript excluded on Linux: $tools -> $skill_root" test ! -e "$sandbox/project/$skill_root/release-notes/scripts/make_outlook_draft.applescript"
+          assert "project Linux email helper: $tools -> $skill_root" test -f "$sandbox/project/$skill_root/release-notes/scripts/make_email_draft.py"
+        fi
         ;;
     esac
   done
@@ -339,6 +376,32 @@ assert 'all managed roots repaired' sh -c "cd '$sandbox/project' && '$ROOT/tools
 unset MINDFlAYER_HOME
 teardown
 
+printf '%s\n' '--- lifecycle ignores unmanifested runtime artifacts ---'
+setup
+(cd "$sandbox/project" && run_install --project --tools codex --profile databricks --client Client --prefix cl --local) >/dev/null
+toolkit_fixture="$sandbox/toolkit"
+mkdir -p "$toolkit_fixture" "$toolkit_fixture/skills/adr/__pycache__" "$sandbox/project/.agents/skills/adr/__pycache__"
+cp "$ROOT/manifest.tsv" "$toolkit_fixture/manifest.tsv"
+cp -R "$ROOT/skills/." "$toolkit_fixture/skills/"
+printf 'source cache\n' > "$toolkit_fixture/skills/adr/__pycache__/source.pyc"
+printf 'target cache\n' > "$sandbox/project/.agents/skills/adr/__pycache__/target.pyc"
+export MINDFlAYER_HOME="$toolkit_fixture"
+assert 'unmanifested caches do not report drift' sh -c "cd '$sandbox/project' && '$ROOT/tools/check-skills-update.sh' >/dev/null"
+printf 'retired owned file\n' > "$sandbox/project/.agents/skills/adr/retired.md"
+printf '%s\tfile\t%s\n' '.agents/skills/adr/retired.md' "$(checksum "$sandbox/project/.agents/skills/adr/retired.md")" >> "$sandbox/project/.mindflayer-managed.tsv"
+rc=0; (cd "$sandbox/project" && "$ROOT/tools/check-skills-update.sh" >/dev/null 2>&1) || rc=$?
+assert 'owned obsolete skill file reports drift' test "$rc" -ne 0
+(cd "$sandbox/project" && "$ROOT/tools/sync-skills.sh" >/dev/null)
+assert 'owned obsolete skill file removed' test ! -e "$sandbox/project/.agents/skills/adr/retired.md"
+assert 'unowned cache survives obsolete reconciliation' test -f "$sandbox/project/.agents/skills/adr/__pycache__/target.pyc"
+printf 'drift\n' >> "$sandbox/project/.agents/skills/adr/agents/openai.yaml"
+(cd "$sandbox/project" && "$ROOT/tools/sync-skills.sh" --force >/dev/null)
+assert 'sync does not copy source cache' test ! -e "$sandbox/project/.agents/skills/adr/__pycache__/source.pyc"
+assert 'sync preserves unmanifested target cache' test -f "$sandbox/project/.agents/skills/adr/__pycache__/target.pyc"
+assert 'manifested drift repaired with caches present' sh -c "cd '$sandbox/project' && '$ROOT/tools/check-skills-update.sh' >/dev/null"
+unset MINDFlAYER_HOME
+teardown
+
 printf '%s\n' '--- project compatibility migration ---'
 setup
 mkdir -p \
@@ -424,6 +487,39 @@ assert 'Cursor project shim remains absent' test ! -e "$sandbox/project/.cursor/
 assert 'Copilot project shim remains absent' test ! -e "$sandbox/project/.github/copilot-instructions.md"
 teardown
 
+printf '%s\n' '--- ownership ledger containment ---'
+setup
+printf 'outside data\n' > "$sandbox/outside.txt"
+printf '%s\tfile\t%s\n' '../outside.txt' "$(checksum "$sandbox/outside.txt")" > "$sandbox/project/.mindflayer-managed.tsv"
+rc=0; (cd "$sandbox/project" && bash "$ROOT/tools/uninstall.sh" --project --confirm >/dev/null 2>&1) || rc=$?
+assert 'uninstall rejects relative ledger escape' test "$rc" -ne 0
+assert 'relative ledger escape target preserved' test -f "$sandbox/outside.txt"
+mkdir -p "$sandbox/outside-directory"
+printf 'symlink escape data\n' > "$sandbox/outside-directory/victim.txt"
+ln -s "$sandbox/outside-directory" "$sandbox/project/escape"
+printf '%s\tfile\t%s\n' 'escape/victim.txt' "$(checksum "$sandbox/outside-directory/victim.txt")" > "$sandbox/project/.mindflayer-managed.tsv"
+rc=0; (cd "$sandbox/project" && bash "$ROOT/tools/uninstall.sh" --project --confirm >/dev/null 2>&1) || rc=$?
+assert 'uninstall rejects symlinked parent escape' test "$rc" -ne 0
+assert 'symlinked parent escape target preserved' test -f "$sandbox/outside-directory/victim.txt"
+teardown
+
+setup
+printf 'AGENTS.md\tfile\tproof\n' > "$sandbox/external-state.tsv"
+ln -s "$sandbox/external-state.tsv" "$sandbox/project/.mindflayer-managed.tsv"
+rc=0; (cd "$sandbox/project" && bash "$ROOT/tools/uninstall.sh" --project --confirm >/dev/null 2>&1) || rc=$?
+assert 'uninstall rejects symlink ownership state' test "$rc" -ne 0
+assert 'symlink ownership state target preserved' test -f "$sandbox/external-state.tsv"
+teardown
+
+setup
+printf 'outside data\n' > "$sandbox/outside.txt"
+printf '%s\tfile\t%s\n' '../outside.txt' "$(checksum "$sandbox/outside.txt")" > "$sandbox/project/.mindflayer-managed.tsv"
+rc=0; (cd "$sandbox/project" && run_install --project --tools cursor --profile terraform --client Client --prefix cl --local >/dev/null 2>&1) || rc=$?
+assert 'installer rejects unsafe existing ledger' test "$rc" -ne 0
+assert 'unsafe ledger rejected before project writes' test ! -e "$sandbox/project/AGENTS.md"
+assert 'installer preserves escaped ledger target' test -f "$sandbox/outside.txt"
+teardown
+
 printf '%s\n' '--- lifecycle ownership boundaries ---'
 setup
 mkdir -p "$sandbox/project/.agents/skills/adr"
@@ -473,6 +569,7 @@ output="$(cd "$sandbox/project" && PATH="$fakebin:$PATH" bash "$ROOT/tools/check
 assert 'store check prefers checkout' sh -c "printf '%s' '$output' | grep -Fq 'Registry: ./stores.yml'"
 assert 'release remote fixtures' sh -c "cd '$ROOT/skills/release-notes/scripts' && python3 test_remote.py >/dev/null"
 assert 'release task planning' sh -c "cd '$ROOT/skills/release-notes/scripts' && python3 test_tasks.py >/dev/null"
+assert 'release email drafts' sh -c "cd '$ROOT/skills/release-notes/scripts' && python3 test_email_draft.py >/dev/null"
 teardown
 
 printf '\nPASS: %d  FAIL: %d\n' "$PASS" "$FAIL"

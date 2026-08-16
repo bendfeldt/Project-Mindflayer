@@ -38,6 +38,18 @@ REPO_CONFIG_NAME = ".claude/release-notes.config.json"
 
 CONFIG_VERSION = 1
 
+RELEASE_SLUG_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+RELEASE_SLUG_MAX_LENGTH = 128
+
+
+def email_tool_for_platform(platform: str) -> str:
+    """Return the local draft mechanism supported by the current platform."""
+    if platform == "darwin":
+        return "outlook-macos"
+    if platform in {"linux", "win32"}:
+        return "eml"
+    return "none"
+
 # Item folder suffixes for Fabric / Power BI repos. Paths that match none of
 # these fall back to a two-level directory grouping, so the mapping still works
 # in repos that deploy something else entirely.
@@ -90,6 +102,28 @@ DEFAULT_CHILD_TYPES = {"ado": ["Task"], "github": []}
 
 class ConfigError(SystemExit):
     """Raised with an actionable message; never a bare stack trace."""
+
+
+def resolve_run_directory(slug: str, runs_dir: Path = RUNS_DIR) -> Path:
+    """Validate a release slug and resolve its contained run directory."""
+    if (
+        len(slug) > RELEASE_SLUG_MAX_LENGTH
+        or RELEASE_SLUG_PATTERN.fullmatch(slug) is None
+    ):
+        raise ConfigError(
+            "release slug must be 1-128 characters, start with an ASCII letter "
+            "or digit, and contain only ASCII letters, digits, '.', '_', or '-'"
+        )
+
+    resolved_runs_dir = runs_dir.resolve()
+    resolved_run_dir = (resolved_runs_dir / slug).resolve()
+    try:
+        resolved_run_dir.relative_to(resolved_runs_dir)
+    except ValueError as exc:
+        raise ConfigError(
+            f"release run directory resolves outside configured root: {resolved_run_dir}"
+        ) from exc
+    return resolved_run_dir
 
 
 # ------------------------------------------------------------------ remote URL
@@ -240,7 +274,7 @@ def bootstrap(root: Path, engagement: str | None = None) -> dict:
         provider: {"org": orgs[0]} if len(orgs) == 1 else {"orgs": orgs},
         "work_items": {"project": projects[0] if len(projects) == 1 else None},
         "repos": repos,
-        "email": {"tool": "outlook-macos" if sys.platform == "darwin" else "none"},
+        "email": {"tool": email_tool_for_platform(sys.platform)},
     }
     if skipped:
         config["_skipped"] = skipped
@@ -339,7 +373,9 @@ def effective_config(repo: Path) -> dict:
         merged["host"] = remote["host"]
     merged["engagement"] = (engagement or {}).get("engagement")
     merged["engagement_path"] = (engagement or {}).get("_path")
-    merged["email"] = (engagement or {}).get("email", {"tool": "none"})
+    merged["email"] = (engagement or {}).get(
+        "email", {"tool": email_tool_for_platform(sys.platform)}
+    )
     merged["has_repo_config"] = bool(repo_cfg)
     return merged
 

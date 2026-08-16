@@ -5,7 +5,13 @@ description: Configure a client repository with Project-Mindflayer by collecting
 
 # Set Up Repository
 
-Delegate installation behavior to the toolkit `install.sh`; do not recreate it.
+Delegate installation behavior to the toolkit installer for the host platform:
+`install.sh` on Linux/macOS and `install.ps1` on Windows 10/11 with PowerShell
+7.4 or newer (7.4 LTS baseline). Do not recreate it. Native Windows behavior is
+CI-tested on GitHub's Windows runner; WSL2 remains best effort. Treat Python,
+Git, and provider CLIs as capability-specific dependencies defined by the system
+requirements, not as prerequisites for every setup. Git Bash is unsupported;
+when a selected capability needs Python, require Python 3.12 or newer.
 
 1. Confirm the target is not the Project-Mindflayer distribution repository.
 2. Detect available assistants and ask for the explicit tool list to configure.
@@ -14,16 +20,26 @@ Delegate installation behavior to the toolkit `install.sh`; do not recreate it.
    - Technologies from the installed `~/.ai-toolkit/config/technology-catalog.tsv`. If it is unavailable, read the canonical repository copy; never invent an identifier. Use namespaced identifiers for platform components.
    - Client name.
    - Resource prefix only when the repository uses one.
-4. Preview and obtain approval for:
+4. Require an explicitly versioned, Cosign-verified platform release bundle as
+   described in the installed system requirements. Never stream an installer or
+   resolve `latest`. Preview and obtain approval for:
 
 ```bash
-curl -fsSL --proto '=https' \
-  https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh \
-  | bash -s -- --project \
+<verified-release-directory>/install.sh --project \
   --tools <comma-separated-tools> \
   --project-types <comma-separated-project-types> \
   --technologies <comma-separated-technologies> \
   --client "<client>" [--prefix <prefix>]
+```
+
+On Windows, preview the equivalent native PowerShell command:
+
+```powershell
+pwsh -NoProfile -File <verified-release-directory>/install.ps1 -Project `
+  -Tools <comma-separated-tools> `
+  -ProjectTypes <comma-separated-project-types> `
+  -Technologies <comma-separated-technologies> `
+  -Client '<client>' [-Prefix <prefix>]
 ```
 
 5. Run it in the target repository and report only tool-conditional artifacts actually created.

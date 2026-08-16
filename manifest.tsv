@@ -1,88 +1,97 @@
-# path	type	version	consumers	ownership
-manifest.tsv	manifest	1.0.0	global	managed-file
-install.sh	script	3.4.0	global	managed-file
-README.md	document	3.3.0	global	managed-file
-how-to-guide.md	document	3.2.0	global	managed-file
-LICENSE	license	1.0.0	global	managed-file
-global/AGENTS.md	baseline	4.1.0	global:claude,global:codex,global:gemini,global:cursor,global:copilot	managed-file
-templates/AGENTS.md	template	4.0.0	global,project	managed-file
-templates/AGENTS-composable.md	template	5.0.0	global,project	managed-file
-CLAUDE.md	shim	1.0.0	global:claude,project:claude	managed-file
-GEMINI.md	shim	1.0.0	global:gemini,project:gemini	managed-file
-docs/architecture.md	document	3.4.0	global	managed-file
-docs/consumer-extensions.md	document	1.1.0	global	managed-file
-docs/operating-standards.md	document	1.0.0	global	managed-file
-docs/terraform-patterns.md	document	2.0.0	global	managed-file
-docs/kimball-reference.md	document	2.0.0	global	managed-file
-docs/decisions/0001-universal-agents-guidance.md	decision	1.2.0	global	managed-file
-docs/decisions/0002-manifest-driven-distribution.md	decision	1.0.0	global	managed-file
-docs/decisions/0003-safe-artifact-ownership.md	decision	1.0.0	global	managed-file
-docs/decisions/0004-composable-project-classification.md	decision	1.0.0	global	managed-file
-config/technology-catalog.tsv	registry	1.0.0	global	managed-file
-settings/claude/settings-global.json	setting	1.0.0	global:claude	managed-file
-settings/claude/settings-terraform.json	setting	1.0.0	project:claude:terraform	managed-file
-settings/claude/settings-databricks.json	setting	1.0.0	project:claude:databricks	managed-file
-settings/claude/settings-fabric.json	setting	1.0.0	project:claude:fabric	managed-file
-settings/claude/technology-permissions.tsv	setting	1.0.0	global:claude	managed-file
-settings/codex/config.toml	setting	1.0.0	global:codex	managed-file
-settings/gemini/settings.json	setting	1.0.0	global:gemini	managed-file
-stores.yml	registry	1.0.0	global	managed-file
-tools/check-template-update.sh	script	1.0.0	global	managed-file
-tools/check-skills-update.sh	script	1.2.0	global	managed-file
-tools/skill-lifecycle.sh	script	1.0.1	global	managed-file
-tools/check-stores.sh	script	1.0.0	global	managed-file
-tools/sync-global.sh	script	1.0.0	global	managed-file
-tools/sync-skills.sh	script	1.2.0	global	managed-file
-tools/check-update.sh	script	1.0.0	global	managed-file
-tools/uninstall.sh	script	1.0.0	global	managed-file
-skills/adr/SKILL.md	skill	2.0.0	global,project:skills	managed-tree
-skills/adr/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/adr/references/promotion.md	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/branch-cleanup/SKILL.md	skill	2.0.0	global,project:skills	managed-tree
-skills/branch-cleanup/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/engineering-auditor/SKILL.md	skill	1.0.0	global,project:skills	managed-tree
-skills/engineering-auditor/agents/openai.yaml	skill-resource	1.0.0	global,project:skills	managed-tree
-skills/engineering-auditor/references/audit-framework.md	skill-resource	1.0.0	global,project:skills	managed-tree
-skills/engineering-auditor/references/data-engineering.md	skill-resource	1.0.0	global,project:skills	managed-tree
-skills/engineering-auditor/references/analytics-engineering.md	skill-resource	1.0.0	global,project:skills	managed-tree
-skills/engineering-auditor/references/software-engineering.md	skill-resource	1.0.0	global,project:skills	managed-tree
-skills/engineering-auditor/references/security.md	skill-resource	1.0.0	global,project:skills	managed-tree
-skills/engineering-auditor/references/compliance-governance.md	skill-resource	1.0.0	global,project:skills	managed-tree
-skills/engineering-auditor/references/performance.md	skill-resource	1.0.0	global,project:skills	managed-tree
-skills/engineering-auditor/references/finding-severity.md	skill-resource	1.0.0	global,project:skills	managed-tree
-skills/engineering-auditor/references/output-format.md	skill-resource	1.0.0	global,project:skills	managed-tree
-skills/engineering-auditor/scripts/repository_inventory.py	skill-resource	1.0.0	global,project:skills	managed-tree
-skills/engineering-auditor/scripts/validate_audit_report.py	skill-resource	1.0.0	global,project:skills	managed-tree
-skills/kimball-model/SKILL.md	skill	2.0.0	global,project:skills	managed-tree
-skills/kimball-model/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/kimball-model/references/modeling.md	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/promote-adr/SKILL.md	skill	2.0.0	global,project:skills	managed-tree
-skills/promote-adr/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/promote-adr/references/promotion.md	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/promote-skill/SKILL.md	skill	2.0.0	global,project:skills	managed-tree
-skills/promote-skill/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/promote-skill/references/promotion.md	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/release-notes/SKILL.md	skill	2.0.0	global,project:skills	managed-tree
-skills/release-notes/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/release-notes/references/providers.md	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/release-notes/references/templates.md	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/release-notes/scripts/collect_evidence.py	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/release-notes/scripts/config.py	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/release-notes/scripts/manage_tasks.py	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/release-notes/scripts/make_outlook_draft.applescript	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/release-notes/scripts/merge_release.py	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/release-notes/scripts/providers.py	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/release-notes/scripts/publish_descriptions.py	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/release-notes/scripts/test_remote.py	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/release-notes/scripts/test_tasks.py	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/setup-repo/SKILL.md	skill	2.2.0	global,project:skills	managed-tree
-skills/setup-repo/agents/openai.yaml	skill-resource	2.2.0	global,project:skills	managed-tree
-skills/smart-commit/SKILL.md	skill	2.0.0	global,project:skills	managed-tree
-skills/smart-commit/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/smart-pr/SKILL.md	skill	2.0.0	global,project:skills	managed-tree
-skills/smart-pr/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/terraform-scaffold/SKILL.md	skill	2.0.0	global,project:skills	managed-tree
-skills/terraform-scaffold/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/terraform-scaffold/references/patterns.md	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/terraform-scaffold/references/azure-devops-pipelines.md	skill-resource	2.0.0	global,project:skills	managed-tree
-skills/terraform-scaffold/references/fabric-modules.md	skill-resource	2.0.0	global,project:skills	managed-tree
+# path	type	version	consumers	ownership	platforms
+manifest.tsv	manifest	1.2.0	global	managed-file	linux,macos,windows
+install.sh	script	3.6.0	global	managed-file	linux,macos
+install.ps1	script	3.6.0	global	managed-file	windows
+README.md	document	3.6.0	global	managed-file	linux,macos,windows
+how-to-guide.md	document	3.5.0	global	managed-file	linux,macos,windows
+LICENSE	license	1.0.0	global	managed-file	linux,macos,windows
+global/AGENTS.md	baseline	4.1.0	global:claude,global:codex,global:gemini,global:cursor,global:copilot	managed-file	linux,macos,windows
+templates/AGENTS.md	template	4.0.0	global,project	managed-file	linux,macos,windows
+templates/AGENTS-composable.md	template	5.0.0	global,project	managed-file	linux,macos,windows
+CLAUDE.md	shim	1.0.0	global:claude,project:claude	managed-file	linux,macos,windows
+GEMINI.md	shim	1.0.0	global:gemini,project:gemini	managed-file	linux,macos,windows
+docs/architecture.md	document	3.7.0	global	managed-file	linux,macos,windows
+docs/consumer-extensions.md	document	1.1.0	global	managed-file	linux,macos,windows
+docs/operating-standards.md	document	1.0.0	global	managed-file	linux,macos,windows
+docs/system-requirements.md	document	1.2.0	global	managed-file	linux,macos,windows
+docs/terraform-patterns.md	document	2.0.0	global	managed-file	linux,macos,windows
+docs/kimball-reference.md	document	2.0.0	global	managed-file	linux,macos,windows
+docs/decisions/0001-universal-agents-guidance.md	decision	1.2.0	global	managed-file	linux,macos,windows
+docs/decisions/0002-manifest-driven-distribution.md	decision	1.1.0	global	managed-file	linux,macos,windows
+docs/decisions/0003-safe-artifact-ownership.md	decision	1.0.0	global	managed-file	linux,macos,windows
+docs/decisions/0004-composable-project-classification.md	decision	1.0.0	global	managed-file	linux,macos,windows
+config/technology-catalog.tsv	registry	1.0.0	global	managed-file	linux,macos,windows
+settings/claude/settings-global.json	setting	1.0.0	global:claude	managed-file	linux,macos,windows
+settings/claude/settings-terraform.json	setting	1.0.0	project:claude:terraform	managed-file	linux,macos,windows
+settings/claude/settings-databricks.json	setting	1.0.0	project:claude:databricks	managed-file	linux,macos,windows
+settings/claude/settings-fabric.json	setting	1.0.0	project:claude:fabric	managed-file	linux,macos,windows
+settings/claude/technology-permissions.tsv	setting	1.0.0	global:claude	managed-file	linux,macos,windows
+settings/codex/config.toml	setting	1.0.0	global:codex	managed-file	linux,macos,windows
+settings/gemini/settings.json	setting	1.0.0	global:gemini	managed-file	linux,macos,windows
+stores.yml	registry	1.0.0	global	managed-file	linux,macos,windows
+tools/check-template-update.sh	script	1.1.0	global	managed-file	linux,macos
+tools/check-template-update.ps1	script	1.1.0	global	managed-file	windows
+tools/check-skills-update.sh	script	1.2.0	global	managed-file	linux,macos
+tools/check-skills-update.ps1	script	1.2.0	global	managed-file	windows
+tools/skill-lifecycle.sh	script	1.3.0	global	managed-file	linux,macos
+tools/skill-lifecycle.ps1	script	1.3.0	global	managed-file	windows
+tools/check-stores.sh	script	1.0.0	global	managed-file	linux,macos
+tools/check-stores.ps1	script	1.1.0	global	managed-file	windows
+tools/sync-global.sh	script	1.0.0	global	managed-file	linux,macos
+tools/sync-global.ps1	script	1.0.0	global	managed-file	windows
+tools/sync-skills.sh	script	1.2.0	global	managed-file	linux,macos
+tools/sync-skills.ps1	script	1.2.0	global	managed-file	windows
+tools/check-update.sh	script	1.0.0	global	managed-file	linux,macos
+tools/check-update.ps1	script	1.0.0	global	managed-file	windows
+tools/uninstall.sh	script	1.1.0	global	managed-file	linux,macos
+tools/uninstall.ps1	script	1.1.0	global	managed-file	windows
+skills/adr/SKILL.md	skill	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/adr/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/adr/references/promotion.md	skill-resource	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/branch-cleanup/SKILL.md	skill	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/branch-cleanup/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/engineering-auditor/SKILL.md	skill	1.1.0	global,project:skills	managed-tree	linux,macos,windows
+skills/engineering-auditor/agents/openai.yaml	skill-resource	1.1.0	global,project:skills	managed-tree	linux,macos,windows
+skills/engineering-auditor/references/audit-framework.md	skill-resource	1.1.0	global,project:skills	managed-tree	linux,macos,windows
+skills/engineering-auditor/references/data-engineering.md	skill-resource	1.1.0	global,project:skills	managed-tree	linux,macos,windows
+skills/engineering-auditor/references/analytics-engineering.md	skill-resource	1.1.0	global,project:skills	managed-tree	linux,macos,windows
+skills/engineering-auditor/references/software-engineering.md	skill-resource	1.1.0	global,project:skills	managed-tree	linux,macos,windows
+skills/engineering-auditor/references/security.md	skill-resource	1.1.0	global,project:skills	managed-tree	linux,macos,windows
+skills/engineering-auditor/references/compliance-governance.md	skill-resource	1.1.0	global,project:skills	managed-tree	linux,macos,windows
+skills/engineering-auditor/references/performance.md	skill-resource	1.1.0	global,project:skills	managed-tree	linux,macos,windows
+skills/engineering-auditor/references/finding-severity.md	skill-resource	1.1.0	global,project:skills	managed-tree	linux,macos,windows
+skills/engineering-auditor/references/output-format.md	skill-resource	1.2.0	global,project:skills	managed-tree	linux,macos,windows
+skills/engineering-auditor/scripts/repository_inventory.py	skill-resource	1.1.0	global,project:skills	managed-tree	linux,macos,windows
+skills/engineering-auditor/scripts/validate_audit_report.py	skill-resource	1.2.0	global,project:skills	managed-tree	linux,macos,windows
+skills/kimball-model/SKILL.md	skill	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/kimball-model/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/kimball-model/references/modeling.md	skill-resource	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/promote-adr/SKILL.md	skill	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/promote-adr/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/promote-adr/references/promotion.md	skill-resource	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/promote-skill/SKILL.md	skill	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/promote-skill/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/promote-skill/references/promotion.md	skill-resource	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/release-notes/SKILL.md	skill	2.3.0	global,project:skills	managed-tree	linux,macos,windows
+skills/release-notes/agents/openai.yaml	skill-resource	2.2.0	global,project:skills	managed-tree	linux,macos,windows
+skills/release-notes/references/providers.md	skill-resource	2.2.0	global,project:skills	managed-tree	linux,macos,windows
+skills/release-notes/references/templates.md	skill-resource	2.3.0	global,project:skills	managed-tree	linux,macos,windows
+skills/release-notes/scripts/collect_evidence.py	skill-resource	2.2.0	global,project:skills	managed-tree	linux,macos,windows
+skills/release-notes/scripts/config.py	skill-resource	2.3.0	global,project:skills	managed-tree	linux,macos,windows
+skills/release-notes/scripts/manage_tasks.py	skill-resource	2.3.0	global,project:skills	managed-tree	linux,macos,windows
+skills/release-notes/scripts/make_email_draft.py	skill-resource	2.2.0	global,project:skills	managed-tree	linux,windows
+skills/release-notes/scripts/make_outlook_draft.applescript	skill-resource	2.2.0	global,project:skills	managed-tree	macos
+skills/release-notes/scripts/merge_release.py	skill-resource	2.3.0	global,project:skills	managed-tree	linux,macos,windows
+skills/release-notes/scripts/providers.py	skill-resource	2.2.0	global,project:skills	managed-tree	linux,macos,windows
+skills/release-notes/scripts/publish_descriptions.py	skill-resource	2.3.0	global,project:skills	managed-tree	linux,macos,windows
+skills/setup-repo/SKILL.md	skill	2.5.0	global,project:skills	managed-tree	linux,macos,windows
+skills/setup-repo/agents/openai.yaml	skill-resource	2.3.0	global,project:skills	managed-tree	linux,macos,windows
+skills/smart-commit/SKILL.md	skill	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/smart-commit/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/smart-pr/SKILL.md	skill	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/smart-pr/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/terraform-scaffold/SKILL.md	skill	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/terraform-scaffold/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/terraform-scaffold/references/patterns.md	skill-resource	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/terraform-scaffold/references/azure-devops-pipelines.md	skill-resource	2.0.0	global,project:skills	managed-tree	linux,macos,windows
+skills/terraform-scaffold/references/fabric-modules.md	skill-resource	2.0.0	global,project:skills	managed-tree	linux,macos,windows

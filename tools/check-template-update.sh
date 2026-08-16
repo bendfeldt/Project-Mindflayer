@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TOOLKIT_HOME="${MINDFlAYER_HOME:-$HOME/.ai-toolkit}"
+TOOLKIT_HOME="${MINDFLAYER_HOME:-${MINDFlAYER_HOME:-$HOME/.ai-toolkit}}"
 TEMPLATE="$TOOLKIT_HOME/templates/AGENTS.md"
 [ -f AGENTS.md ] || { printf 'No AGENTS.md in current directory.\n'; exit 1; }
 [ -f "$TEMPLATE" ] || { printf 'Template not found: %s\n' "$TEMPLATE" >&2; exit 1; }

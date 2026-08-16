@@ -1,5 +1,9 @@
 # Providers — Azure DevOps and GitHub
 
+Commands use Bash line continuation in examples. On native Windows, run the
+same CLI arguments from PowerShell using backtick continuation and invoke Python
+scripts with `python` instead of `python3`.
+
 `scripts/providers.py` hides these differences behind one interface. This file is
 the reference for when you need to go around it — debugging an API response,
 checking auth, or reading a work item by hand.

@@ -1,0 +1,147 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package and sign ${{ matrix.platform }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: true
+      matrix:
+        platform: [linux, macos, windows]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Validate release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_version="${GITHUB_REF_NAME#v}"
+          bash_version="$(sed -n 's/^VERSION="\([0-9.]*\)"$/\1/p' install.sh)"
+          powershell_version="$(sed -n "s/^\$script:Version = '\([0-9.]*\)'$/\1/p" install.ps1)"
+          test -n "$bash_version"
+          test "$release_version" = "$bash_version"
+          test "$release_version" = "$powershell_version"
+          printf 'value=%s\n' "$release_version" >> "$GITHUB_OUTPUT"
+
+      - name: Build platform archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/package_release.py \
+            --platform "${{ matrix.platform }}" \
+            --version "${{ steps.version.outputs.value }}" \
+            --output-directory dist \
+            --source-date-epoch "$(git show -s --format=%ct HEAD)"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.0
+        with:
+          cosign-release: v2.4.1
+
+      - name: Sign platform archive
+        shell: bash
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          set -euo pipefail
+          archive="$(find dist -maxdepth 1 -type f ! -name '*.sha256' -print)"
+          test -n "$archive"
+          cosign sign-blob --yes --bundle "${archive}.sigstore.json" "$archive"
+
+      - name: Verify signature and tamper rejection
+        shell: bash
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          set -euo pipefail
+          archive="$(find dist -maxdepth 1 -type f ! -name '*.sha256' ! -name '*.sigstore.json' -print)"
+          bundle="${archive}.sigstore.json"
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/${GITHUB_REF_NAME}"
+          test -s "$bundle"
+          (cd dist && sha256sum --check "$(basename "$archive").sha256")
+          cosign verify-blob --bundle "$bundle" \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$archive"
+          cp "$archive" "${archive}.tampered"
+          printf 'tampered\n' >> "${archive}.tampered"
+          if cosign verify-blob --bundle "$bundle" \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${archive}.tampered" >/dev/null 2>&1; then
+            printf 'error: Cosign accepted a tampered archive\n' >&2
+            exit 1
+          fi
+          rm "${archive}.tampered"
+          if cosign verify-blob --bundle "$bundle" \
+            --certificate-identity https://github.com/example/incorrect-workflow \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$archive" >/dev/null 2>&1; then
+            printf 'error: Cosign accepted an incorrect workflow identity\n' >&2
+            exit 1
+          fi
+
+      - name: Upload signed release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish immutable release
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Refuse release replacement
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            printf 'error: release already exists: %s\n' "$GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+
+      - name: Publish signed assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "Project Mindflayer $GITHUB_REF_NAME" \
+            --generate-notes

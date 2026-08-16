@@ -8,6 +8,22 @@ Project-Mindflayer has three layers:
 
 `AGENTS.md` is the substantive repository contract. Claude and Gemini import it through one-line native files; Codex, Cursor, and Copilot read it directly. Runtime discovery directories contain real scoped extensions, never compatibility shims or instructional scaffolding.
 
+## Runtime architecture
+
+Linux and macOS use the Bash 3.2-compatible installer and lifecycle tools.
+Windows 10/11 uses PowerShell 7.4+-compatible counterparts, with PowerShell 7.4
+LTS as the baseline, and does not require a Unix compatibility layer. Native
+Windows behavior is CI-tested on GitHub's Windows runner. Git Bash is unsupported
+and WSL2 remains best effort. Installed artifacts are platform-scoped: Bash
+installer and lifecycle scripts target Linux/macOS, while PowerShell counterparts
+target Windows. Release-draft tooling installs its AppleScript helper only on
+macOS and its portable Python 3.12+ `.eml` generator on Linux/Windows. Both
+runtimes consume the same manifest, templates, technology catalog, policies, and
+ownership model and must render project artifacts deterministically. Global
+Windows skill discovery uses verified NTFS directory junctions; project skill
+trees remain real files. Supported platforms and capability-specific dependencies
+are defined in [system requirements](system-requirements.md).
+
 ## Project classification
 
 New project installations model repository types and technologies as independent ordered sets. Repository types describe responsibilities and never grant permissions. Technologies are canonical identifiers from `config/technology-catalog.tsv`; ecosystem components use namespaced identifiers and contribute only their own policy.
@@ -18,7 +34,7 @@ The legacy single-profile path remains isolated: it uses the original template a
 
 ## Distribution contract
 
-`manifest.tsv` has five tab-separated fields:
+`manifest.tsv` has six tab-separated fields:
 
 | Field | Meaning |
 |---|---|
@@ -27,12 +43,18 @@ The legacy single-profile path remains isolated: it uses the original template a
 | `version` | Artifact lifecycle version |
 | `consumers` | Comma-separated installation scopes or capabilities |
 | `ownership` | Uninstall ownership class |
+| `platforms` | Explicit comma-separated subset of `linux`, `macos`, and `windows` |
 
 Global shared artifacts install under `~/.ai-toolkit/`. Skill rows use the `global,project:skills` capability instead of repeating tool names. A single tool-and-scope mapping resolves discovery roots for every selected skill-aware consumer.
 
-Global skills remain canonical in `~/.ai-toolkit/skills/` and are linked into each selected discovery root. Project installs copy complete skill directories as real files: Codex uses `.agents/skills/`, while Claude and Copilot use `.claude/skills/`. The installer fetches each artifact once and deduplicates shared roots.
+Global skills remain canonical in `~/.ai-toolkit/skills/` and are linked into each selected discovery root. Project installs copy complete skill directories as real files: Codex uses `.agents/skills/`, while Claude and Copilot use `.claude/skills/`. The installer reads each bundled artifact once and deduplicates shared roots.
 
-Public installation streams `install.sh` from `https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main/install.sh`. The installer then fetches manifest-selected rows and project composition data from the same canonical repository. Local source mode remains an internal development-test path.
+Public installation selects an explicit versioned Linux, macOS, or Windows
+archive and verifies its Cosign keyless signature against the repository release
+workflow identity. Release packaging projects the one canonical manifest into
+platform-specific archives; no second source inventory is maintained. Installers
+read locally from the verified archive and install only rows matching the target
+platform. The hidden local flag remains an internal compatibility and test path.
 
 A successful global install writes the toolkit release stamp last. Obsolete project artifacts are removed during upgrade only when recorded ownership proof still matches. Modified or unowned files are preserved.
 

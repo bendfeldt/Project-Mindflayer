@@ -12,7 +12,7 @@ from typing import Sequence
 
 REQUIRED_SECTIONS = (
     "Executive Assessment",
-    "Repository and Technology Overview",
+    "Repository Technology Overview",
     "Engineering Scorecard",
     "Prioritized Findings",
     "Remediation Roadmap",
