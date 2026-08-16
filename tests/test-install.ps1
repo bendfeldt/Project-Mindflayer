@@ -556,7 +556,10 @@ try {
         Assert-PathNotExists -Path (Join-Path $context.Project '.cursor/rules/project.md') -Message 'Legacy Cursor shim'
         Assert-PathNotExists -Path (Join-Path $context.Project '.github/copilot-instructions.md') -Message 'Legacy Copilot shim'
 
-        if ($null -ne (Get-Command bash -ErrorAction SilentlyContinue)) {
+        if ($IsWindows) {
+            Write-Skip -Message 'Bash parity comparison requires a supported Bash platform; Git Bash is not a supported runtime'
+        }
+        elseif ($null -ne (Get-Command bash -ErrorAction SilentlyContinue)) {
             $bashContext = New-TestContext -Name 'portable Bash parity'
             $bashResult = Invoke-BashInstaller -Arguments @(
                 '--project', '--tools', $AllTools,
@@ -751,6 +754,21 @@ try {
                 $junction = Join-Path $context.Home (Join-Path $skillRoot 'adr')
                 Assert-JunctionTarget -Path $junction -ExpectedTarget (Join-Path $context.Home '.ai-toolkit/skills/adr')
             }
+        }
+
+        Invoke-Test -Name 'repeat global install preserves skill junctions' -Test {
+            $context = New-TestContext -Name 'repeat global'
+            $first = Invoke-Installer -Arguments @('-Global', '-Tools', 'claude,codex', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home
+            Assert-Success -Result $first -Message 'First global install'
+            $second = Invoke-Installer -Arguments @('-Global', '-Tools', 'claude,codex', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home
+            Assert-Success -Result $second -Message 'Repeat global install'
+            foreach ($skillRoot in @('.claude/skills', '.agents/skills')) {
+                $junction = Join-Path $context.Home (Join-Path $skillRoot 'adr')
+                Assert-JunctionTarget -Path $junction -ExpectedTarget (Join-Path $context.Home '.ai-toolkit/skills/adr')
+            }
+            Assert-True `
+                -Condition (@(Get-ChildItem -LiteralPath (Join-Path $context.Home '.agents/skills') -Filter 'adr.bak.*' -Force).Count -eq 0) `
+                -Message 'Repeat global install replaced an unchanged junction'
         }
 
         Invoke-Test -Name 'force replacement backs up user content' -Test {

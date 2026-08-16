@@ -147,31 +147,28 @@ function Test-PathWithinRoot {
 function Assert-NoReparseAncestor {
     param(
         [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][string]$Root,
-        [switch]$AllowLeafReparse
+        [Parameter(Mandatory)][string]$Root
     )
 
+    # Matches canonicalize_owned_path in install.sh: every directory above the managed path is
+    # resolved strictly, while the leaf itself may be a link the toolkit owns, such as a skill
+    # junction created by an earlier install.
     $fullPath = [IO.Path]::GetFullPath($Path)
     $fullRoot = [IO.Path]::GetFullPath($Root).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
-    $current = $fullPath
-    $isLeaf = $true
+    $current = Split-Path -Parent $fullPath
     while ($current -and (Test-PathWithinRoot -Path $current -Root $fullRoot)) {
         $item = Get-Item -LiteralPath $current -Force -ErrorAction SilentlyContinue
         if ($null -ne $item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            if (-not ($isLeaf -and $AllowLeafReparse)) {
-                Stop-Installation "managed path crosses a reparse point: $current"
-            }
+            Stop-Installation "managed path crosses a reparse point: $current"
         }
         if ($current.TrimEnd([IO.Path]::DirectorySeparatorChar).Equals($fullRoot, [StringComparison]::OrdinalIgnoreCase)) { break }
         $current = Split-Path -Parent $current
-        $isLeaf = $false
     }
 }
 
 function Resolve-ManagedPath {
     param(
         [Parameter(Mandatory)][string]$RecordedPath,
-        [string]$Kind = 'file',
         [switch]$SkipReparseCheck
     )
 
@@ -187,7 +184,7 @@ function Resolve-ManagedPath {
     foreach ($allowedRoot in $script:AllowedOwnershipRoots) {
         if (Test-PathWithinRoot -Path $candidate -Root $allowedRoot) {
             if (-not $SkipReparseCheck) {
-                Assert-NoReparseAncestor -Path $candidate -Root $allowedRoot -AllowLeafReparse:($Kind -eq 'junction')
+                Assert-NoReparseAncestor -Path $candidate -Root $allowedRoot
             }
             return $candidate
         }
@@ -259,7 +256,7 @@ function Get-OwnershipRecords {
         if ($fields.Count -ne 3 -or -not @('file', 'junction', 'directory', 'line').Contains($fields[1])) {
             Stop-Installation "invalid ownership record in $script:OwnershipFile"
         }
-        $fullPath = Resolve-ManagedPath -RecordedPath $fields[0] -Kind $fields[1] -SkipReparseCheck:(-not $shouldValidatePaths)
+        $fullPath = Resolve-ManagedPath -RecordedPath $fields[0] -SkipReparseCheck:(-not $shouldValidatePaths)
         [pscustomobject]@{ Path = $fields[0]; FullPath = $fullPath; Kind = $fields[1]; Proof = $fields[2] }
     }
     $script:OwnershipValidated = $true
@@ -279,7 +276,7 @@ function Set-OwnershipRecord {
     )
 
     if (-not $script:OwnershipFile) { return }
-    [void](Resolve-ManagedPath -RecordedPath $Path -Kind $Kind)
+    [void](Resolve-ManagedPath -RecordedPath $Path)
     Assert-OwnershipFileSafe
     $parent = Split-Path -Parent $script:OwnershipFile
     if ($parent) { [System.IO.Directory]::CreateDirectory($parent) | Out-Null }
@@ -699,6 +696,10 @@ function Remove-LegacyProjectArtifacts {
 
 function Install-GlobalToolkit {
     $toolkitHome = Join-Path $HOME '.ai-toolkit'
+    $toolkitRoot = Get-ItemIfPresent $toolkitHome
+    if ($null -ne $toolkitRoot -and ($toolkitRoot.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        Stop-Installation "global toolkit root must not be a reparse point: $toolkitHome"
+    }
     $script:OwnershipRoot = [IO.Path]::GetFullPath($HOME)
     $script:AllowedOwnershipRoots = @(
         $toolkitHome,

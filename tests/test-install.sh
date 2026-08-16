@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONDONTWRITEBYTECODE=1
 EXPECTED_SHELLCHECK_VERSION="0.11.0"
 EXPECTED_TOOLKIT_VERSION="$(awk -F '\t' '$1 == "install.sh" {print $3; exit}' "$ROOT/manifest.tsv")"
+EXPECTED_POWERSHELL_VERSION="$(awk -F '\t' '$1 == "install.ps1" {print $3; exit}' "$ROOT/manifest.tsv")"
 case "$(uname -s)" in
   Darwin) TEST_PLATFORM=macos ;;
   Linux) TEST_PLATFORM=linux ;;
@@ -53,7 +54,8 @@ printf '%s\n' '--- static and manifest ---'
 assert 'installer version matches manifest' grep -Fqx "VERSION=\"$EXPECTED_TOOLKIT_VERSION\"" "$ROOT/install.sh"
 assert 'installer has no mutable-main fetch path' sh -c "! grep -Eq 'raw\.githubusercontent\.com/.*/main|curl .*manifest' '$ROOT/install.sh'"
 assert 'Bash help advertises Windows runtime' sh -c "bash '$ROOT/install.sh' --help | grep -Fq 'PowerShell 7.4+'"
-assert 'PowerShell installer distributed' grep -Fq $'install.ps1\tscript\t3.6.0' "$ROOT/manifest.tsv"
+assert 'PowerShell installer distributed' test -n "$EXPECTED_POWERSHELL_VERSION"
+assert 'PowerShell installer version matches manifest' grep -Fqx "\$script:Version = '$EXPECTED_POWERSHELL_VERSION'" "$ROOT/install.ps1"
 # shellcheck disable=SC2016
 assert 'manifest uses six-field schema' awk -F '\t' '$1 !~ /^#/ && NF != 6 {exit 1}' "$ROOT/manifest.tsv"
 # shellcheck disable=SC2016

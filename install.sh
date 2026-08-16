@@ -385,6 +385,7 @@ detect_platform() {
   case "$(uname -s)" in
     Linux) CURRENT_PLATFORM=linux ;;
     Darwin) CURRENT_PLATFORM=macos ;;
+    MINGW*|MSYS*|CYGWIN*) fail "Windows shells such as Git Bash are not supported; run install.ps1 with PowerShell 7.4+" ;;
     *) fail "unsupported platform; install.sh supports Linux and macOS" ;;
   esac
 }
