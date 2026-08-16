@@ -32,7 +32,7 @@ Global skills live in the canonical `~/.ai-toolkit/skills/` store. One capabilit
 
 ## Contents
 
-- Ten public skills, including nested scripts and references.
+- Eleven public skills, including nested scripts and references.
 - Portable global guidance plus legacy and composable project templates.
 - Native project discovery: Claude and Gemini import `AGENTS.md`; Codex, Cursor, and Copilot read it directly.
 - Manifest-driven install, drift, sync, update, store, and uninstall tooling.

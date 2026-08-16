@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="3.3.0"
+VERSION="3.4.0"
 REPO_URL="https://raw.githubusercontent.com/bendfeldt/Project-Mindflayer/main"
 KNOWN_TOOLS="claude codex gemini cursor copilot"
 VALID_PROFILES="terraform databricks fabric"

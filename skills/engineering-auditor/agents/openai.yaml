@@ -1,0 +1,4 @@
+interface:
+  display_name: "Engineering Auditor"
+  short_description: "Audit engineering quality across code and data"
+  default_prompt: "Use $engineering-auditor to audit this repository and produce an evidence-based prioritized report."

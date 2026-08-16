@@ -4,7 +4,7 @@ Project-Mindflayer has three layers:
 
 1. A portable installed baseline with universal workflow and safety rules plus task routing.
 2. A thin repository `AGENTS.md` with verified engagement-specific configuration and a standalone safety floor.
-3. Ten reusable skills containing operational workflows and nested resources.
+3. Eleven reusable skills containing operational workflows and nested resources.
 
 `AGENTS.md` is the substantive repository contract. Claude and Gemini import it through one-line native files; Codex, Cursor, and Copilot read it directly. Runtime discovery directories contain real scoped extensions, never compatibility shims or instructional scaffolding.
 

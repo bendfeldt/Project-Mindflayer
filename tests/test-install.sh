@@ -53,7 +53,7 @@ if command -v shellcheck >/dev/null 2>&1; then
 else
   fail "shellcheck $EXPECTED_SHELLCHECK_VERSION available"
 fi
-assert 'python syntax' python3 -c 'import ast, pathlib, sys; [ast.parse(pathlib.Path(p).read_text()) for p in sys.argv[1:]]' "$ROOT"/skills/release-notes/scripts/*.py
+assert 'python syntax' python3 -c 'import ast, pathlib, sys; [ast.parse(pathlib.Path(p).read_text()) for p in sys.argv[1:]]' "$ROOT"/skills/*/scripts/*.py
 
 manifest_count=0
 while IFS=$'\t' read -r artifact artifact_type artifact_version consumers ownership; do
@@ -74,7 +74,7 @@ done < "$ROOT/manifest.tsv"
 assert 'manifest has artifacts' test "$manifest_count" -gt 40
 
 skill_count="$(awk -F '\t' '$2 == "skill" {count++} END {print count+0}' "$ROOT/manifest.tsv")"
-assert 'ten public skills' test "$skill_count" -eq 10
+assert 'eleven public skills' test "$skill_count" -eq 11
 for skill_file in "$ROOT"/skills/*/SKILL.md; do
   skill="$(basename "$(dirname "$skill_file")")"
   keys="$(awk '/^---$/{block++; next} block==1 && /^[a-z_]+:/ {sub(/:.*/, ""); print}' "$skill_file")"
@@ -181,8 +181,11 @@ assert 'shared skill lifecycle installed' test -f "$HOME/.ai-toolkit/skill-lifec
 assert 'ownership state' test -f "$HOME/.ai-toolkit/managed.tsv"
 assert 'nested release script' test -f "$HOME/.ai-toolkit/skills/release-notes/scripts/config.py"
 assert 'nested skill metadata' test -f "$HOME/.ai-toolkit/skills/adr/agents/openai.yaml"
+assert 'nested auditor reference' test -f "$HOME/.ai-toolkit/skills/engineering-auditor/references/output-format.md"
+assert 'nested auditor script' test -f "$HOME/.ai-toolkit/skills/engineering-auditor/scripts/validate_audit_report.py"
 for skill_root in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.copilot/skills"; do
   assert "skill symlink target: $skill_root" test "$(readlink "$skill_root/adr")" = "$HOME/.ai-toolkit/skills/adr"
+  assert "auditor symlink target: $skill_root" test "$(readlink "$skill_root/engineering-auditor")" = "$HOME/.ai-toolkit/skills/engineering-auditor"
 done
 assert 'Codex nested skill resource visible' test -f "$HOME/.agents/skills/release-notes/scripts/config.py"
 
@@ -224,6 +227,7 @@ for tools in claude codex gemini cursor copilot claude,codex,gemini,cursor,copil
     case ",$tools," in
       *",$skill_tool,"*)
         assert "nested skill: $tools -> $skill_root" test -f "$sandbox/project/$skill_root/release-notes/scripts/config.py"
+        assert "nested auditor: $tools -> $skill_root" test -f "$sandbox/project/$skill_root/engineering-auditor/scripts/repository_inventory.py"
         ;;
     esac
   done

@@ -21,7 +21,7 @@ Use English for code, commits, documentation, and technical discussion. Match th
 
 ## Routing
 
-- Use `setup-repo` for repository onboarding, `terraform-scaffold` for Terraform structure, and `kimball-model` for dimensional modeling.
+- Use `setup-repo` for repository onboarding, `engineering-auditor` for evidence-based cross-domain audits, `terraform-scaffold` for Terraform structure, and `kimball-model` for dimensional modeling.
 - Prefer portable, configuration-driven patterns; make vendor lock-in explicit and keep Dev, Test, and Prod structurally identical.
 - Prefer workload identity, vault-backed secrets, pinned dependencies, and least privilege.
 - Flag relevant compliance, residency, retention, and audit implications without inventing engagement policy.
