@@ -37,9 +37,13 @@ jobs:
           release_version="${GITHUB_REF_NAME#v}"
           bash_version="$(sed -n 's/^VERSION="\([0-9.]*\)"$/\1/p' install.sh)"
           powershell_version="$(sed -n "s/^\$script:Version = '\([0-9.]*\)'$/\1/p" install.ps1)"
+          bash_bootstrap_version="$(sed -n 's/^VERSION="\([0-9.]*\)"$/\1/p' bootstrap.sh)"
+          powershell_bootstrap_version="$(sed -n "s/^\$script:Version = '\([0-9.]*\)'$/\1/p" bootstrap.ps1)"
           test -n "$bash_version"
           test "$release_version" = "$bash_version"
           test "$release_version" = "$powershell_version"
+          test "$release_version" = "$bash_bootstrap_version"
+          test "$release_version" = "$powershell_bootstrap_version"
           printf 'value=%s\n' "$release_version" >> "$GITHUB_OUTPUT"
 
       - name: Build platform archive
@@ -108,9 +112,69 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  bootstrap:
+    name: Sign bootstrap entry points
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate bootstrap versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_version="${GITHUB_REF_NAME#v}"
+          bash_version="$(sed -n 's/^VERSION="\([0-9.]*\)"$/\1/p' bootstrap.sh)"
+          powershell_version="$(sed -n "s/^\$script:Version = '\([0-9.]*\)'$/\1/p" bootstrap.ps1)"
+          test -n "$bash_version"
+          test "$release_version" = "$bash_version"
+          test "$release_version" = "$powershell_version"
+
+      - name: Stage bootstrap assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp bootstrap.sh bootstrap.ps1 dist/
+          (cd dist && sha256sum bootstrap.sh > bootstrap.sh.sha256)
+          (cd dist && sha256sum bootstrap.ps1 > bootstrap.ps1.sha256)
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.0
+        with:
+          cosign-release: v2.4.1
+
+      - name: Sign and verify bootstrap assets
+        shell: bash
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          set -euo pipefail
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/${GITHUB_REF_NAME}"
+          for asset in dist/bootstrap.sh dist/bootstrap.ps1; do
+            cosign sign-blob --yes --bundle "${asset}.sigstore.json" "$asset"
+            (cd dist && sha256sum --check "$(basename "$asset").sha256")
+            cosign verify-blob --bundle "${asset}.sigstore.json" \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$asset"
+          done
+
+      - name: Upload signed bootstrap assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-bootstrap
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     name: Publish immutable release
-    needs: package
+    needs: [package, bootstrap]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

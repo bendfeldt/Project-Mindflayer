@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="3.6.0"
+VERSION="3.7.0"
 KNOWN_TOOLS="claude codex gemini cursor copilot"
 VALID_PROFILES="terraform databricks fabric"
 
@@ -477,7 +477,7 @@ selected_skill_roots() {
 global_destination() {
   local path="$1"
   case "$path" in
-    install.sh|install.ps1) printf '%s/.ai-toolkit/%s' "$HOME" "$path" ;;
+    bootstrap.sh|bootstrap.ps1|install.sh|install.ps1) printf '%s/.ai-toolkit/%s' "$HOME" "$path" ;;
     README.md|how-to-guide.md|LICENSE) printf '%s/.ai-toolkit/docs/%s' "$HOME" "$path" ;;
     global/AGENTS.md) printf '%s/.ai-toolkit/AGENTS.md' "$HOME" ;;
     CLAUDE.md|GEMINI.md) printf '%s/.ai-toolkit/templates/%s' "$HOME" "$path" ;;

@@ -38,7 +38,9 @@ platform helpers.
 ### Linux and macOS
 
 - Bash 3.2 or newer.
-- `curl` and Cosign for downloading and verifying a signed release bundle.
+- `curl`, `shasum`, and `tar` for downloading, hashing, and extracting the
+  signed release bundle. The bootstrap uses an
+  existing Cosign executable or downloads a checksum-pinned temporary copy.
 - Standard command-line utilities supplied by supported operating systems,
   including `awk`, `sed`, `grep`, `find`, `cksum`, `cmp`, `mktemp`, and `readlink`.
 - Write access to the user profile for global installation or the target
@@ -48,7 +50,9 @@ platform helpers.
 
 - Windows 10 or 11 with PowerShell 7.4 or newer (`pwsh`); PowerShell 7.4 LTS is
   the supported baseline.
-- Cosign for signed release-bundle verification.
+- An existing Cosign executable is optional; the bootstrap downloads a
+  checksum-pinned temporary amd64 binary when Cosign is unavailable. Windows
+  ARM64 uses Windows x64 emulation for that binary.
 - NTFS directory-junction support and write access to the user profile.
 - Write access to the target repository for project installation.
 
@@ -99,45 +103,23 @@ provider CLIs are required only when the selected workflow invokes them.
 
 ## Installation
 
-Linux and macOS use an explicitly versioned Linux or macOS archive:
+The supported public entry point is a single release-hosted bootstrap command. Mode and tools remain mandatory.
+
+Linux and macOS:
 
 ```bash
-version=3.6.0
-platform=linux
-asset="project-mindflayer-${version}-${platform}.tar.gz"
-base="https://github.com/bendfeldt/Project-Mindflayer/releases/download/v${version}"
-curl -fLO --proto '=https' "${base}/${asset}"
-curl -fLO --proto '=https' "${base}/${asset}.sha256"
-curl -fLO --proto '=https' "${base}/${asset}.sigstore.json"
-shasum -a 256 -c "${asset}.sha256"
-cosign verify-blob --bundle "${asset}.sigstore.json" \
-  --certificate-identity "https://github.com/bendfeldt/Project-Mindflayer/.github/workflows/release.yml@refs/tags/v${version}" \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com "$asset"
-tar -xzf "$asset"
-"project-mindflayer-${version}-${platform}/install.sh" --global --tools claude,codex
+curl -fsSL --proto '=https' --proto-redir '=https' https://github.com/bendfeldt/Project-Mindflayer/releases/latest/download/bootstrap.sh | bash -s -- --global --tools claude,codex
 ```
 
 Windows PowerShell:
 
 ```powershell
-$Version = '3.6.0'
-$Asset = "project-mindflayer-$Version-windows.zip"
-$Base = "https://github.com/bendfeldt/Project-Mindflayer/releases/download/v$Version"
-Invoke-WebRequest "$Base/$Asset" -OutFile $Asset
-Invoke-WebRequest "$Base/$Asset.sha256" -OutFile "$Asset.sha256"
-Invoke-WebRequest "$Base/$Asset.sigstore.json" -OutFile "$Asset.sigstore.json"
-$ExpectedHash = ((Get-Content "$Asset.sha256") -split '\s+')[0]
-$ActualHash = (Get-FileHash $Asset -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($ActualHash -ne $ExpectedHash) { throw 'release checksum verification failed' }
-cosign verify-blob --bundle "$Asset.sigstore.json" `
-  --certificate-identity "https://github.com/bendfeldt/Project-Mindflayer/.github/workflows/release.yml@refs/tags/v$Version" `
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com $Asset
-Expand-Archive $Asset -DestinationPath .
-& ".\project-mindflayer-$Version-windows\install.ps1" -Global -Tools claude,codex
+& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/bendfeldt/Project-Mindflayer/releases/latest/download/bootstrap.ps1'))) -Global -Tools claude,codex
 ```
 
-Existing configuration is preserved unless `--force` or `-Force` explicitly
-authorizes a timestamped backup and replacement.
+The Bash wrapper supports Linux and macOS on amd64 and arm64. The PowerShell wrapper supports Windows AMD64 and ARM64; both use Sigstore's amd64 Windows Cosign binary, with x64 emulation on ARM64. Bootstrap downloads and extraction use a temporary directory and do not write into the caller's working directory.
+
+The streamed wrapper is trusted through HTTPS and the repository's immutable-release policy. It downloads the pinned v3.7.0 platform bundle, verifies its published SHA-256 checksum and Sigstore identity, and only then invokes the bundled installer with the supplied flags. A separately authorized v3.7.0 release publication is required before the `releases/latest` commands resolve to this interface.
 
 ## Post-install verification
 
