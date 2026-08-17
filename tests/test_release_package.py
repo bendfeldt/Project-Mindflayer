@@ -176,12 +176,20 @@ exit "$FAKE_COSIGN_EXIT"
         fake_bin.mkdir()
         staging_root.mkdir()
 
-        self.write_executable(
-            fake_bin / "cosign",
-            "#!/bin/sh\nprintf 'cosign %s\\n' \"$*\" >> \"$FAKE_COMMAND_LOG\"\nexit 0\n",
+        # A .ps1 stub invoked through Get-Command keeps this path identical on Windows and
+        # POSIX; an extensionless native stub is unresolvable under PATHEXT.
+        cosign_path = fake_bin / "cosign.ps1"
+        cosign_path.write_text(
+            "[IO.File]::AppendAllText($env:FAKE_COMMAND_LOG, \"cosign $args`n\")\nexit 0\n",
+            encoding="utf-8",
         )
         harness_path.write_text(
             r"""
+function Get-Command {
+    [CmdletBinding()]
+    param([Parameter(Position = 0)][string]$Name)
+    [pscustomobject]@{ Source = $env:FAKE_COSIGN_PATH }
+}
 function Invoke-WebRequest {
     param([string]$Uri, [string]$OutFile)
     [IO.File]::AppendAllText($env:FAKE_COMMAND_LOG, "download $OutFile`n")
@@ -217,10 +225,14 @@ exit [int]$env:FAKE_INSTALLER_EXIT
             {
                 "BOOTSTRAP_PATH": str(ROOT / "bootstrap.ps1"),
                 "FAKE_COMMAND_LOG": str(log_path),
+                "FAKE_COSIGN_PATH": str(cosign_path),
                 "FAKE_INSTALLER_EXIT": str(installer_exit),
-                "PATH": f"{fake_bin}:{environment['PATH']}",
+                "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
                 "PROCESSOR_ARCHITECTURE": "AMD64",
+                # GetTempPath() reads TMPDIR on POSIX and TMP/TEMP on Windows.
                 "TMPDIR": str(staging_root),
+                "TMP": str(staging_root),
+                "TEMP": str(staging_root),
             }
         )
         result = subprocess.run(
@@ -348,6 +360,7 @@ exit [int]$env:FAKE_INSTALLER_EXIT
         self.assertIn("cosign-windows-amd64.exe", powershell)
         self.assertIn("@PSBoundParameters", powershell)
 
+    @unittest.skipUnless(os.name == "posix", "bootstrap.sh targets Linux and macOS")
     def test_unix_bootstrap_forwards_arguments_and_preserves_caller(self) -> None:
         arguments = ("--project", "--tools", "codex", "--force")
         for has_cosign in (True, False):
@@ -363,6 +376,7 @@ exit [int]$env:FAKE_INSTALLER_EXIT
                 if not has_cosign:
                     self.assertIn("/cosign\n", log)
 
+    @unittest.skipUnless(os.name == "posix", "bootstrap.sh targets Linux and macOS")
     def test_unix_bootstrap_verification_failures_stop_before_extraction(self) -> None:
         scenarios = (
             {"has_cosign": False, "hash_exit": 1, "cosign_exit": 0},
@@ -380,6 +394,7 @@ exit [int]$env:FAKE_INSTALLER_EXIT
                 self.assertNotIn("tar\n", log)
                 self.assertNotIn("install ", log)
 
+    @unittest.skipUnless(os.name == "posix", "bootstrap.sh targets Linux and macOS")
     def test_unix_bootstrap_rejects_unsupported_host_before_download(self) -> None:
         scenarios = (
             {"system": "FreeBSD", "architecture": "x86_64"},
