@@ -1,19 +1,21 @@
 # path	type	version	consumers	ownership	platforms
-manifest.tsv	manifest	1.2.0	global	managed-file	linux,macos,windows
-install.sh	script	3.6.0	global	managed-file	linux,macos
-install.ps1	script	3.6.0	global	managed-file	windows
-README.md	document	3.6.0	global	managed-file	linux,macos,windows
-how-to-guide.md	document	3.5.0	global	managed-file	linux,macos,windows
+manifest.tsv	manifest	1.3.0	global	managed-file	linux,macos,windows
+bootstrap.sh	script	3.7.0	global	managed-file	linux,macos
+bootstrap.ps1	script	3.7.0	global	managed-file	windows
+install.sh	script	3.7.0	global	managed-file	linux,macos
+install.ps1	script	3.7.0	global	managed-file	windows
+README.md	document	3.7.0	global	managed-file	linux,macos,windows
+how-to-guide.md	document	3.6.0	global	managed-file	linux,macos,windows
 LICENSE	license	1.0.0	global	managed-file	linux,macos,windows
 global/AGENTS.md	baseline	4.1.0	global:claude,global:codex,global:gemini,global:cursor,global:copilot	managed-file	linux,macos,windows
 templates/AGENTS.md	template	4.0.0	global,project	managed-file	linux,macos,windows
 templates/AGENTS-composable.md	template	5.0.0	global,project	managed-file	linux,macos,windows
 CLAUDE.md	shim	1.0.0	global:claude,project:claude	managed-file	linux,macos,windows
 GEMINI.md	shim	1.0.0	global:gemini,project:gemini	managed-file	linux,macos,windows
-docs/architecture.md	document	3.7.0	global	managed-file	linux,macos,windows
+docs/architecture.md	document	3.7.1	global	managed-file	linux,macos,windows
 docs/consumer-extensions.md	document	1.1.0	global	managed-file	linux,macos,windows
 docs/operating-standards.md	document	1.0.0	global	managed-file	linux,macos,windows
-docs/system-requirements.md	document	1.2.0	global	managed-file	linux,macos,windows
+docs/system-requirements.md	document	1.3.0	global	managed-file	linux,macos,windows
 docs/terraform-patterns.md	document	2.0.0	global	managed-file	linux,macos,windows
 docs/kimball-reference.md	document	2.0.0	global	managed-file	linux,macos,windows
 docs/decisions/0001-universal-agents-guidance.md	decision	1.2.0	global	managed-file	linux,macos,windows
@@ -84,7 +86,7 @@ skills/release-notes/scripts/make_outlook_draft.applescript	skill-resource	2.2.0
 skills/release-notes/scripts/merge_release.py	skill-resource	2.3.0	global,project:skills	managed-tree	linux,macos,windows
 skills/release-notes/scripts/providers.py	skill-resource	2.2.0	global,project:skills	managed-tree	linux,macos,windows
 skills/release-notes/scripts/publish_descriptions.py	skill-resource	2.3.0	global,project:skills	managed-tree	linux,macos,windows
-skills/setup-repo/SKILL.md	skill	2.5.0	global,project:skills	managed-tree	linux,macos,windows
+skills/setup-repo/SKILL.md	skill	2.6.0	global,project:skills	managed-tree	linux,macos,windows
 skills/setup-repo/agents/openai.yaml	skill-resource	2.3.0	global,project:skills	managed-tree	linux,macos,windows
 skills/smart-commit/SKILL.md	skill	2.0.0	global,project:skills	managed-tree	linux,macos,windows
 skills/smart-commit/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree	linux,macos,windows

@@ -6,6 +6,8 @@ export PYTHONDONTWRITEBYTECODE=1
 EXPECTED_SHELLCHECK_VERSION="0.11.0"
 EXPECTED_TOOLKIT_VERSION="$(awk -F '\t' '$1 == "install.sh" {print $3; exit}' "$ROOT/manifest.tsv")"
 EXPECTED_POWERSHELL_VERSION="$(awk -F '\t' '$1 == "install.ps1" {print $3; exit}' "$ROOT/manifest.tsv")"
+EXPECTED_BOOTSTRAP_VERSION="$(awk -F '\t' '$1 == "bootstrap.sh" {print $3; exit}' "$ROOT/manifest.tsv")"
+EXPECTED_POWERSHELL_BOOTSTRAP_VERSION="$(awk -F '\t' '$1 == "bootstrap.ps1" {print $3; exit}' "$ROOT/manifest.tsv")"
 case "$(uname -s)" in
   Darwin) TEST_PLATFORM=macos ;;
   Linux) TEST_PLATFORM=linux ;;
@@ -52,32 +54,34 @@ copy_test_bundle() {
 
 printf '%s\n' '--- static and manifest ---'
 assert 'installer version matches manifest' grep -Fqx "VERSION=\"$EXPECTED_TOOLKIT_VERSION\"" "$ROOT/install.sh"
+assert 'Bash bootstrap version matches manifest' grep -Fqx "VERSION=\"$EXPECTED_BOOTSTRAP_VERSION\"" "$ROOT/bootstrap.sh"
 assert 'installer has no mutable-main fetch path' sh -c "! grep -Eq 'raw\.githubusercontent\.com/.*/main|curl .*manifest' '$ROOT/install.sh'"
 assert 'Bash help advertises Windows runtime' sh -c "bash '$ROOT/install.sh' --help | grep -Fq 'PowerShell 7.4+'"
 assert 'PowerShell installer distributed' test -n "$EXPECTED_POWERSHELL_VERSION"
 assert 'PowerShell installer version matches manifest' grep -Fqx "\$script:Version = '$EXPECTED_POWERSHELL_VERSION'" "$ROOT/install.ps1"
+assert 'PowerShell bootstrap version matches manifest' grep -Fqx "\$script:Version = '$EXPECTED_POWERSHELL_BOOTSTRAP_VERSION'" "$ROOT/bootstrap.ps1"
 # shellcheck disable=SC2016
 assert 'manifest uses six-field schema' awk -F '\t' '$1 !~ /^#/ && NF != 6 {exit 1}' "$ROOT/manifest.tsv"
 # shellcheck disable=SC2016
 assert 'manifest platform declarations are valid' awk -F '\t' '$1 !~ /^#/ {delete seen; count=split($6, values, ","); for (i=1; i<=count; i++) if (values[i] !~ /^(linux|macos|windows)$/ || seen[values[i]]++) exit 1}' "$ROOT/manifest.tsv"
 # shellcheck disable=SC2016
-assert 'Bash artifacts are Unix scoped' awk -F '\t' '$1 ~ /(^install\.sh$|^tools\/.*\.sh$)/ && $6 != "linux,macos" {exit 1}' "$ROOT/manifest.tsv"
+assert 'Bash artifacts are Unix scoped' awk -F '\t' '($1 ~ /^(bootstrap|install)\.sh$/ || $1 ~ /^tools\/.*\.sh$/) && $6 != "linux,macos" {exit 1}' "$ROOT/manifest.tsv"
 # shellcheck disable=SC2016
-assert 'PowerShell artifacts are Windows scoped' awk -F '\t' '$1 ~ /(^install\.ps1$|^tools\/.*\.ps1$)/ && $6 != "windows" {exit 1}' "$ROOT/manifest.tsv"
+assert 'PowerShell artifacts are Windows scoped' awk -F '\t' '($1 ~ /^(bootstrap|install)\.ps1$/ || $1 ~ /^tools\/.*\.ps1$/) && $6 != "windows" {exit 1}' "$ROOT/manifest.tsv"
 assert 'AppleScript helper is macOS scoped' grep -Fqx $'skills/release-notes/scripts/make_outlook_draft.applescript\tskill-resource\t2.2.0\tglobal,project:skills\tmanaged-tree\tmacos' "$ROOT/manifest.tsv"
 assert 'email helper is Linux and Windows scoped' grep -Fqx $'skills/release-notes/scripts/make_email_draft.py\tskill-resource\t2.2.0\tglobal,project:skills\tmanaged-tree\tlinux,windows' "$ROOT/manifest.tsv"
 assert 'repository tests are not distributable' sh -c "! grep -Eq 'skills/.*/test_[^[:space:]]+\\.py' '$ROOT/manifest.tsv'"
-assert 'system requirements distributed' grep -Fq $'docs/system-requirements.md\tdocument\t1.2.0' "$ROOT/manifest.tsv"
+assert 'system requirements distributed' grep -Fq $'docs/system-requirements.md\tdocument\t1.3.0' "$ROOT/manifest.tsv"
 assert 'local mode hidden from public help' sh -c "! bash '$ROOT/install.sh' --help | grep -Fq -- '--local'"
 for public_install_file in "$ROOT/README.md" "$ROOT/how-to-guide.md" "$ROOT/skills/setup-repo/SKILL.md"; do
   assert "no public local mode: ${public_install_file##*/}" not_contains "$public_install_file" '--local'
 done
 assert 'legacy local flag retained as no-op' grep -Fq -- '--local) :' "$ROOT/install.sh"
-for script in "$ROOT/install.sh" "$ROOT"/tools/*.sh "$ROOT"/tests/*.sh; do assert "bash syntax: ${script##*/}" bash -n "$script"; done
+for script in "$ROOT/bootstrap.sh" "$ROOT/install.sh" "$ROOT"/tools/*.sh "$ROOT"/tests/*.sh; do assert "bash syntax: ${script##*/}" bash -n "$script"; done
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck_version="$(shellcheck --version | awk '$1 == "version:" {print $2}')"
   assert 'shellcheck version' test "$shellcheck_version" = "$EXPECTED_SHELLCHECK_VERSION"
-  assert 'shellcheck' shellcheck -x "$ROOT/install.sh" "$ROOT"/tools/*.sh "$ROOT"/tests/*.sh
+  assert 'shellcheck' shellcheck -x "$ROOT/bootstrap.sh" "$ROOT/install.sh" "$ROOT"/tools/*.sh "$ROOT"/tests/*.sh
 else
   fail "shellcheck $EXPECTED_SHELLCHECK_VERSION available"
 fi
@@ -178,7 +182,9 @@ assert 'global install all tools' run_install --global --tools claude,codex,gemi
 assert 'version written' test "$(cat "$HOME/.ai-toolkit/version")" = "$EXPECTED_TOOLKIT_VERSION"
 assert 'manifest installed' test -f "$HOME/.ai-toolkit/manifest.tsv"
 assert 'installer installed' test -f "$HOME/.ai-toolkit/install.sh"
+assert 'bootstrap installed' test -f "$HOME/.ai-toolkit/bootstrap.sh"
 assert 'PowerShell installer excluded on macOS' test ! -e "$HOME/.ai-toolkit/install.ps1"
+assert 'PowerShell bootstrap excluded on macOS' test ! -e "$HOME/.ai-toolkit/bootstrap.ps1"
 assert 'shared skill lifecycle installed' test -f "$HOME/.ai-toolkit/skill-lifecycle.sh"
 assert 'PowerShell lifecycle excluded on macOS' test ! -e "$HOME/.ai-toolkit/uninstall.ps1"
 assert 'ownership state' test -f "$HOME/.ai-toolkit/managed.tsv"

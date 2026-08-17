@@ -49,12 +49,14 @@ Global shared artifacts install under `~/.ai-toolkit/`. Skill rows use the `glob
 
 Global skills remain canonical in `~/.ai-toolkit/skills/` and are linked into each selected discovery root. Project installs copy complete skill directories as real files: Codex uses `.agents/skills/`, while Claude and Copilot use `.claude/skills/`. The installer reads each bundled artifact once and deduplicates shared roots.
 
-Public installation selects an explicit versioned Linux, macOS, or Windows
-archive and verifies its Cosign keyless signature against the repository release
-workflow identity. Release packaging projects the one canonical manifest into
-platform-specific archives; no second source inventory is maintained. Installers
-read locally from the verified archive and install only rows matching the target
-platform. The hidden local flag remains an internal compatibility and test path.
+Public installation streams a release-hosted bootstrap entry point and requires
+explicit mode and tool flags. The wrapper selects the platform, downloads the
+versioned archive into temporary staging, and verifies its checksum and Cosign
+keyless signature against the repository release workflow identity. Release
+packaging projects one canonical manifest into platform-specific archives; no
+second source inventory is maintained. Installers read the locally verified
+archive and install only rows matching the target platform. The hidden local
+flag remains an internal compatibility test path.
 
 A successful global install writes the toolkit release stamp last. Obsolete project artifacts are removed during upgrade only when recorded ownership proof still matches. Modified or unowned files are preserved.
 
@@ -68,6 +70,6 @@ The distribution repository is deliberately exempt from project installation bec
 
 ## Version domains
 
-- `VERSION` in `install.sh`: toolkit release version.
+- `VERSION` in `bootstrap.sh` and `install.sh`: toolkit release version.
 - Headers in `templates/AGENTS*.md`: repository-template schema versions.
 - Skill and skill-resource rows in `manifest.tsv`: skill lifecycle versions.

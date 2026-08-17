@@ -20,27 +20,23 @@ when a selected capability needs Python, require Python 3.12 or newer.
    - Technologies from the installed `~/.ai-toolkit/config/technology-catalog.tsv`. If it is unavailable, read the canonical repository copy; never invent an identifier. Use namespaced identifiers for platform components.
    - Client name.
    - Resource prefix only when the repository uses one.
-4. Require an explicitly versioned, Cosign-verified platform release bundle as
-   described in the installed system requirements. Never stream an installer or
-   resolve `latest`. Preview and obtain approval for:
+4. Use the release-hosted bootstrap entry point, which verifies the platform
+   bundle checksum and Sigstore identity before invoking the bundled installer.
+   Mode and tools stay explicit. Preview and obtain approval for:
 
 ```bash
-<verified-release-directory>/install.sh --project \
-  --tools <comma-separated-tools> \
-  --project-types <comma-separated-project-types> \
-  --technologies <comma-separated-technologies> \
-  --client "<client>" [--prefix <prefix>]
+curl -fsSL --proto '=https' --proto-redir '=https' https://github.com/bendfeldt/Project-Mindflayer/releases/latest/download/bootstrap.sh | bash -s -- --project --tools <comma-separated-tools> --project-types <comma-separated-project-types> --technologies <comma-separated-technologies> --client "<client>" [--prefix <prefix>]
 ```
 
 On Windows, preview the equivalent native PowerShell command:
 
 ```powershell
-pwsh -NoProfile -File <verified-release-directory>/install.ps1 -Project `
-  -Tools <comma-separated-tools> `
-  -ProjectTypes <comma-separated-project-types> `
-  -Technologies <comma-separated-technologies> `
-  -Client '<client>' [-Prefix <prefix>]
+& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/bendfeldt/Project-Mindflayer/releases/latest/download/bootstrap.ps1'))) -Project -Tools <comma-separated-tools> -ProjectTypes <comma-separated-project-types> -Technologies <comma-separated-technologies> -Client '<client>' [-Prefix <prefix>]
 ```
+
+When the toolkit is already installed globally, preview the installed installer
+instead: `~/.ai-toolkit/install.sh` on Linux/macOS or `~/.ai-toolkit/install.ps1`
+on Windows, with the same flags.
 
 5. Run it in the target repository and report only tool-conditional artifacts actually created.
 6. Validate project instruction discovery:

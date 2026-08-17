@@ -20,7 +20,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:Version = '3.6.0'
+$script:Version = '3.7.0'
 $script:KnownTools = @('claude', 'codex', 'gemini', 'cursor', 'copilot')
 $script:SelectedTools = @()
 $script:OwnershipFile = $null
@@ -487,7 +487,7 @@ function Get-GlobalDestination {
     $path = ConvertTo-NativeScriptPath $ManifestPath
     $toolkitHome = Join-Path $HOME '.ai-toolkit'
     switch -Regex ($path) {
-        '^install\.(sh|ps1)$' { return Join-Path $toolkitHome $path }
+        '^(bootstrap|install)\.(sh|ps1)$' { return Join-Path $toolkitHome $path }
         '^(README\.md|how-to-guide\.md|LICENSE)$' { return Join-Path (Join-Path $toolkitHome 'docs') $path }
         '^global/AGENTS\.md$' { return Join-Path $toolkitHome 'AGENTS.md' }
         '^(CLAUDE\.md|GEMINI\.md)$' { return Join-Path (Join-Path $toolkitHome 'templates') $path }

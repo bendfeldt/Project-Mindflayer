@@ -407,7 +407,7 @@ function Get-ExpectedGlobalPath {
     $toolkitHome = Join-Path $HomePath '.ai-toolkit'
     $nativePath = $ManifestPath.Replace('/', [IO.Path]::DirectorySeparatorChar)
     switch -Regex ($ManifestPath) {
-        '^install\.(sh|ps1)$' { return Join-Path $toolkitHome $nativePath }
+        '^(bootstrap|install)\.(sh|ps1)$' { return Join-Path $toolkitHome $nativePath }
         '^(README\.md|how-to-guide\.md|LICENSE)$' { return Join-Path (Join-Path $toolkitHome 'docs') $nativePath }
         '^global/AGENTS\.md$' { return Join-Path $toolkitHome 'AGENTS.md' }
         '^(CLAUDE\.md|GEMINI\.md)$' { return Join-Path (Join-Path $toolkitHome 'templates') $nativePath }
@@ -449,6 +449,7 @@ New-Item -ItemType Directory -Path $TestRoot -Force | Out-Null
 try {
     Invoke-Test -Name 'PowerShell 7.4 syntax for required scripts' -Test {
         $requiredScripts = @(
+            'bootstrap.ps1',
             'install.ps1',
             'tools/check-update.ps1',
             'tools/check-stores.ps1',
@@ -490,7 +491,8 @@ try {
             Assert-PathExists -Path (Join-Path $Root $row.Path) -Message "Manifest artifact $($row.Path) exists"
         }
         foreach ($artifact in @(
-                'install.ps1',
+            'bootstrap.ps1',
+            'install.ps1',
                 'tools/check-update.ps1',
                 'tools/check-stores.ps1',
                 'tools/check-template-update.ps1',
@@ -505,6 +507,8 @@ try {
         $installerVersion = ($manifestRows | Where-Object Path -eq 'install.ps1').Version
         Assert-True -Condition ([bool]$installerVersion) -Message 'PowerShell installer lifecycle version'
         Assert-TextContains -Text ([IO.File]::ReadAllText((Join-Path $Root 'install.ps1'))) -Expected "`$script:Version = '$installerVersion'" -Message 'Installer version matches manifest'
+        $bootstrapVersion = ($manifestRows | Where-Object Path -eq 'bootstrap.ps1').Version
+        Assert-TextContains -Text ([IO.File]::ReadAllText((Join-Path $Root 'bootstrap.ps1'))) -Expected "`$script:Version = '$bootstrapVersion'" -Message 'Bootstrap version matches manifest'
         foreach ($row in $manifestRows | Where-Object Path -Like '*.ps1') {
             Assert-Equal -Actual $row.Platforms -Expected 'windows' -Message "PowerShell artifact platforms for $($row.Path)"
         }
@@ -746,7 +750,8 @@ try {
             foreach ($row in $manifestRows | Where-Object { (Test-IsGlobalManifestRow $_) -and -not (Test-PlatformMatch -Row $_ -Platform windows) }) {
                 Assert-PathNotExists -Path (Get-ExpectedGlobalPath -HomePath $context.Home -ManifestPath $row.Path) -Message "Non-Windows global manifest artifact $($row.Path)"
             }
-            Assert-PathNotExists -Path (Join-Path $context.Home '.ai-toolkit/install.sh') -Message 'Bash installer excluded from Windows install'
+        Assert-PathNotExists -Path (Join-Path $context.Home '.ai-toolkit/install.sh') -Message 'Bash installer excluded from Windows install'
+        Assert-PathNotExists -Path (Join-Path $context.Home '.ai-toolkit/bootstrap.sh') -Message 'Bash bootstrap excluded from Windows install'
             foreach ($relativePath in @('.claude/CLAUDE.md', '.codex/AGENTS.md', '.gemini/GEMINI.md', '.cursor/rules.md', '.copilot/copilot-instructions.md')) {
                 Assert-PathExists -Path (Join-Path $context.Home $relativePath) -Message 'Global consumer artifact'
             }
