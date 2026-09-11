@@ -24,10 +24,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import unquote, urlsplit
 
 TOOLKIT_HOME = Path.home() / ".ai-toolkit" / "release-notes"
@@ -42,6 +46,130 @@ RELEASE_SLUG_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 RELEASE_SLUG_MAX_LENGTH = 128
 
 
+# ---------------------------------------------------------------- portability
+
+# Windows ships command-line tools as shims: the Azure CLI installs `az.cmd`.
+WINDOWS_SHIMS = (".cmd", ".bat")
+
+# Resolved once: a process does not change operating system while it runs.
+ON_WINDOWS = os.name == "nt"
+
+CLI_LABELS = {"az": "Azure CLI (az)", "gh": "GitHub CLI (gh)", "git": "Git"}
+
+
+class ToolError(SystemExit):
+    """A required command-line tool is missing or cannot be invoked safely."""
+
+
+class Command(NamedTuple):
+    """A launchable command: an argument vector, or a quoted line for a shim."""
+
+    args: str | list[str]
+    shell: bool
+
+
+def configure_stdio() -> None:
+    """Print UTF-8 whatever the console encoding is.
+
+    Release notes are written in the team's own language; a Danish body must not
+    fail on a console that defaults to a single-byte code page.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
+
+
+def read_text(path: Path) -> str:
+    """Read UTF-8 text, never the platform's locale encoding."""
+    return path.read_text(encoding="utf-8")
+
+
+def write_text(path: Path, text: str) -> None:
+    """Write UTF-8 text with LF endings, so artifacts are identical everywhere.
+
+    Every artifact this skill writes is read back by another script or by a
+    provider CLI. Locale-encoded bytes and CRLF translation would make that
+    round trip depend on which machine ran which step.
+    """
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+
+
+def read_json(path: Path):
+    """Parse a UTF-8 JSON document."""
+    return json.loads(read_text(path))
+
+
+def write_json(path: Path, value, *, indent: int = 2) -> None:
+    """Serialize JSON as UTF-8 with a trailing newline."""
+    write_text(path, json.dumps(value, ensure_ascii=False, indent=indent) + "\n")
+
+
+def quote_for_cmd(value: str) -> str:
+    """Quote one argument for the Windows command processor.
+
+    Double quotes turn off `& | < > ^` splitting, which every Azure DevOps REST
+    URL relies on (`?api-version=7.0&$expand=all`). Percent signs survive too:
+    an undefined `%name%` is left alone on a command line, and percent-encoded
+    project names never spell an environment variable. A literal double quote or
+    a line break cannot be passed through a batch shim safely, so refuse those
+    instead of guessing — no argument this skill builds contains either, because
+    work-item bodies travel in a request-body file rather than on the command
+    line.
+    """
+    if '"' in value or "\r" in value or "\n" in value:
+        raise ToolError(
+            f"cannot pass {value!r} through a Windows command shim: arguments "
+            'must not contain a double quote or a line break'
+        )
+    return f'"{value}"'
+
+
+def resolve_command(args: Sequence[str]) -> Command:
+    """Return the command that launches `args[0]` on this platform.
+
+    `shutil.which` honours PATHEXT, so it finds the Windows shims that bare
+    `subprocess` cannot: CreateProcess only ever appends `.exe`, which is why
+    `az` raises FileNotFoundError there. A `.cmd` or `.bat` shim has to go
+    through the command processor, so it is handed over as one explicitly quoted
+    line rather than as an argument vector, whose default quoting would leave
+    `&` to split the command.
+    """
+    name = str(args[0])
+    resolved = shutil.which(name)
+    if resolved is None:
+        raise ToolError(f"{CLI_LABELS.get(name, name)} not found on PATH")
+    rest = [str(arg) for arg in args[1:]]
+    if ON_WINDOWS and resolved.lower().endswith(WINDOWS_SHIMS):
+        line = " ".join(quote_for_cmd(value) for value in (resolved, *rest))
+        return Command(line, True)
+    return Command([resolved, *rest], False)
+
+
+def run_capture(
+    args: Sequence[str], *, cwd: Path | None = None, stdin: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run a tool and capture its output as UTF-8, whatever the locale says."""
+    command = resolve_command(args)
+    return subprocess.run(
+        command.args,
+        shell=command.shell,
+        cwd=cwd,
+        input=stdin,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
+# ---------------------------------------------------------------------- email
+
 def email_tool_for_platform(platform: str) -> str:
     """Return the local draft mechanism supported by the current platform."""
     if platform == "darwin":
@@ -49,6 +177,40 @@ def email_tool_for_platform(platform: str) -> str:
     if platform in {"linux", "win32"}:
         return "eml"
     return "none"
+
+
+def supported_email_tools(platform: str) -> set[str]:
+    """Return every draft mechanism this platform can actually run.
+
+    macOS keeps Outlook as its default but can also write a `.eml`: the
+    generator is pure standard library, so it is installed everywhere and is the
+    fallback when Outlook is absent.
+    """
+    if platform == "darwin":
+        return {"outlook-macos", "eml"}
+    if platform in {"linux", "win32"}:
+        return {"eml"}
+    return {"none"}
+
+
+def resolve_email(stored: dict | None, platform: str) -> dict:
+    """Reconcile a stored `email` block with the platform running it.
+
+    Engagement files are written once, on one machine, and then used from
+    whichever machine the release happens to be cut on. A tool recorded on macOS
+    cannot run on Windows, so fall back to what this platform supports and say
+    that the fall-back happened rather than selecting something unusable.
+    """
+    block = dict(stored or {})
+    configured = block.get("tool") or email_tool_for_platform(platform)
+    tool = configured
+    if configured not in supported_email_tools(platform):
+        tool = email_tool_for_platform(platform)
+    block["tool"] = tool
+    block["configured_tool"] = configured
+    block["platform_override"] = tool != configured
+    return block
+
 
 # Item folder suffixes for Fabric / Power BI repos. Paths that match none of
 # these fall back to a two-level directory grouping, so the mapping still works
@@ -192,8 +354,7 @@ def _parse_github(host: str, segs: list[str], url: str) -> dict:
 
 
 def git_remote(repo: Path, name: str = "origin") -> str:
-    proc = subprocess.run(["git", "remote", "get-url", name],
-                          cwd=repo, capture_output=True, text=True)
+    proc = run_capture(["git", "remote", "get-url", name], cwd=repo)
     if proc.returncode != 0:
         raise ConfigError(f"no git remote '{name}' in {repo}: {proc.stderr.strip()}")
     return proc.stdout.strip()
@@ -202,8 +363,7 @@ def git_remote(repo: Path, name: str = "origin") -> str:
 def repo_root(explicit: Path | None) -> Path:
     if explicit is not None:
         return explicit.resolve()
-    proc = subprocess.run(["git", "rev-parse", "--show-toplevel"],
-                          capture_output=True, text=True)
+    proc = run_capture(["git", "rev-parse", "--show-toplevel"])
     if proc.returncode != 0:
         raise ConfigError(
             "not inside a git repository — pass --repo <path>")
@@ -274,7 +434,7 @@ def bootstrap(root: Path, engagement: str | None = None) -> dict:
         provider: {"org": orgs[0]} if len(orgs) == 1 else {"orgs": orgs},
         "work_items": {"project": projects[0] if len(projects) == 1 else None},
         "repos": repos,
-        "email": {"tool": email_tool_for_platform(sys.platform)},
+        "email": resolve_email(None, sys.platform),
     }
     if skipped:
         config["_skipped"] = skipped
@@ -291,7 +451,7 @@ def save_engagement(config: dict) -> Path:
     ENGAGEMENTS_DIR.mkdir(parents=True, exist_ok=True)
     path = engagement_path(config["engagement"])
     clean = {k: v for k, v in config.items() if not k.startswith("_")}
-    path.write_text(json.dumps(clean, ensure_ascii=False, indent=2) + "\n")
+    write_json(path, clean)
     return path
 
 
@@ -305,7 +465,7 @@ def load_engagement_for(remote: dict) -> dict | None:
         return None
     for path in sorted(ENGAGEMENTS_DIR.glob("*.json")):
         try:
-            data = json.loads(path.read_text())
+            data = read_json(path)
         except json.JSONDecodeError as exc:
             print(f"warning: skipping malformed {path}: {exc}", file=sys.stderr)
             continue
@@ -324,7 +484,7 @@ def load_repo_config(repo: Path) -> dict:
     if not path.is_file():
         return {}
     try:
-        return json.loads(path.read_text())
+        return read_json(path)
     except json.JSONDecodeError as exc:
         raise ConfigError(f"malformed {path}: {exc}")
 
@@ -373,8 +533,8 @@ def effective_config(repo: Path) -> dict:
         merged["host"] = remote["host"]
     merged["engagement"] = (engagement or {}).get("engagement")
     merged["engagement_path"] = (engagement or {}).get("_path")
-    merged["email"] = (engagement or {}).get(
-        "email", {"tool": email_tool_for_platform(sys.platform)}
+    merged["email"] = resolve_email(
+        (engagement or {}).get("email"), sys.platform
     )
     merged["has_repo_config"] = bool(repo_cfg)
     return merged
@@ -392,9 +552,9 @@ def check_cli(provider: str) -> list[str]:
         probe = ["gh", "auth", "status"]
         hint = "run: gh auth login"
     try:
-        proc = subprocess.run(probe, capture_output=True, text=True)
-    except FileNotFoundError:
-        return [f"{probe[0]} not installed"]
+        proc = run_capture(probe)
+    except ToolError as exc:
+        return [f"{exc.code} — install it and re-run"]
     if proc.returncode != 0:
         problems.append(f"{probe[0]} not authenticated — {hint}")
     return problems
@@ -412,6 +572,17 @@ def validate(repo: Path) -> int:
             f"no engagement roster matches org '{cfg['org']}' in {ENGAGEMENTS_DIR}")
     if cfg["provider"] == "ado" and not cfg["work_item_project"]:
         problems.append("work_item_project is unset and could not be derived")
+    email = cfg["email"]
+    if email["platform_override"]:
+        problems.append(
+            f"email.tool '{email['configured_tool']}' cannot run on "
+            f"{sys.platform}; using '{email['tool']}' instead"
+        )
+    elif email["tool"] == "none":
+        problems.append(
+            f"no draft mechanism is supported on {sys.platform}; "
+            "the skill will produce the subject and HTML only"
+        )
     problems += check_cli(cfg["provider"])
 
     print(json.dumps(cfg, ensure_ascii=False, indent=2))
@@ -446,6 +617,7 @@ def main() -> None:
     ap.add_argument("--write", action="store_true",
                     help="write the engagement file instead of printing it (--bootstrap)")
     args = ap.parse_args()
+    configure_stdio()
 
     if args.bootstrap:
         if args.root is None:

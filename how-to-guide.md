@@ -9,7 +9,7 @@ lifecycle tools are Bash scripts on Linux/macOS and PowerShell scripts on
 Windows. The bootstrap uses an existing Cosign executable or downloads a
 checksum-pinned temporary copy to verify signed release bundles before execution.
 Release-draft tooling installs the AppleScript helper on macOS and the
-portable Python `.eml` generator on Linux/Windows. Native Windows behavior is
+portable Python `.eml` generator on every platform. Native Windows behavior is
 CI-tested on GitHub's Windows runner. Python 3.12+, Git, and provider CLIs are
 required only by the capabilities identified in the normative
 [system requirements](docs/system-requirements.md), which also defines supported

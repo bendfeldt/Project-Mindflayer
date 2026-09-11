@@ -24,13 +24,19 @@ several repos into one test email.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from config import effective_config, repo_root, resolve_run_directory  # noqa: E402
+from config import (  # noqa: E402
+    configure_stdio,
+    effective_config,
+    read_json,
+    repo_root,
+    resolve_run_directory,
+    write_json,
+)
 from providers import AdoProvider, GitHubProvider, from_config  # noqa: E402
 
 
@@ -74,7 +80,7 @@ def write_artifact(slug: str, cfg: dict, provider, texts: dict[str, str],
     run_dir = resolve_run_directory(slug)
     run_dir.mkdir(parents=True, exist_ok=True)
     path = run_dir / f"{cfg['repo']}.json"
-    path.write_text(json.dumps(artifact, ensure_ascii=False, indent=2) + "\n")
+    write_json(path, artifact)
     return path
 
 
@@ -96,12 +102,13 @@ def main() -> None:
     ap.add_argument("--evidence", type=Path, default=None,
                     help="evidence.json, used to enrich the run artifact with titles")
     args = ap.parse_args()
+    configure_stdio()
 
     cfg = effective_config(repo_root(args.repo))
     provider = build_provider(args, cfg)
 
     texts: dict[str, str] = {str(k): v for k, v in
-                             json.loads(args.descriptions.read_text()).items()}
+                             read_json(args.descriptions).items()}
     if not texts:
         raise SystemExit(f"no descriptions in {args.descriptions}")
     ids = sorted(texts, key=int)
@@ -134,7 +141,7 @@ def main() -> None:
         print("this was a dry run — add --apply to write to the tracker")
 
     if args.run:
-        evidence = json.loads(args.evidence.read_text()) if args.evidence else None
+        evidence = read_json(args.evidence) if args.evidence else None
         path = write_artifact(args.run, cfg, provider, texts, evidence, args.apply)
         print(f"run artifact: {path}")
 

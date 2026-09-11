@@ -27,7 +27,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -37,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import (  # noqa: E402
     DEFAULT_ITEM_SUFFIXES, DEFAULT_MERGE_PATTERNS, DEFAULT_TITLE_PREFIXES,
     DEFAULT_TASK_TITLE_PREFIXES,
-    effective_config,
+    configure_stdio, effective_config, read_json, run_capture, write_json,
 )
 
 
@@ -128,8 +127,7 @@ class Conventions:
 def repo_root(explicit: Path | None) -> Path:
     if explicit is not None:
         return explicit.resolve()
-    proc = subprocess.run(["git", "rev-parse", "--show-toplevel"],
-                          capture_output=True, text=True)
+    proc = run_capture(["git", "rev-parse", "--show-toplevel"])
     if proc.returncode != 0:
         raise SystemExit("not inside a git repository — pass --repo <path>")
     return Path(proc.stdout.strip())
@@ -144,9 +142,8 @@ class Git:
         self.conv = conv
 
     def run(self, *args: str, allow_fail: bool = False) -> str:
-        proc = subprocess.run(
-            ["git", "-c", "core.quotepath=false", *args],
-            cwd=self.repo, capture_output=True, text=True,
+        proc = run_capture(
+            ["git", "-c", "core.quotepath=false", *args], cwd=self.repo
         )
         if proc.returncode != 0:
             if allow_fail:
@@ -199,7 +196,7 @@ def load_tasks(path: Path, child_types: list[str]) -> list[dict]:
     parents rather than tasks — neither maps to a folder. An empty `child_types`
     keeps every child, which is what GitHub sub-issues need.
     """
-    raw = json.loads(path.read_text())
+    raw = read_json(path)
     if isinstance(raw, dict) and "value" in raw:
         items = raw["value"]
     elif isinstance(raw, dict) and "tasks" in raw:
@@ -406,6 +403,7 @@ def main() -> None:
     ap.add_argument("--config", action="store_true",
                     help="load folder conventions from the repo's release-notes config")
     args = ap.parse_args()
+    configure_stdio()
 
     repo = repo_root(args.repo)
     conv = Conventions(effective_config(repo) if args.config else None)
@@ -482,7 +480,7 @@ def main() -> None:
         "tasks": evidence,
     }
     out = args.out or Path("evidence.json")
-    out.write_text(json.dumps(payload, ensure_ascii=False, indent=1))
+    write_json(out, payload, indent=1)
     print(f"\nevidence written to {out} ({len(evidence)} tasks)")
 
 

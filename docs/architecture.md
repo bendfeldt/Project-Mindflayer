@@ -17,7 +17,8 @@ Windows behavior is CI-tested on GitHub's Windows runner. Git Bash is unsupporte
 and WSL2 remains best effort. Installed artifacts are platform-scoped: Bash
 installer and lifecycle scripts target Linux/macOS, while PowerShell counterparts
 target Windows. Release-draft tooling installs its AppleScript helper only on
-macOS and its portable Python 3.12+ `.eml` generator on Linux/Windows. Both
+macOS, while its portable Python 3.12+ `.eml` generator installs on every
+platform as the mechanism used off macOS and the fall-back on it. Both
 runtimes consume the same manifest, templates, technology catalog, policies, and
 ownership model and must render project artifacts deterministically. Global
 Windows skill discovery uses verified NTFS directory junctions; project skill

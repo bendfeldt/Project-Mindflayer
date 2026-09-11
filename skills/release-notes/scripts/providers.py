@@ -18,10 +18,14 @@ write paths used only by the dry-run-gated command scripts.
 from __future__ import annotations
 
 import json
-import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from urllib.parse import quote
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from config import ToolError, run_capture  # noqa: E402
 
 ADO_RESOURCE = "499b84ac-1321-427f-aa17-267ca6975798"
 
@@ -32,9 +36,9 @@ class ProviderError(SystemExit):
 
 def run_json(args: list[str], *, stdin: str | None = None) -> dict | list:
     try:
-        proc = subprocess.run(args, capture_output=True, text=True, input=stdin)
-    except FileNotFoundError:
-        raise ProviderError(f"{args[0]} is not installed")
+        proc = run_capture(args, stdin=stdin)
+    except ToolError as exc:
+        raise ProviderError(str(exc.code))
     if proc.returncode != 0:
         raise ProviderError(f"{' '.join(args[:3])} failed: {proc.stderr.strip()[:500]}")
     if not proc.stdout.strip():

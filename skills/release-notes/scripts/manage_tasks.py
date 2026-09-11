@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -27,10 +26,14 @@ from collect_evidence import Conventions  # noqa: E402
 from config import (  # noqa: E402
     RUNS_DIR,
     ConfigError,
+    configure_stdio,
     effective_config,
+    read_json,
     repo_root,
     resolve_run_directory,
+    run_capture,
     slugify,
+    write_json,
 )
 from providers import Provider, from_config  # noqa: E402
 
@@ -47,7 +50,7 @@ class TaskPlanError(SystemExit):
 
 def read_object(path: Path) -> dict:
     try:
-        value = json.loads(path.read_text())
+        value = read_json(path)
     except FileNotFoundError:
         raise TaskPlanError(f"file not found: {path}")
     except json.JSONDecodeError as exc:
@@ -59,7 +62,7 @@ def read_object(path: Path) -> dict:
 
 def write_object(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+    write_json(path, value)
 
 
 def content_hash(value: str) -> str:
@@ -75,11 +78,8 @@ def plan_hash(plan: dict) -> str:
 
 
 def git_revision(repo: Path, ref: str) -> str:
-    proc = subprocess.run(
-        ["git", "rev-parse", "--verify", f"{ref}^{{commit}}"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
+    proc = run_capture(
+        ["git", "rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=repo
     )
     if proc.returncode != 0:
         raise TaskPlanError(f"cannot resolve git ref {ref}: {proc.stderr.strip()}")
@@ -714,6 +714,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    configure_stdio()
     if args.command == "plan":
         repo = repo_root(args.repo)
         config = effective_config(repo)
