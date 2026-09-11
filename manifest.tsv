@@ -1,5 +1,5 @@
 # path	type	version	consumers	ownership	platforms
-manifest.tsv	manifest	1.4.0	global	managed-file	linux,macos,windows
+manifest.tsv	manifest	1.5.0	global	managed-file	linux,macos,windows
 bootstrap.sh	script	3.7.0	global	managed-file	linux,macos
 bootstrap.ps1	script	3.7.0	global	managed-file	windows
 install.sh	script	3.7.0	global	managed-file	linux,macos
@@ -79,7 +79,7 @@ skills/release-notes/agents/openai.yaml	skill-resource	2.2.0	global,project:skil
 skills/release-notes/references/providers.md	skill-resource	2.3.0	global,project:skills	managed-tree	linux,macos,windows
 skills/release-notes/references/templates.md	skill-resource	2.4.0	global,project:skills	managed-tree	linux,macos,windows
 skills/release-notes/scripts/collect_evidence.py	skill-resource	2.3.0	global,project:skills	managed-tree	linux,macos,windows
-skills/release-notes/scripts/config.py	skill-resource	2.4.0	global,project:skills	managed-tree	linux,macos,windows
+skills/release-notes/scripts/config.py	skill-resource	2.5.0	global,project:skills	managed-tree	linux,macos,windows
 skills/release-notes/scripts/manage_tasks.py	skill-resource	2.4.0	global,project:skills	managed-tree	linux,macos,windows
 skills/release-notes/scripts/make_email_draft.py	skill-resource	2.3.0	global,project:skills	managed-tree	linux,macos,windows
 skills/release-notes/scripts/make_outlook_draft.applescript	skill-resource	2.2.0	global,project:skills	managed-tree	macos

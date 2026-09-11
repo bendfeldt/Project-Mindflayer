@@ -114,20 +114,28 @@ def quote_for_cmd(value: str) -> str:
     """Quote one argument for the Windows command processor.
 
     Double quotes turn off `& | < > ^` splitting, which every Azure DevOps REST
-    URL relies on (`?api-version=7.0&$expand=all`). Percent signs survive too:
-    an undefined `%name%` is left alone on a command line, and percent-encoded
-    project names never spell an environment variable. A literal double quote or
-    a line break cannot be passed through a batch shim safely, so refuse those
-    instead of guessing — no argument this skill builds contains either, because
-    work-item bodies travel in a request-body file rather than on the command
-    line.
+    URL relies on (`?api-version=7.0&$expand=all`). Percent signs mostly survive
+    as well: an undefined `%name%` is left alone on a command line, and the hex
+    pairs of a percent-encoded project name do not spell one. An organization or
+    project named for a variable that *is* defined would still be substituted,
+    which alters the URL rather than the command.
+
+    A literal double quote or a line break cannot be passed through a batch shim
+    safely, so refuse those instead of guessing — no argument this skill builds
+    contains either, because work-item bodies travel in a request-body file
+    rather than on the command line.
+
+    Trailing backslashes are doubled. The command processor does not treat a
+    backslash as an escape, but the program behind the shim parses its own
+    command line by the opposite rule, where `\\"` is a literal quote — so an
+    argument ending in a backslash would otherwise swallow the one after it.
     """
     if '"' in value or "\r" in value or "\n" in value:
         raise ToolError(
             f"cannot pass {value!r} through a Windows command shim: arguments "
             'must not contain a double quote or a line break'
         )
-    return f'"{value}"'
+    return '"{}"'.format(re.sub(r"(\\+)$", r"\1\1", value))
 
 
 def resolve_command(args: Sequence[str]) -> Command:

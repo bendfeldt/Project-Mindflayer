@@ -130,6 +130,65 @@ class ExecutableResolutionTests(unittest.TestCase):
                 mock.patch("config.shutil.which", return_value=r"C:\wbin\az.cmd"):
             self.assertIn(url, resolve_command(["az", "rest", "--url", url]).args)
 
+    def test_a_shim_receives_every_argument_intact(self) -> None:
+        """Run a real shim and inspect the arguments that actually arrive.
+
+        Quoting a command line is easy to get wrong in a way no string
+        comparison catches: an earlier revision refused `&` outright, which
+        would have rejected every Azure DevOps REST URL. So execute a shim and
+        assert on its argv rather than on the line handed to it.
+
+        This covers the characters `cmd.exe` and the POSIX shell treat alike —
+        the separators (`&`), spaces, and percent-encoding. It deliberately
+        leaves out `$`, which `cmd.exe` treats as an ordinary character but a
+        POSIX shell expands: `$expand` is a real Azure DevOps parameter, and
+        only Windows ever reaches this branch, so a POSIX host cannot stand in
+        for that one. `test_command_shims_are_quoted_for_the_command_processor`
+        asserts `$expand` survives into the command line instead.
+        """
+        url = (
+            "https://dev.azure.com/contoso/Team%20Projekt%20%C3%86/_apis/wit"
+            "/workitems?ids=1,2&api-version=7.0&fields=System.Title"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            shim = Path(directory) / "az.cmd"
+            shim.write_text(
+                '#!/bin/sh\nprintf \'%s\\n\' "$@"\n', encoding="utf-8"
+            )
+            shim.chmod(0o755)
+
+            with mock.patch("config.ON_WINDOWS", True), \
+                    mock.patch("config.shutil.which", return_value=str(shim)):
+                proc = run_capture([
+                    "az", "rest", "--url", url, "--headers",
+                    "Content-Type=application/json-patch+json", "-o", "json",
+                ])
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(
+            proc.stdout.splitlines(),
+            [
+                "rest",
+                "--url",
+                url,
+                "--headers",
+                "Content-Type=application/json-patch+json",
+                "-o",
+                "json",
+            ],
+        )
+
+    def test_a_trailing_backslash_cannot_escape_the_closing_quote(self) -> None:
+        """The program behind the shim reads `\\"` as a literal quote."""
+        with mock.patch("config.ON_WINDOWS", True), \
+                mock.patch("config.shutil.which", return_value=r"C:\wbin\az.cmd"):
+            command = resolve_command(
+                ["az", "rest", "--body", r"@C:\Temp\run\\", "-o", "json"]
+            )
+
+        self.assertIn(r'"@C:\Temp\run\\\\"', command.args)
+        self.assertTrue(command.args.endswith('"json"'))
+
     def test_unquotable_shim_arguments_are_refused(self) -> None:
         with mock.patch("config.ON_WINDOWS", True), \
                 mock.patch("config.shutil.which", return_value=r"C:\wbin\az.cmd"):
@@ -151,11 +210,15 @@ class ExecutableResolutionTests(unittest.TestCase):
         self.assertIn("Azure CLI (az)", str(caught.exception.code))
 
     def test_output_is_decoded_as_utf8_whatever_the_locale_is(self) -> None:
+        # The emitted bytes are spelled as an escape so that argv itself stays
+        # ASCII: a POSIX host in the C locale cannot encode a non-ASCII
+        # argument, which would fail this test for a reason unrelated to how
+        # the output is decoded.
         proc = run_capture([
             sys.executable, "-c",
-            "import sys; sys.stdout.buffer.write('ændret\\n'.encode('utf-8'))",
+            r"import sys; sys.stdout.buffer.write(b'\xc3\xa6ndret\n')",
         ])
-        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.strip(), "ændret")
 
 
