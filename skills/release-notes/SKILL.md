@@ -6,6 +6,7 @@ description: Prepare testable release notes from pull-request diffs for Azure De
 # Release Notes
 
 Resolve all scripts relative to this skill directory, never the current working directory.
+Invoke them with `python3` on Linux and macOS, and with `python` on native Windows.
 
 1. Read [provider behavior](references/providers.md) and [templates](references/templates.md).
 2. Resolve configuration precedence: explicit CLI values, repository config, then documented defaults. Reject ambiguous project or work-item mappings.
@@ -16,9 +17,10 @@ Resolve all scripts relative to this skill directory, never the current working 
 7. Ask for explicit approval, then run `scripts/manage_tasks.py apply --plan <release-plan>`. Apply must consume the reviewed release plan, preflight every pair before writing, and stop on integrity, git, PR, parent, or child drift.
 8. Run `scripts/merge_release.py` using an absolute path derived from the skill directory; verify every PR and User Story link is present.
 9. Keep `publish_descriptions.py` for description-only updates to existing items. It dry-runs by default and refuses overwrite unless explicitly authorized.
-10. Resolve `email.tool` by platform: retain `outlook-macos` on macOS; use
-    `eml` on Linux and native Windows; do not select a draft mechanism for other
-    platforms.
+10. Resolve `email.tool` from the effective config, which reconciles the
+    recorded tool with the platform running it: `outlook-macos` on macOS, `eml`
+    on Linux, native Windows, and on macOS without Outlook; no draft mechanism
+    on other platforms. Report any platform fall-back the config reports.
     Review the completed subject and HTML first. Ask before opening Outlook or
     writing a `.eml`, then use `make_email_draft.py --write`; its default is a
     non-writing dry run and replacement additionally requires `--overwrite`.

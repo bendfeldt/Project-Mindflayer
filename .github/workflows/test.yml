@@ -80,6 +80,26 @@ jobs:
       - name: Run Python unit tests
         run: python -m unittest discover -s tests -p 'test_*.py'
 
+      - name: Run release-notes skill tests
+        run: |
+          python -m unittest discover -s skills/release-notes/scripts -p 'test_*.py' -t skills/release-notes/scripts
+          python skills/release-notes/scripts/test_remote.py
+          python skills/release-notes/scripts/test_tasks.py
+
+      # The skill writes Danish release notes and reads them back in a later
+      # step. Locale-encoded text is what broke that on Windows, so run the
+      # suites once where the default encoding is not UTF-8. Windows brings its
+      # own single-byte code page and needs no equivalent step.
+      - name: Run release-notes skill tests without a UTF-8 locale
+        env:
+          LC_ALL: C
+          PYTHONUTF8: "0"
+          PYTHONCOERCECLOCALE: "0"
+        run: |
+          python -m unittest discover -s skills/release-notes/scripts -p 'test_*.py' -t skills/release-notes/scripts
+          python skills/release-notes/scripts/test_remote.py
+          python skills/release-notes/scripts/test_tasks.py
+
       - name: Run Bash tests
         run: bash tests/test-install.sh
 
@@ -122,6 +142,13 @@ jobs:
       - name: Run Python unit tests
         shell: pwsh
         run: python -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Run release-notes skill tests
+        shell: pwsh
+        run: |
+          python -m unittest discover -s skills/release-notes/scripts -p 'test_*.py' -t skills/release-notes/scripts
+          python skills/release-notes/scripts/test_remote.py
+          python skills/release-notes/scripts/test_tasks.py
 
       - name: Create PowerShell parity fixture
         shell: pwsh

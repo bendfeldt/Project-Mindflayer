@@ -27,7 +27,7 @@ environment.
 | Bash installer and lifecycle scripts | Linux and macOS |
 | PowerShell installer and lifecycle scripts | Windows |
 | Outlook AppleScript release-draft helper | macOS |
-| Portable Python `.eml` release-draft generator | Linux and Windows |
+| Portable Python `.eml` release-draft generator | Linux, macOS, and Windows |
 
 Platform-specific artifacts are not installed on other platforms. Skill content
 remains portable except where its capability explicitly selects one of these
@@ -91,9 +91,9 @@ responsibility.
 | ADR, Kimball modeling, repository setup | No runtime beyond the selected assistant and toolkit installer |
 | Branch cleanup, smart commit, smart PR, promotion workflows | Git; provider CLI when the workflow accesses a remote pull request |
 | Engineering auditor | Python 3.12 or newer; bundled scripts use only the standard library |
-| Release notes | Python 3.12 or newer; Azure CLI for Azure DevOps, GitHub CLI for GitHub, and existing provider authentication |
-| Linux/Windows release email draft | Python 3.12 or newer; produces an unsent `.eml` file without authentication or recipients |
-| macOS Outlook draft | Microsoft Outlook and `osascript`; the workflow creates an unsent draft only after approval |
+| Release notes | Python 3.12 or newer; Azure CLI for Azure DevOps, GitHub CLI for GitHub, and existing provider authentication. On Windows the Azure CLI is the `az.cmd` shim and is invoked through the command processor |
+| Portable release email draft | Python 3.12 or newer on any supported platform; produces an unsent `.eml` file without authentication or recipients |
+| macOS Outlook draft | Microsoft Outlook and `osascript`; the workflow creates an unsent draft only after approval. Without Outlook, macOS uses the portable `.eml` generator |
 | Terraform scaffold | Terraform CLI for formatting, initialization, and validation; relevant provider access when requested |
 | Databricks operations | Databricks CLI and an explicitly user-selected `--profile <name>` |
 | Snowflake operations | Snowflake CLI and an explicitly selected named connection |
@@ -154,14 +154,21 @@ Run the complete local validation supported by the current platform:
 ```bash
 bash tests/test-install.sh
 python3.12 -m unittest discover -s tests -p 'test_*.py'
+python3.12 -m unittest discover -s skills/release-notes/scripts -p 'test_*.py' -t skills/release-notes/scripts
+python3.12 skills/release-notes/scripts/test_remote.py
+python3.12 skills/release-notes/scripts/test_tasks.py
 ```
 
 ```powershell
 pwsh -NoProfile -File tests/test-install.ps1
 python -m unittest discover -s tests -p 'test_*.py'
+python -m unittest discover -s skills/release-notes/scripts -p 'test_*.py' -t skills/release-notes/scripts
+python skills/release-notes/scripts/test_remote.py
+python skills/release-notes/scripts/test_tasks.py
 ```
 
 CI validates Bash behavior on Ubuntu and macOS, PowerShell 7.4 compatibility,
 native PowerShell behavior on GitHub's Windows Server runner, and Python behavior
-on every CI runner. Windows 10 and 11 are supported target operating systems but
+on every CI runner, including the release-notes skill's own suites on Linux,
+macOS, and Windows. Windows 10 and 11 are supported target operating systems but
 are not directly exercised by the hosted CI environment; WSL2 remains best effort.

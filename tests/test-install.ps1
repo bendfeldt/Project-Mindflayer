@@ -516,7 +516,7 @@ try {
             Assert-Equal -Actual $row.Platforms -Expected 'linux,macos' -Message "Bash artifact platforms for $($row.Path)"
         }
         Assert-Equal -Actual ($manifestRows | Where-Object Path -eq 'skills/release-notes/scripts/make_outlook_draft.applescript').Platforms -Expected 'macos' -Message 'AppleScript platform'
-        Assert-Equal -Actual ($manifestRows | Where-Object Path -eq 'skills/release-notes/scripts/make_email_draft.py').Platforms -Expected 'linux,windows' -Message 'Portable email generator platforms'
+        Assert-Equal -Actual ($manifestRows | Where-Object Path -eq 'skills/release-notes/scripts/make_email_draft.py').Platforms -Expected 'linux,macos,windows' -Message 'Portable email generator platforms'
         Assert-Equal -Actual @($manifestRows | Where-Object { $_.Path.StartsWith('tests/', [StringComparison]::Ordinal) -or $_.Path -match '/test_[^/]*\.py$' }).Count -Expected 0 -Message 'Repository test modules must not be distributed'
     }
 

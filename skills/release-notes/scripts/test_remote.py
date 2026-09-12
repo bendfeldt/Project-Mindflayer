@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 import sys
 
-from config import DEFAULT_MERGE_PATTERNS, parse_remote
+from config import DEFAULT_MERGE_PATTERNS, configure_stdio, parse_remote
 
 # (url, provider, org, project, repo)
 CASES = [
@@ -68,6 +68,9 @@ def match_merge(provider: str, subject: str):
 
 
 def main() -> int:
+    # Same first call the shipped scripts make: this file reports in prose that
+    # is not ASCII, and CI runs it on consoles that are not UTF-8.
+    configure_stdio()
     failures: list[str] = []
 
     for url, provider, org, project, repo in CASES:

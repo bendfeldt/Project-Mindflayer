@@ -11,7 +11,12 @@ import tempfile
 from pathlib import Path
 
 from collect_evidence import Conventions
-from config import ConfigError, default_repo_config, resolve_run_directory
+from config import (
+    ConfigError,
+    configure_stdio,
+    default_repo_config,
+    resolve_run_directory,
+)
 from manage_tasks import (
     TaskPlanError,
     apply_release,
@@ -497,6 +502,9 @@ def test_publish_and_merge_reject_unsafe_release_slug() -> None:
 
 
 def main() -> int:
+    # Same first call the shipped scripts make: this file reports in prose that
+    # is not ASCII, and CI runs it on consoles that are not UTF-8.
+    configure_stdio()
     tests = [
         test_unique_titles,
         test_ado_child_payload,

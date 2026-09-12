@@ -28,7 +28,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from config import RUNS_DIR, ConfigError, resolve_run_directory  # noqa: E402
+from config import (  # noqa: E402
+    RUNS_DIR,
+    ConfigError,
+    configure_stdio,
+    read_json,
+    resolve_run_directory,
+    write_text,
+)
 
 STRINGS = {
     "da": {
@@ -92,7 +99,7 @@ def load_artifacts(slug: str) -> list[dict]:
     artifacts = []
     for path in sorted(run_dir.glob("*.json")):
         try:
-            artifacts.append(json.loads(path.read_text()))
+            artifacts.append(read_json(path))
         except json.JSONDecodeError as exc:
             print(f"warning: skipping malformed {path}: {exc}", file=sys.stderr)
     return artifacts
@@ -226,6 +233,7 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument("--subject-out", type=Path, default=None)
     args = ap.parse_args()
+    configure_stdio()
 
     try:
         run_dir = resolve_run_directory(args.release)
@@ -262,12 +270,12 @@ def main() -> None:
     subject = s["subject"].format(release=args.release)
 
     if args.out:
-        args.out.write_text(body)
+        write_text(args.out, body)
         print(f"body written to {args.out} ({n_tasks} task links)", file=sys.stderr)
     else:
         print(body)
     if args.subject_out:
-        args.subject_out.write_text(subject)
+        write_text(args.subject_out, subject)
         print(f"subject written to {args.subject_out}", file=sys.stderr)
     else:
         print(f"\nsubject: {subject}", file=sys.stderr)

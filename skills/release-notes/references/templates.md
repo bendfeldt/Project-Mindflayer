@@ -135,17 +135,30 @@ Outlook renders that reliably and it survives copy-paste into a reply.
 
 ### Draft creation by platform
 
-- **macOS (`email.tool: outlook-macos`):** after explicit approval, run
-  `osascript make_outlook_draft.applescript <subject.txt> <body.html>`. This
-  retains the existing Outlook draft flow.
-- **Linux and Windows (`email.tool: eml`):** first run
-  `python make_email_draft.py <subject.txt> <body.html> --out <draft.eml>` as a
-  non-writing dry run. After the user approves the completed subject and body,
-  repeat with `--write`. Existing files are preserved unless replacement is
+Invoke the generator with `python3` on Linux and macOS and with `python` on
+native Windows.
+
+- **macOS (`email.tool: outlook-macos`, the default):** after explicit approval,
+  run `osascript make_outlook_draft.applescript <subject.txt> <body.html>`. This
+  retains the existing Outlook draft flow. When Outlook is not installed, or the
+  engagement records `email.tool: eml`, use the `.eml` route below instead — the
+  generator is installed on macOS as well.
+- **`.eml` route (`email.tool: eml`; the default on Linux and Windows):** first
+  run `python3 make_email_draft.py <subject.txt> <body.html> --out <draft.eml>`
+  as a non-writing dry run. After the user approves the completed subject and
+  body, repeat with `--write`. Existing files are preserved unless replacement is
   separately approved and `--overwrite` is added.
 - **Other platforms (`email.tool: none`):** produce the subject and HTML files
   only; do not choose another mail client implicitly.
 
+`config.py` reconciles a recorded `email.tool` with the platform actually running
+it, so an engagement bootstrapped on macOS falls back to `eml` on Linux or
+Windows instead of selecting Outlook there. `--validate` reports that fall-back;
+report it to the user rather than treating it as the configured choice.
+
 The `.eml` generator uses only the Python standard library, emits SMTP CRLF
 line endings, an RFC-encoded UTF-8 subject and HTML content, sets `X-Unsent: 1`,
 and omits `To`, `Cc`, and `Bcc`. It never opens a mail client or sends mail.
+Every artifact the skill writes — subject, HTML body, evidence, plans, run
+results — is UTF-8 with LF endings on every platform, so a release can be
+prepared on one machine and drafted on another.

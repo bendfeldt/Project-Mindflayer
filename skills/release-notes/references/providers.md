@@ -18,6 +18,14 @@ checking auth, or reading a work item by hand.
 Never guess an account, org or tenant. If the check fails, stop and tell the user
 which command to run — `config.py --validate` reports both in one go.
 
+The scripts locate both CLIs through `PATH` rather than assuming a file name.
+This matters on Windows, where the Azure CLI is installed as `az.cmd`: a command
+shim cannot be launched directly and is run through the command processor, so
+arguments must not contain `& | < > ^ "` or line breaks. Nothing free-form is
+passed on the command line — work-item bodies always travel in a request-body
+file — and both CLIs are read as UTF-8 regardless of the console code page, so
+non-ASCII titles survive on every platform.
+
 The Azure DevOps REST resource id is `499b84ac-1321-427f-aa17-267ca6975798`.
 `az rest --resource <id>` handles the token exchange; there is no PAT to manage.
 
