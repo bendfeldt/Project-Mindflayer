@@ -22,7 +22,8 @@ Invoke them with `python3` on Linux and macOS, and with `python` on native Windo
     on Linux, native Windows, and on macOS without Outlook; no draft mechanism
     on other platforms. Report any platform fall-back the config reports.
     Review the completed subject and HTML first. Ask before opening Outlook or
-    writing a `.eml`, then use `make_email_draft.py --write`; its default is a
+    writing a `.eml`, then add `--write` to `make_email_draft.py --open`
+    (`outlook-macos`) or `--out <draft.eml>` (`eml`); its default is a
     non-writing dry run and replacement additionally requires `--overwrite`.
 11. Ask before any remote write or local draft creation. A draft must have no
     recipients and must never be sent automatically.

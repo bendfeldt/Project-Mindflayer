@@ -10,10 +10,10 @@ existing Cosign executable or downloads a checksum-pinned temporary copy.
 Python 3.12+, Git, and provider CLIs are capability-specific rather than core
 installer requirements.
 Installed lifecycle tools are Bash scripts on Linux/macOS and PowerShell scripts
-on Windows. The release-draft helpers are AppleScript on macOS and a portable
-Python `.eml` generator installed on every platform. Native Windows behavior is
-CI-tested on GitHub's Windows runner. Git Bash is unsupported, WSL2 is best
-effort, and Windows PowerShell 5.1 is unsupported. See the normative
+on Windows. The release-draft helper is a portable Python generator installed
+on every platform; on macOS it opens the draft in Outlook. Native Windows
+behavior is CI-tested on GitHub's Windows runner. Git Bash is unsupported,
+WSL2 is best effort, and Windows PowerShell 5.1 is unsupported. See the normative
 [system requirements](docs/system-requirements.md) for network, filesystem,
 consumer, capability-specific, and contributor dependencies.
 
