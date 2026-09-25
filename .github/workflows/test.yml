@@ -165,7 +165,9 @@ jobs:
         shell: pwsh
         run: |
           python -m unittest discover -s skills/release-notes/scripts -p 'test_*.py' -t skills/release-notes/scripts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python skills/release-notes/scripts/test_remote.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python skills/release-notes/scripts/test_tasks.py
 
       - name: Set up Python 3.13
