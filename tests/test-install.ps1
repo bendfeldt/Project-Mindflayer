@@ -799,8 +799,8 @@ try {
         Assert-Equal -Actual $update.ExitCode -Expected 2 -Message 'Local changes exit status'
         Assert-Equal -Actual ([IO.File]::ReadAllText((Join-Path $context.Project '.claude/skills/adr/SKILL.md'))) `
             -Expected ([IO.File]::ReadAllText((Join-Path $bundle 'skills/adr/SKILL.md'))) -Message 'Release update not applied'
-        Assert-TextContains -Text $update.StandardOutput -Expected "`n+Release line added upstream.`n" -Message 'Release diff line'
-        Assert-TextContains -Text $update.StandardOutput -Expected "`n-my local customization`n" -Message 'Local diff line'
+        Assert-TextContains -Text $update.StandardOutput.Replace("`r`n", "`n") -Expected "`n+Release line added upstream.`n" -Message 'Release diff line'
+        Assert-TextContains -Text $update.StandardOutput.Replace("`r`n", "`n") -Expected "`n-my local customization`n" -Message 'Local diff line'
         Assert-TextContains -Text $update.StandardOutput -Expected 'Migration required' -Message 'Migration summary'
         Assert-TextContains -Text ([IO.File]::ReadAllText($localFile)) -Expected 'my local customization' -Message 'Local change overwritten'
 
@@ -868,7 +868,7 @@ try {
         $target = Join-Path $context.Project '.claude/skills/adr/SKILL.md'
         $dryRun = Invoke-PowerShellFile -FilePath $lifecycle -Arguments @('-Mode', 'Sync', '-DryRun', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment
         Assert-Success -Result $dryRun -Message 'Lifecycle dry run'
-        Assert-TextContains -Text $dryRun.StandardOutput -Expected "`n+Upstream change.`n" -Message 'Dry run diff'
+        Assert-TextContains -Text $dryRun.StandardOutput.Replace("`r`n", "`n") -Expected "`n+Upstream change.`n" -Message 'Dry run diff'
         Assert-True -Condition (-not [IO.File]::ReadAllText($target).Contains('Upstream change.')) -Message 'Dry run wrote the update'
         $sync = Invoke-PowerShellFile -FilePath $lifecycle -Arguments @('-Mode', 'Sync', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment
         Assert-Success -Result $sync -Message 'Release update sync'
