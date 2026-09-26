@@ -20,18 +20,23 @@ when a selected capability needs Python, require Python 3.12 or newer.
    - Technologies from the installed `~/.ai-toolkit/config/technology-catalog.tsv`. If it is unavailable, read the canonical repository copy; never invent an identifier. Use namespaced identifiers for platform components.
    - Client name.
    - Resource prefix only when the repository uses one.
+   - Which skills to install. List the skills from the installed manifest with
+     their one-line descriptions and default to all. The installer's interactive
+     list needs a terminal, so always pass the answer as `--skills`/`-Skills`
+     (`all`, `none`, or comma-separated names). For an existing project, show the
+     current state first with `--skills-status`/`-SkillsStatus`.
 4. Use the release-hosted bootstrap entry point, which verifies the platform
    bundle checksum and Sigstore identity before invoking the bundled installer.
    Mode and tools stay explicit. Preview and obtain approval for:
 
 ```bash
-curl -fsSL --proto '=https' --proto-redir '=https' https://github.com/bendfeldt/Project-Mindflayer/releases/latest/download/bootstrap.sh | bash -s -- --project --tools <comma-separated-tools> --project-types <comma-separated-project-types> --technologies <comma-separated-technologies> --client "<client>" [--prefix <prefix>]
+curl -fsSL --proto '=https' --proto-redir '=https' https://github.com/bendfeldt/Project-Mindflayer/releases/latest/download/bootstrap.sh | bash -s -- --project --tools <comma-separated-tools> --project-types <comma-separated-project-types> --technologies <comma-separated-technologies> --client "<client>" [--prefix <prefix>] --skills <all|none|comma-separated-skills>
 ```
 
 On Windows, preview the equivalent native PowerShell command:
 
 ```powershell
-& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/bendfeldt/Project-Mindflayer/releases/latest/download/bootstrap.ps1'))) -Project -Tools <comma-separated-tools> -ProjectTypes <comma-separated-project-types> -Technologies <comma-separated-technologies> -Client '<client>' [-Prefix <prefix>]
+& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/bendfeldt/Project-Mindflayer/releases/latest/download/bootstrap.ps1'))) -Project -Tools <comma-separated-tools> -ProjectTypes <comma-separated-project-types> -Technologies <comma-separated-technologies> -Client '<client>' [-Prefix <prefix>] -Skills <all|none|comma-separated-skills>
 ```
 
 When the toolkit is already installed globally, preview the installed installer
@@ -39,6 +44,9 @@ instead: `~/.ai-toolkit/install.sh` on Linux/macOS or `~/.ai-toolkit/install.ps1
 on Windows, with the same flags.
 
 5. Run it in the target repository and report only tool-conditional artifacts actually created.
+   Exit status 2 means the install finished but files with local changes were
+   kept: relay the **Migration required** list and the diffs to the user, and
+   never rerun with `--force` without their explicit approval.
 6. Validate project instruction discovery:
    - Claude: `CLAUDE.md` is exactly `@AGENTS.md`.
    - Gemini: `GEMINI.md` is exactly `@AGENTS.md`.
@@ -49,4 +57,4 @@ Project types are descriptive and may be combined freely. Technologies compose g
 
 Existing automation may continue using `--profile terraform|databricks|fabric`; never combine that legacy interface with the plural flags. A Databricks technology or legacy profile never selects authentication. Never invent or auto-select a Databricks CLI profile, and require `--profile <name>` on every Databricks command.
 
-Join mode preserves `AGENTS.md`. If explicit classification flags are supplied, they must match stored metadata.
+Join mode preserves `AGENTS.md`, except that an explicit skill selection updates its `- **skills:**` line. If explicit classification flags are supplied, they must match stored metadata.

@@ -31,7 +31,15 @@ New project installations model repository types and technologies as independent
 
 Claude project settings are composed deterministically from the line-oriented technology policy. Exact duplicates are removed, identical denies suppress allows, and overlapping deny patterns remain. The installer performs composition with Bash 3.2-compatible shell and `awk` without adding a JSON-tool dependency.
 
-The legacy single-profile path remains isolated: it uses the original template and static settings files. Join mode recognizes both schemas and never rewrites existing project guidance.
+The legacy single-profile path remains isolated: it uses the original template and static settings files. Join mode recognizes both schemas and never rewrites existing project guidance, except for the single `skills` metadata line when the skill selection is explicitly changed.
+
+## Project skill selection
+
+The project skill selection is declared in the committed `AGENTS.md` as `- **skills:** a, b` (or `none`), in manifest order, inside the repository identity section. An absent line means every skill, which keeps projects from earlier releases unchanged and keeps a default install byte-identical to the template. The ownership ledger is local and gitignored, so it records what one checkout installed and never decides what a project wants.
+
+Selection is resolved before the first write: `--skills`, the interactive list (only with a terminal, never with `CI` or `MINDFLAYER_NONINTERACTIVE`), or the stored line. Removing a skill from the selection uses the verified-ownership removal path, so edited files are kept. `sync-skills --add` extends the selection; without names it offers the unselected skills interactively. Skills a newer release introduces are reported as available and never added implicitly.
+
+Each managed skill file is classified by comparing it with the release and with its recorded fingerprint: unchanged since installation but different from the release is a release update, applied with a diff; a fingerprint mismatch is a local change, shown as a diff and kept unless `--force` authorizes a backed-up replacement. Kept local changes are summarized under **Migration required** and make the run exit with status 2.
 
 ## Distribution contract
 
@@ -65,7 +73,7 @@ A successful global install writes the toolkit release stamp last. Obsolete proj
 
 Existing paths are preserved by default. Explicit `--force` replacement first creates a timestamped backup. Installation records each managed path and its content fingerprint or symlink target.
 
-Drift synchronization derives project roots from the ownership ledger and rejects unsafe unmanaged paths. Uninstall removes only artifacts whose recorded ownership proof still matches and prunes empty managed parent directories.
+Drift synchronization derives project roots from the ownership ledger, limits itself to the selected skills, and rejects unsafe unmanaged paths. Uninstall removes only artifacts whose recorded ownership proof still matches and prunes empty managed parent directories.
 
 The distribution repository is deliberately exempt from project installation because generated client `.claude/` and `.agents/` layouts would mix distribution sources with installed artifacts.
 

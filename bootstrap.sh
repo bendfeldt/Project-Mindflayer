@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="3.7.0"
+VERSION="3.8.0"
 COSIGN_VERSION="2.4.1"
 REPOSITORY="bendfeldt/Project-Mindflayer"
 STAGING_DIRECTORY=""

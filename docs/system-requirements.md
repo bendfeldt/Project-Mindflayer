@@ -41,7 +41,8 @@ platform helpers.
   signed release bundle. The bootstrap uses an
   existing Cosign executable or downloads a checksum-pinned temporary copy.
 - Standard command-line utilities supplied by supported operating systems,
-  including `awk`, `sed`, `grep`, `find`, `cksum`, `cmp`, `mktemp`, and `readlink`.
+  including `awk`, `sed`, `grep`, `find`, `cksum`, `cmp`, `diff`, `paste`, `mktemp`,
+  and `readlink`.
 - Write access to the user profile for global installation or the target
   repository for project installation.
 
@@ -54,6 +55,10 @@ platform helpers.
   ARM64 uses Windows x64 emulation for that binary.
 - NTFS directory-junction support and write access to the user profile.
 - Write access to the target repository for project installation.
+
+The interactive skill list needs a terminal (`/dev/tty` on Linux and macOS, an
+unredirected console on Windows). Scripts and CI pass `--skills`/`-Skills`
+instead; no terminal is required.
 
 The installers do not install or authenticate assistant applications. Install
 the selected assistant separately. No minimum assistant version is declared;
@@ -118,7 +123,7 @@ Windows PowerShell:
 
 The Bash wrapper supports Linux and macOS on amd64 and arm64. The PowerShell wrapper supports Windows AMD64 and ARM64; both use Sigstore's amd64 Windows Cosign binary, with x64 emulation on ARM64. Bootstrap downloads and extraction use a temporary directory and do not write into the caller's working directory.
 
-The streamed wrapper is trusted through HTTPS and the repository's immutable-release policy. It downloads the pinned v3.7.0 platform bundle, verifies its published SHA-256 checksum and Sigstore identity, and only then invokes the bundled installer with the supplied flags. A separately authorized v3.7.0 release publication is required before the `releases/latest` commands resolve to this interface.
+The streamed wrapper is trusted through HTTPS and the repository's immutable-release policy. It downloads the pinned v3.8.0 platform bundle, verifies its published SHA-256 checksum and Sigstore identity, and only then invokes the bundled installer with the supplied flags. A separately authorized v3.8.0 release publication is required before the `releases/latest` commands resolve to this interface.
 
 ## Post-install verification
 
@@ -144,7 +149,8 @@ contains the `engineering-auditor` skill directory or junction.
 - Git.
 - Bash 3.2+ for Unix installer and lifecycle validation.
 - PowerShell 7.4+ for Windows installer and lifecycle validation.
-- Python 3.12+.
+- Python 3.12+ (also drives the interactive-list tests through a
+  pseudo-terminal on Linux and macOS).
 - ShellCheck 0.11.0.
 - Network access for pinned validation-tool downloads when not already installed.
 

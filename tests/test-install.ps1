@@ -216,6 +216,35 @@ function Invoke-BashInstaller {
     }
 }
 
+function Invoke-BashFile {
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [string[]]$Arguments = @(),
+        [Parameter(Mandatory)][string]$WorkingDirectory,
+        [Parameter(Mandatory)][string]$HomePath
+    )
+
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = (Get-Command bash -ErrorAction Stop).Source
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.WorkingDirectory = $WorkingDirectory
+    $startInfo.ArgumentList.Add($FilePath)
+    foreach ($argument in $Arguments) { $startInfo.ArgumentList.Add($argument) }
+    $startInfo.Environment['HOME'] = $HomePath
+    $startInfo.Environment['MINDFLAYER_NONINTERACTIVE'] = '1'
+    $process = [Diagnostics.Process]::Start($startInfo)
+    $standardOutputTask = $process.StandardOutput.ReadToEndAsync()
+    $standardErrorTask = $process.StandardError.ReadToEndAsync()
+    $process.WaitForExit()
+    [pscustomobject]@{
+        ExitCode = $process.ExitCode
+        StandardOutput = $standardOutputTask.GetAwaiter().GetResult()
+        StandardError = $standardErrorTask.GetAwaiter().GetResult()
+    }
+}
+
 function Get-NormalizedOwnershipInventory {
     param(
         [Parameter(Mandatory)]
@@ -660,6 +689,251 @@ try {
         Assert-PathNotExists -Path (Join-Path $context.Project '.mindflayer-managed.tsv') -Message 'Manifest failure wrote ownership state'
     }
 
+    Invoke-Test -Name 'portable skill selection is recorded and matches Bash' -Test {
+        $context = New-TestContext -Name 'portable skill selection'
+        $arguments = @('-Project', '-Tools', 'claude,codex', '-ProjectTypes', 'infrastructure', '-Technologies', 'terraform', '-Client', 'Client', '-Local')
+        $result = Invoke-Installer -Arguments ($arguments + @('-Skills', 'smart-commit,adr')) -WorkingDirectory $context.Project -HomePath $context.Home
+        Assert-Success -Result $result -Message 'Selected skill install'
+        $agentsText = [IO.File]::ReadAllText((Join-Path $context.Project 'AGENTS.md'))
+        Assert-TextContains -Text $agentsText -Expected "- **skills:** adr, smart-commit`n" -Message 'Selection recorded in manifest order'
+        Assert-PathExists -Path (Join-Path $context.Project '.agents/skills/smart-commit/SKILL.md') -Message 'Selected skill installed'
+        Assert-PathNotExists -Path (Join-Path $context.Project '.claude/skills/release-notes') -Message 'Unselected skill installed'
+        Assert-TextContains -Text $result.StandardOutput -Expected 'Skills: adr, smart-commit' -Message 'Selection summary'
+
+        $join = Invoke-Installer -Arguments @('-Project', '-Tools', 'claude,codex', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home
+        Assert-Success -Result $join -Message 'Join keeps selection'
+        Assert-PathNotExists -Path (Join-Path $context.Project '.claude/skills/release-notes') -Message 'Join added an unselected skill'
+
+        $before = Get-ChildItem -LiteralPath $context.Project -Recurse -File -Force | Sort-Object FullName | Get-FileHash -Algorithm SHA256 | ForEach-Object Hash
+        $status = Invoke-Installer -Arguments @('-Project', '-Tools', 'claude,codex', '-SkillsStatus', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home
+        Assert-Success -Result $status -Message 'Skills status'
+        $after = Get-ChildItem -LiteralPath $context.Project -Recurse -File -Force | Sort-Object FullName | Get-FileHash -Algorithm SHA256 | ForEach-Object Hash
+        Assert-Equal -Actual ($after -join ',') -Expected ($before -join ',') -Message 'Skills status changed files'
+        Assert-True -Condition ($status.StandardOutput -match '\[x\] adr +up to date') -Message 'Skills status up to date row'
+        Assert-True -Condition ($status.StandardOutput -match '\[ \] release-notes +not installed') -Message 'Skills status not installed row'
+        Assert-True -Condition (-not $status.StandardOutput.Contains([char]27)) -Message 'Redirected status output contains color codes'
+
+        $none = Invoke-Installer -Arguments @('-Project', '-Tools', 'claude,codex', '-Skills', 'none', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home
+        Assert-Success -Result $none -Message 'Select no skills'
+        Assert-TextContains -Text ([IO.File]::ReadAllText((Join-Path $context.Project 'AGENTS.md'))) -Expected '- **skills:** none' -Message 'Empty selection recorded'
+        Assert-PathNotExists -Path (Join-Path $context.Project '.claude/skills/adr') -Message 'Deselected skill directory removed'
+        $all = Invoke-Installer -Arguments @('-Project', '-Tools', 'claude,codex', '-Skills', 'all', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home
+        Assert-Success -Result $all -Message 'Select all skills'
+        Assert-True -Condition (-not [IO.File]::ReadAllText((Join-Path $context.Project 'AGENTS.md')).Contains('**skills:**')) -Message 'All skills removes the skills line'
+
+        if (-not $IsWindows -and $null -ne (Get-Command bash -ErrorAction SilentlyContinue)) {
+            $bashContext = New-TestContext -Name 'portable Bash skill selection parity'
+            $bashResult = Invoke-BashInstaller -Arguments @(
+                '--project', '--tools', 'claude,codex', '--project-types', 'infrastructure',
+                '--technologies', 'terraform', '--client', 'Client', '--skills', 'adr,smart-commit', '--local'
+            ) -WorkingDirectory $bashContext.Project -HomePath $bashContext.Home
+            Assert-Success -Result $bashResult -Message 'Bash selected skill install'
+            $powerShellContext = New-TestContext -Name 'portable PowerShell skill selection parity'
+            $powerShellResult = Invoke-Installer -Arguments ($arguments + @('-Skills', 'adr,smart-commit')) -WorkingDirectory $powerShellContext.Project -HomePath $powerShellContext.Home
+            Assert-Success -Result $powerShellResult -Message 'PowerShell selected skill install'
+            Assert-Equal -Actual ([IO.File]::ReadAllText((Join-Path $powerShellContext.Project 'AGENTS.md'))) `
+                -Expected ([IO.File]::ReadAllText((Join-Path $bashContext.Project 'AGENTS.md'))) -Message 'Bash and PowerShell AGENTS.md differ'
+            $listFiles = { param($path) @(Get-ChildItem -LiteralPath $path -Recurse -File -Force | ForEach-Object { [IO.Path]::GetRelativePath($path, $_.FullName).Replace('\', '/') } | Sort-Object) -join "`n" }
+            Assert-Equal -Actual (& $listFiles $powerShellContext.Project) -Expected (& $listFiles $bashContext.Project) -Message 'Bash and PowerShell selected file trees differ'
+            Assert-Equal -Actual (Get-NormalizedOwnershipInventory -ProjectPath $powerShellContext.Project) `
+                -Expected (Get-NormalizedOwnershipInventory -ProjectPath $bashContext.Project) -Message 'Bash and PowerShell selected ownership differs'
+        }
+    }
+
+    Invoke-Test -Name 'portable skill selection rejects invalid requests' -Test {
+        $context = New-TestContext -Name 'portable skill validation'
+        $base = @('-Project', '-ProjectTypes', 'infrastructure', '-Technologies', 'terraform', '-Client', 'Client', '-Local')
+        foreach ($bad in @('bogus', 'adr,adr', 'all,adr')) {
+            $result = Invoke-Installer -Arguments ($base + @('-Tools', 'claude', '-Skills', $bad)) -WorkingDirectory $context.Project -HomePath $context.Home
+            Assert-Failure -Result $result -Message "Invalid -Skills '$bad'"
+        }
+        $unknown = Invoke-Installer -Arguments ($base + @('-Tools', 'claude', '-Skills', 'bogus')) -WorkingDirectory $context.Project -HomePath $context.Home
+        Assert-TextContains -Text $unknown.StandardError -Expected 'available skills: adr, branch-cleanup' -Message 'Unknown skill lists available skills'
+        Assert-PathNotExists -Path (Join-Path $context.Project 'AGENTS.md') -Message 'Invalid selection wrote project guidance'
+        Assert-Failure -Result (Invoke-Installer -Arguments @('-Global', '-Tools', 'claude', '-Skills', 'adr', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home) -Message 'Global -Skills'
+        Assert-Failure -Result (Invoke-Installer -Arguments @('-Project', '-Tools', 'claude', '-SkillsStatus', '-Force', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home) -Message '-SkillsStatus with -Force'
+        Assert-Failure -Result (Invoke-Installer -Arguments ($base + @('-Tools', 'gemini', '-Skills', 'adr')) -WorkingDirectory $context.Project -HomePath $context.Home) -Message '-Skills without a skill root'
+        Assert-Failure -Result (Invoke-Installer -Arguments ($base + @('-Tools', 'claude', '-Interactive')) -WorkingDirectory $context.Project -HomePath $context.Home) -Message '-Interactive without a terminal'
+        Assert-Failure -Result (Invoke-Installer -Arguments ($base + @('-Tools', 'claude', '-Interactive', '-Skills', 'adr')) -WorkingDirectory $context.Project -HomePath $context.Home) -Message '-Skills with -Interactive'
+
+        if (-not $IsWindows) {
+            $linked = New-TestContext -Name 'portable linked AGENTS'
+            $install = Invoke-Installer -Arguments ($base + @('-Tools', 'claude', '-Skills', 'adr')) -WorkingDirectory $linked.Project -HomePath $linked.Home
+            Assert-Success -Result $install -Message 'Linked AGENTS fixture'
+            $outside = Join-Path $linked.Root 'outside-AGENTS.md'
+            Move-Item -LiteralPath (Join-Path $linked.Project 'AGENTS.md') -Destination $outside
+            New-Item -ItemType SymbolicLink -Path (Join-Path $linked.Project 'AGENTS.md') -Target $outside | Out-Null
+            $before = (Get-FileHash -LiteralPath $outside -Algorithm SHA256).Hash
+            $change = Invoke-Installer -Arguments @('-Project', '-Tools', 'claude', '-Skills', 'adr,smart-pr', '-Local') -WorkingDirectory $linked.Project -HomePath $linked.Home
+            Assert-Failure -Result $change -Message 'Selection change through linked AGENTS.md'
+            Assert-Equal -Actual (Get-FileHash -LiteralPath $outside -Algorithm SHA256).Hash -Expected $before -Message 'Linked AGENTS.md target changed'
+            Assert-PathNotExists -Path (Join-Path $linked.Project '.claude/skills/smart-pr') -Message 'Refused selection change installed a skill'
+        }
+    }
+
+    Invoke-Test -Name 'portable release updates apply with diffs and local changes need migration' -Test {
+        $context = New-TestContext -Name 'portable skill migration'
+        $bundle = Join-Path $context.Root 'bundle'
+        foreach ($row in Get-ManifestRows) {
+            $destination = Join-Path $bundle $row.Path
+            New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+            Copy-Item -LiteralPath (Join-Path $Root $row.Path) -Destination $destination
+        }
+        $installer = Join-Path $bundle 'install.ps1'
+        $install = Invoke-PowerShellFile -FilePath $installer -Arguments @(
+            '-Project', '-Tools', 'claude,codex', '-ProjectTypes', 'infrastructure', '-Technologies', 'terraform',
+            '-Client', 'Client', '-Skills', 'adr,smart-commit', '-Local'
+        ) -WorkingDirectory $context.Project -HomePath $context.Home
+        Assert-Success -Result $install -Message 'Migration fixture install'
+        [IO.File]::AppendAllText((Join-Path $bundle 'skills/adr/SKILL.md'), "Release line added upstream.`n")
+        [IO.File]::AppendAllText((Join-Path $bundle 'skills/smart-commit/SKILL.md'), "Release change to smart-commit.`n")
+        $localFile = Join-Path $context.Project '.claude/skills/smart-commit/SKILL.md'
+        [IO.File]::AppendAllText($localFile, "my local customization`n")
+
+        $status = Invoke-PowerShellFile -FilePath $installer -Arguments @('-Project', '-Tools', 'claude,codex', '-SkillsStatus', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home
+        Assert-Success -Result $status -Message 'Status with pending changes'
+        Assert-True -Condition ($status.StandardOutput -match '\[x\] adr +update available') -Message 'Status update available'
+        Assert-True -Condition ($status.StandardOutput -match '\[x\] smart-commit +local changes') -Message 'Status local changes'
+
+        $update = Invoke-PowerShellFile -FilePath $installer -Arguments @('-Project', '-Tools', 'claude,codex', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home
+        Assert-Equal -Actual $update.ExitCode -Expected 2 -Message 'Local changes exit status'
+        Assert-Equal -Actual ([IO.File]::ReadAllText((Join-Path $context.Project '.claude/skills/adr/SKILL.md'))) `
+            -Expected ([IO.File]::ReadAllText((Join-Path $bundle 'skills/adr/SKILL.md'))) -Message 'Release update not applied'
+        Assert-TextContains -Text $update.StandardOutput -Expected "`n+Release line added upstream.`n" -Message 'Release diff line'
+        Assert-TextContains -Text $update.StandardOutput -Expected "`n-my local customization`n" -Message 'Local diff line'
+        Assert-TextContains -Text $update.StandardOutput -Expected 'Migration required' -Message 'Migration summary'
+        Assert-TextContains -Text ([IO.File]::ReadAllText($localFile)) -Expected 'my local customization' -Message 'Local change overwritten'
+
+        if (-not $IsWindows -and $null -ne (Get-Command bash -ErrorAction SilentlyContinue)) {
+            $bashContext = New-TestContext -Name 'portable Bash migration parity'
+            Copy-Item -LiteralPath (Join-Path $Root 'install.sh') -Destination (Join-Path $bundle 'install.sh') -Force
+            [IO.File]::WriteAllText((Join-Path $bundle 'skills/adr/SKILL.md'), [IO.File]::ReadAllText((Join-Path $Root 'skills/adr/SKILL.md')))
+            [IO.File]::WriteAllText((Join-Path $bundle 'skills/smart-commit/SKILL.md'), [IO.File]::ReadAllText((Join-Path $Root 'skills/smart-commit/SKILL.md')))
+            $bashArguments = @('--project', '--tools', 'claude,codex', '--project-types', 'infrastructure', '--technologies', 'terraform', '--client', 'Client', '--skills', 'adr,smart-commit')
+            $powerShellTwin = New-TestContext -Name 'portable PowerShell migration parity'
+            $bashInstall = Invoke-BashFile -FilePath (Join-Path $bundle 'install.sh') -Arguments $bashArguments -WorkingDirectory $bashContext.Project -HomePath $bashContext.Home
+            Assert-Success -Result $bashInstall -Message 'Bash migration twin install'
+            Assert-Success -Result (Invoke-PowerShellFile -FilePath $installer -Arguments @(
+                '-Project', '-Tools', 'claude,codex', '-ProjectTypes', 'infrastructure', '-Technologies', 'terraform',
+                '-Client', 'Client', '-Skills', 'adr,smart-commit', '-Local') -WorkingDirectory $powerShellTwin.Project -HomePath $powerShellTwin.Home) -Message 'PowerShell migration twin install'
+            [IO.File]::AppendAllText((Join-Path $bundle 'skills/adr/SKILL.md'), "Release line added upstream.`n")
+            foreach ($twin in @($bashContext, $powerShellTwin)) {
+                $path = Join-Path $twin.Project '.agents/skills/adr/SKILL.md'
+                $lines = [Collections.Generic.List[string]]([IO.File]::ReadAllLines($path))
+                $lines.Insert(3, 'local edit in the middle')
+                [IO.File]::WriteAllText($path, (($lines -join "`n") + "`n"))
+            }
+            $bashUpdate = Invoke-BashFile -FilePath (Join-Path $bundle 'install.sh') -Arguments @('--project', '--tools', 'claude,codex') -WorkingDirectory $bashContext.Project -HomePath $bashContext.Home
+            $powerShellUpdate = Invoke-PowerShellFile -FilePath $installer -Arguments @('-Project', '-Tools', 'claude,codex', '-Local') -WorkingDirectory $powerShellTwin.Project -HomePath $powerShellTwin.Home
+            Assert-Equal -Actual $powerShellUpdate.ExitCode -Expected $bashUpdate.ExitCode -Message 'Bash and PowerShell migration exit status differ'
+            $diffLines = { param($text) @($text.Replace("`r`n", "`n").Split("`n") | Where-Object { $_ -match '^(@@|\+|-)' }) -join "`n" }
+            Assert-Equal -Actual (& $diffLines $powerShellUpdate.StandardOutput) -Expected (& $diffLines $bashUpdate.StandardOutput) -Message 'Bash and PowerShell diffs differ'
+        }
+
+        $forced = Invoke-PowerShellFile -FilePath $installer -Arguments @('-Project', '-Tools', 'claude,codex', '-Force', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home
+        Assert-Success -Result $forced -Message 'Forced replacement'
+        Assert-True -Condition (@(Get-ChildItem -LiteralPath (Split-Path -Parent $localFile) -Filter 'SKILL.md.bak.*').Count -ge 1) -Message 'Forced replacement backup'
+        Assert-TextContains -Text $forced.StandardOutput -Expected 'your previous version was saved' -Message 'Forced replacement summary'
+
+        [IO.File]::AppendAllText((Join-Path $context.Project '.agents/skills/smart-commit/agents/openai.yaml'), "edited before removal`n")
+        $deselect = Invoke-PowerShellFile -FilePath $installer -Arguments @('-Project', '-Tools', 'claude,codex', '-Skills', 'adr', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home
+        Assert-Equal -Actual $deselect.ExitCode -Expected 2 -Message 'Deselecting an edited skill exit status'
+        Assert-PathNotExists -Path (Join-Path $context.Project '.agents/skills/smart-commit/SKILL.md') -Message 'Deselection removed unchanged file'
+        Assert-PathExists -Path (Join-Path $context.Project '.agents/skills/smart-commit/agents/openai.yaml') -Message 'Deselection kept edited file'
+        Assert-PathNotExists -Path (Join-Path $context.Project '.claude/skills/smart-commit/agents') -Message 'Deselection removed empty directories'
+        Assert-True -Condition (@(Get-ChildItem -LiteralPath (Join-Path $context.Project '.claude/skills/smart-commit') -Filter 'SKILL.md.bak.*').Count -ge 1) -Message 'Deselection removed a user backup'
+    }
+
+    Invoke-Test -Name 'portable skill lifecycle respects selection and adds skills' -Test {
+        $context = New-TestContext -Name 'portable selection lifecycle'
+        $toolkit = Join-Path $context.Root 'toolkit'
+        New-Item -ItemType Directory -Path $toolkit -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $Root 'manifest.tsv') -Destination (Join-Path $toolkit 'manifest.tsv')
+        Copy-Item -LiteralPath (Join-Path $Root 'skills') -Destination (Join-Path $toolkit 'skills') -Recurse
+        $install = Invoke-Installer -Arguments @(
+            '-Project', '-Tools', 'claude', '-ProjectTypes', 'infrastructure', '-Technologies', 'terraform',
+            '-Client', 'Client', '-Skills', 'adr', '-Local'
+        ) -WorkingDirectory $context.Project -HomePath $context.Home
+        Assert-Success -Result $install -Message 'Lifecycle selection fixture'
+        $environment = @{ MINDFLAYER_HOME = $toolkit; MINDFLAYER_NONINTERACTIVE = '1' }
+        $lifecycle = Join-Path $Root 'tools/skill-lifecycle.ps1'
+        $check = Invoke-PowerShellFile -FilePath $lifecycle -Arguments @('-Mode', 'Check', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment
+        Assert-Success -Result $check -Message 'Check with unselected skills'
+        Assert-True -Condition ($check.StandardOutput -match '(?m)^release-notes +available \(not selected\)') -Message 'Unselected skill listed as available'
+
+        [IO.File]::AppendAllText((Join-Path $toolkit 'skills/adr/SKILL.md'), "Upstream change.`n")
+        $update = Invoke-PowerShellFile -FilePath $lifecycle -Arguments @('-Mode', 'Check', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment
+        Assert-Equal -Actual $update.ExitCode -Expected 1 -Message 'Update available check status'
+        Assert-True -Condition ($update.StandardOutput -match '(?m)^adr +UPDATE AVAILABLE') -Message 'Update available status'
+        $target = Join-Path $context.Project '.claude/skills/adr/SKILL.md'
+        $dryRun = Invoke-PowerShellFile -FilePath $lifecycle -Arguments @('-Mode', 'Sync', '-DryRun', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment
+        Assert-Success -Result $dryRun -Message 'Lifecycle dry run'
+        Assert-TextContains -Text $dryRun.StandardOutput -Expected "`n+Upstream change.`n" -Message 'Dry run diff'
+        Assert-True -Condition (-not [IO.File]::ReadAllText($target).Contains('Upstream change.')) -Message 'Dry run wrote the update'
+        $sync = Invoke-PowerShellFile -FilePath $lifecycle -Arguments @('-Mode', 'Sync', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment
+        Assert-Success -Result $sync -Message 'Release update sync'
+        Assert-TextContains -Text ([IO.File]::ReadAllText($target)) -Expected 'Upstream change.' -Message 'Release update not synchronized'
+
+        [IO.File]::AppendAllText((Join-Path $context.Project '.claude/skills/adr/references/promotion.md'), "local`n")
+        [IO.File]::AppendAllText((Join-Path $toolkit 'skills/adr/references/promotion.md'), "Another upstream change.`n")
+        $local = Invoke-PowerShellFile -FilePath $lifecycle -Arguments @('-Mode', 'Check', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment
+        Assert-True -Condition ($local.StandardOutput -match '(?m)^adr +LOCAL CHANGES') -Message 'Local changes status'
+        $kept = Invoke-PowerShellFile -FilePath $lifecycle -Arguments @('-Mode', 'Sync', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment
+        Assert-Equal -Actual $kept.ExitCode -Expected 2 -Message 'Local changes sync status'
+        Assert-TextContains -Text $kept.StandardOutput -Expected 'Migration required' -Message 'Lifecycle migration summary'
+        $forcedSync = Invoke-PowerShellFile -FilePath $lifecycle -Arguments @('-Mode', 'Sync', '-Force', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment
+        Assert-Success -Result $forcedSync -Message 'Forced lifecycle sync'
+        $promotion = Join-Path $context.Project '.claude/skills/adr/references/promotion.md'
+        Assert-TextContains -Text ([IO.File]::ReadAllText($promotion)) -Expected 'Another upstream change.' -Message 'Forced sync applied release'
+        Assert-True -Condition (@(Get-ChildItem -LiteralPath (Split-Path -Parent $promotion) -Filter 'promotion.md.bak.*').Count -eq 1) -Message 'Forced sync per-file backup'
+        Assert-True -Condition (@(Get-ChildItem -LiteralPath (Join-Path $context.Project '.claude/skills') -Filter 'adr.bak.*' -Force).Count -eq 0) -Message 'Forced sync created a discoverable skill backup directory'
+
+        $sync = Join-Path $Root 'tools/sync-skills.ps1'
+        $noNames = Invoke-PowerShellFile -FilePath $sync -Arguments @('-Add', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment
+        Assert-Failure -Result $noNames -Message '-Add without names and without a terminal'
+        Assert-TextContains -Text $noNames.StandardError -Expected 'Available: branch-cleanup' -Message '-Add lists available skills'
+        Assert-Failure -Result (Invoke-PowerShellFile -FilePath $sync -Arguments @('-Add', 'bogus', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment) -Message '-Add unknown skill'
+        $dryAdd = Invoke-PowerShellFile -FilePath $sync -Arguments @('-Add', 'kimball-model', '-DryRun', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment
+        Assert-TextContains -Text $dryAdd.StandardOutput -Expected 'would select skills in AGENTS.md: kimball-model' -Message '-Add dry run'
+        Assert-TextContains -Text ([IO.File]::ReadAllText((Join-Path $context.Project 'AGENTS.md'))) -Expected "- **skills:** adr`n" -Message '-Add dry run changed selection'
+        $add = Invoke-PowerShellFile -FilePath $sync -Arguments @('-Add', 'kimball-model', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment
+        Assert-Success -Result $add -Message '-Add after migration'
+        Assert-TextContains -Text ([IO.File]::ReadAllText((Join-Path $context.Project 'AGENTS.md'))) -Expected '- **skills:** adr, kimball-model' -Message '-Add selection recorded'
+        Assert-PathExists -Path (Join-Path $context.Project '.claude/skills/kimball-model/references/modeling.md') -Message '-Add installed skill'
+        Assert-PathExists -Path (Join-Path $context.Project '.claude/skills/adr/SKILL.md') -Message '-Add kept existing selection'
+    }
+
+    Invoke-Test -Name 'portable interactive skill picker' -Test {
+        $python = Get-Command python3 -ErrorAction SilentlyContinue
+        if ($IsWindows -or $null -eq $python) {
+            Write-Skip -Message 'interactive picker tests need a POSIX pseudo-terminal and python3'
+            return
+        }
+        $context = New-TestContext -Name 'portable picker'
+        $startInfo = [Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $python.Source
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.WorkingDirectory = $context.Project
+        foreach ($argument in @((Join-Path $Root 'tests/pty_run.py'), '--timeout', '90', '--input', "n`n1 3`nzz 99`n`ny`n", '--',
+                (Get-Process -Id $PID).Path, '-NoProfile', '-File', (Join-Path $Root 'install.ps1'),
+                '-Project', '-Tools', 'claude', '-ProjectTypes', 'infrastructure', '-Technologies', 'terraform', '-Client', 'Client', '-Local')) {
+            $startInfo.ArgumentList.Add($argument)
+        }
+        $startInfo.Environment['HOME'] = $context.Home
+        $startInfo.Environment['TERM'] = 'dumb'
+        [void]$startInfo.Environment.Remove('CI')
+        [void]$startInfo.Environment.Remove('MINDFLAYER_NONINTERACTIVE')
+        $process = [Diagnostics.Process]::Start($startInfo)
+        $output = $process.StandardOutput.ReadToEnd()
+        $process.WaitForExit()
+        Assert-Equal -Actual $process.ExitCode -Expected 0 -Message "Picker install failed: $output"
+        Assert-TextContains -Text ([IO.File]::ReadAllText((Join-Path $context.Project 'AGENTS.md'))) -Expected '- **skills:** adr, engineering-auditor' -Message 'Picker selection'
+        Assert-TextContains -Text $output -Expected "Ignored 'zz'" -Message 'Picker invalid input message'
+        Assert-True -Condition ($output -match '\+ install +engineering-auditor') -Message 'Picker plan summary'
+    }
+
     if (-not $IsWindows) {
         Invoke-Test -Name 'PowerShell public mutation entrypoints fail early off Windows' -Test {
             $context = New-TestContext -Name 'portable host guard'
@@ -826,20 +1100,22 @@ try {
             $driftedHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
             $drift = Invoke-PowerShellFile -FilePath $checkScript -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment
             Assert-Failure -Result $drift -Message 'Drifted skill check'
-            Assert-TextContains -Text ($drift.StandardOutput + $drift.StandardError) -Expected 'DRIFTED' -Message 'Drift status'
+            Assert-TextContains -Text ($drift.StandardOutput + $drift.StandardError) -Expected 'LOCAL CHANGES' -Message 'Drift status'
 
             $dryRun = Invoke-PowerShellFile -FilePath $syncScript -Arguments @('-DryRun', '-Force') -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment
             Assert-Success -Result $dryRun -Message 'Forced lifecycle dry run'
             Assert-Equal -Actual (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -Expected $driftedHash -Message 'Dry run changed target'
 
             $preserve = Invoke-PowerShellFile -FilePath $syncScript -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment
-            Assert-Success -Result $preserve -Message 'Non-force lifecycle sync'
+            Assert-Equal -Actual $preserve.ExitCode -Expected 2 -Message 'Non-force lifecycle sync reports migration'
+            Assert-TextContains -Text $preserve.StandardOutput -Expected 'Migration required' -Message 'Non-force lifecycle migration summary'
             Assert-Equal -Actual (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -Expected $driftedHash -Message 'Non-force sync changed drifted target'
 
             $repair = Invoke-PowerShellFile -FilePath $syncScript -Arguments @('-Force') -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment
             Assert-Success -Result $repair -Message 'Forced lifecycle sync'
             Assert-Equal -Actual (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -Expected (Get-FileHash -LiteralPath (Join-Path $Root 'skills/adr/SKILL.md') -Algorithm SHA256).Hash -Message 'Forced sync did not repair target'
-            Assert-True -Condition (@(Get-ChildItem -LiteralPath (Split-Path -Parent (Split-Path -Parent $target)) -Filter 'adr.bak.*' -Force).Count -ge 1) -Message 'Forced sync did not create a recoverable backup'
+            Assert-True -Condition (@(Get-ChildItem -LiteralPath (Split-Path -Parent $target) -Filter 'SKILL.md.bak.*' -Force).Count -ge 1) -Message 'Forced sync did not create a recoverable backup'
+            Assert-True -Condition (@(Get-ChildItem -LiteralPath (Split-Path -Parent (Split-Path -Parent $target)) -Filter 'adr.bak.*' -Force).Count -eq 0) -Message 'Forced sync created a discoverable skill backup directory'
             Assert-PathExists -Path (Join-Path $cacheDirectory 'fixture.pyc') -Message 'Lifecycle sync removed an unmanifested cache'
         }
 
@@ -873,7 +1149,7 @@ try {
         [IO.File]::AppendAllText($obsoletePath, "modified`n", [Text.UTF8Encoding]::new($false))
         [IO.File]::AppendAllText($ownershipPath, ".agents/skills/adr/obsolete.md`tfile`t$($ownedSourceFields[2])`n", [Text.UTF8Encoding]::new($false))
         $modifiedSync = Invoke-PowerShellFile -FilePath (Join-Path $Root 'tools/sync-skills.ps1') -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment
-        Assert-Success -Result $modifiedSync -Message 'Modified obsolete skill sync'
+        Assert-Equal -Actual $modifiedSync.ExitCode -Expected 2 -Message 'Modified obsolete skill sync reports migration'
         Assert-PathExists -Path $obsoletePath -Message 'Modified obsolete skill file removed'
             [IO.File]::AppendAllText($ownershipPath, "../outside/skills/adr/SKILL.md`tfile`tinvalid`n", [Text.UTF8Encoding]::new($false))
             $unsafeCheck = Invoke-PowerShellFile -FilePath (Join-Path $Root 'tools/check-skills-update.ps1') -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment

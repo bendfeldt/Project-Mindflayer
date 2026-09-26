@@ -38,6 +38,8 @@ setup() {
 }
 teardown() { export HOME="$original_home"; [ -z "$sandbox" ] || rm -rf "$sandbox"; }
 trap teardown EXIT
+# The interactive picker is exercised explicitly through tests/pty_run.py.
+export MINDFLAYER_NONINTERACTIVE=1
 
 run_install() { bash "$ROOT/install.sh" "$@" </dev/null; }
 
@@ -70,7 +72,7 @@ assert 'PowerShell artifacts are Windows scoped' awk -F '\t' '($1 ~ /^(bootstrap
 assert 'retired AppleScript helper is not distributable' sh -c "! grep -Fq make_outlook_draft.applescript '$ROOT/manifest.tsv'"
 assert 'email helper is scoped to every platform' grep -Fqx $'skills/release-notes/scripts/make_email_draft.py\tskill-resource\t2.4.0\tglobal,project:skills\tmanaged-tree\tlinux,macos,windows' "$ROOT/manifest.tsv"
 assert 'repository tests are not distributable' sh -c "! grep -Eq 'skills/.*/test_[^[:space:]]+\\.py' '$ROOT/manifest.tsv'"
-assert 'system requirements distributed' grep -Fq $'docs/system-requirements.md\tdocument\t1.5.0' "$ROOT/manifest.tsv"
+assert 'system requirements distributed' grep -Fq $'docs/system-requirements.md\tdocument\t1.5.1' "$ROOT/manifest.tsv"
 assert 'local mode hidden from public help' sh -c "! bash '$ROOT/install.sh' --help | grep -Fq -- '--local'"
 for public_install_file in "$ROOT/README.md" "$ROOT/how-to-guide.md" "$ROOT/skills/setup-repo/SKILL.md"; do
   assert "no public local mode: ${public_install_file##*/}" not_contains "$public_install_file" '--local'
@@ -553,6 +555,198 @@ assert 'Codex project shim remains absent' test ! -e "$sandbox/project/codex.md"
 assert 'pre-existing gitignore line preserved' contains "$sandbox/project/.gitignore" '.claude/settings.local.json'
 assert 'toolkit gitignore line removed' not_contains "$sandbox/project/.gitignore" 'CLAUDE.local.md'
 assert 'pre-existing docs/adr preserved' test -d "$sandbox/project/docs/adr"
+teardown
+
+printf '%s\n' '--- project skill selection ---'
+tree_checksum() { (cd "$1" && find . -type f ! -name '.mindflayer-managed.tsv' -print | LC_ALL=C sort | xargs cksum | cksum); }
+pty_install() {
+  local keys="$1"; shift
+  env -u MINDFLAYER_NONINTERACTIVE -u CI TERM=dumb python3 "$ROOT/tests/pty_run.py" --timeout 60 --input "$keys" -- "$@"
+}
+new_selected_project() {
+  (cd "$sandbox/project" && run_install --project --tools claude,codex --project-types infrastructure \
+    --technologies terraform --client Client "$@")
+}
+
+setup
+new_selected_project --skills smart-commit,adr >/dev/null
+assert 'selected skills installed in every root' sh -c "test -f '$sandbox/project/.claude/skills/adr/SKILL.md' && test -f '$sandbox/project/.agents/skills/smart-commit/SKILL.md'"
+assert 'unselected skills not installed' test ! -e "$sandbox/project/.claude/skills/release-notes"
+assert 'selection recorded in manifest order' grep -Fqx -- '- **skills:** adr, smart-commit' "$sandbox/project/AGENTS.md"
+assert 'selection line in repository identity section' awk '/^## Repository identity/{s=1} /^## Project contract/{exit !(found)} s && /^- \*\*skills:\*\*/{found=1}' "$sandbox/project/AGENTS.md"
+assert 'ownership limited to selected skills' sh -c "! grep -F 'skills/release-notes/' '$sandbox/project/.mindflayer-managed.tsv'"
+before="$(tree_checksum "$sandbox/project")"
+status_output="$(cd "$sandbox/project" && run_install --project --tools claude,codex --skills-status 2>&1)"; rc=$?
+assert 'skills status succeeds' test "$rc" -eq 0
+assert 'skills status writes nothing' test "$before" = "$(tree_checksum "$sandbox/project")"
+assert 'skills status reports selection' sh -c "printf '%s' \"\$1\" | grep -Fq 'Selected in AGENTS.md: adr, smart-commit'" _ "$status_output"
+assert 'skills status marks up to date and not installed' sh -c "printf '%s' \"\$1\" | grep -Eq '\[x\] adr +up to date' && printf '%s' \"\$1\" | grep -Eq '\[ \] release-notes +not installed'" _ "$status_output"
+assert 'piped output has no color codes' sh -c "! printf '%s' \"\$1\" | grep -q \"\$(printf '\\033')\"" _ "$status_output"
+(cd "$sandbox/project" && run_install --project --tools claude,codex) >/dev/null
+assert 'join keeps stored selection' test ! -e "$sandbox/project/.claude/skills/release-notes"
+teardown
+
+setup
+new_selected_project --skills adr --prefix cl >/dev/null
+(cd "$sandbox/project" && run_install --project --tools claude,codex --skills all) >/dev/null
+assert 'selecting all removes the skills line' not_contains "$sandbox/project/AGENTS.md" '**skills:**'
+assert 'selecting all installs every skill' test -f "$sandbox/project/.agents/skills/release-notes/scripts/config.py"
+mkdir -p "$sandbox/default"
+(cd "$sandbox/default" && run_install --project --tools claude,codex --project-types infrastructure --technologies terraform --client Client --prefix cl) >/dev/null
+assert 'all-skills AGENTS.md equals default install' cmp -s "$sandbox/project/AGENTS.md" "$sandbox/default/AGENTS.md"
+(cd "$sandbox/project" && run_install --project --tools claude,codex --skills none) >/dev/null
+assert 'none records an explicit empty selection' grep -Fqx -- '- **skills:** none' "$sandbox/project/AGENTS.md"
+assert 'none removes unchanged skill files and directories' sh -c "! find '$sandbox/project/.claude/skills' '$sandbox/project/.agents/skills' -type f 2>/dev/null | grep -q ."
+teardown
+
+setup
+(cd "$sandbox/project" && run_install --project --tools claude --profile terraform --client Client --prefix cl --skills terraform-scaffold) >/dev/null
+assert 'legacy template records selection after metadata' sh -c "grep -A1 -F -- '- **resource prefix:**' '$sandbox/project/AGENTS.md' | grep -Fqx -- '- **skills:** terraform-scaffold'"
+printf '%s\n' "$(sed 's/^- \*\*skills:\*\*.*/- **skills:** terraform-scaffold, retired-skill/' "$sandbox/project/AGENTS.md")" > "$sandbox/project/AGENTS.md"
+output="$(cd "$sandbox/project" && run_install --project --tools claude 2>&1)"; rc=$?
+assert 'unknown stored skill does not fail install' test "$rc" -eq 0
+assert 'unknown stored skill is reported' sh -c "printf '%s' \"\$1\" | grep -Fq \"selects skill 'retired-skill'\"" _ "$output"
+teardown
+
+setup
+for bad in bogus adr,adr all,adr ''; do
+  rc=0; new_selected_project --skills "$bad" >/dev/null 2>&1 || rc=$?
+  assert "invalid --skills rejected: '$bad'" test "$rc" -ne 0
+done
+assert 'invalid selection wrote nothing' test ! -e "$sandbox/project/AGENTS.md"
+output="$(new_selected_project --skills bogus 2>&1)"
+assert 'unknown skill error lists available skills' sh -c "printf '%s' \"\$1\" | grep -Fq 'available skills: adr, branch-cleanup'" _ "$output"
+rc=0; run_install --global --tools claude --skills adr >/dev/null 2>&1 || rc=$?
+assert '--skills rejected for global install' test "$rc" -ne 0
+rc=0; (cd "$sandbox/project" && run_install --project --tools claude --skills-status --force) >/dev/null 2>&1 || rc=$?
+assert '--skills-status rejects --force' test "$rc" -ne 0
+rc=0; (cd "$sandbox/project" && run_install --project --tools gemini --skills adr --project-types infrastructure --technologies terraform --client Client) >/dev/null 2>&1 || rc=$?
+assert '--skills needs a tool with a skill root' test "$rc" -ne 0
+rc=0; (cd "$sandbox/project" && run_install --project --tools claude --interactive --project-types infrastructure --technologies terraform --client Client) >/dev/null 2>&1 || rc=$?
+assert '--interactive needs a terminal' test "$rc" -ne 0
+rc=0; (cd "$sandbox/project" && run_install --project --tools claude --interactive --skills adr --project-types infrastructure --technologies terraform --client Client) >/dev/null 2>&1 || rc=$?
+assert '--skills and --interactive conflict' test "$rc" -eq 1
+teardown
+
+setup
+new_selected_project --skills adr >/dev/null
+mv "$sandbox/project/AGENTS.md" "$sandbox/outside-AGENTS.md"
+ln -s "$sandbox/outside-AGENTS.md" "$sandbox/project/AGENTS.md"
+outside_before="$(checksum "$sandbox/outside-AGENTS.md")"
+rc=0; (cd "$sandbox/project" && run_install --project --tools claude,codex --skills adr,smart-pr) >/dev/null 2>&1 || rc=$?
+assert 'symlinked AGENTS.md selection change refused' test "$rc" -eq 1
+assert 'symlinked AGENTS.md target unchanged' test "$outside_before" = "$(checksum "$sandbox/outside-AGENTS.md")"
+assert 'refused selection change installs nothing' test ! -e "$sandbox/project/.claude/skills/smart-pr"
+teardown
+
+printf '%s\n' '--- release updates, local changes, and migration ---'
+setup
+bundle="$sandbox/bundle"
+copy_test_bundle "$bundle"
+(cd "$sandbox/project" && bash "$bundle/install.sh" --project --tools claude,codex --project-types infrastructure --technologies terraform --client Client --skills adr,smart-commit </dev/null) >/dev/null
+printf 'Release line added upstream.\n' >> "$bundle/skills/adr/SKILL.md"
+printf 'my local customization\n' >> "$sandbox/project/.claude/skills/smart-commit/SKILL.md"
+printf 'Release change to smart-commit.\n' >> "$bundle/skills/smart-commit/SKILL.md"
+status_output="$(cd "$sandbox/project" && bash "$bundle/install.sh" --project --tools claude,codex --skills-status </dev/null 2>&1)"
+assert 'status shows update available' sh -c "printf '%s' \"\$1\" | grep -Eq '\[x\] adr +update available'" _ "$status_output"
+assert 'status shows local changes' sh -c "printf '%s' \"\$1\" | grep -Eq '\[x\] smart-commit +local changes'" _ "$status_output"
+assert 'status diff shows release line' sh -c "printf '%s' \"\$1\" | grep -Fqx '+Release line added upstream.'" _ "$status_output"
+output="$(cd "$sandbox/project" && bash "$bundle/install.sh" --project --tools claude,codex </dev/null 2>&1)"; rc=$?
+assert 'local changes exit with migration status 2' test "$rc" -eq 2
+assert 'release update applied without --force' cmp -s "$bundle/skills/adr/SKILL.md" "$sandbox/project/.claude/skills/adr/SKILL.md"
+assert 'release update diff labels installed and release' sh -c "printf '%s' \"\$1\" | grep -Fq -- '--- .claude/skills/adr/SKILL.md (installed)'" _ "$output"
+assert 'release update recorded new ownership proof' grep -Fq ".claude/skills/adr/SKILL.md"$'\t'"file"$'\t'"$(checksum "$sandbox/project/.claude/skills/adr/SKILL.md")" "$sandbox/project/.mindflayer-managed.tsv"
+assert 'locally changed file kept' contains "$sandbox/project/.claude/skills/smart-commit/SKILL.md" 'my local customization'
+assert 'unchanged copy in other root updated' cmp -s "$bundle/skills/smart-commit/SKILL.md" "$sandbox/project/.agents/skills/smart-commit/SKILL.md"
+assert 'local diff flags migration' sh -c "printf '%s' \"\$1\" | grep -Fq 'LOCAL CHANGES - migration required'" _ "$output"
+assert 'local diff shows the local line as removed' sh -c "printf '%s' \"\$1\" | grep -Fqx -- '-my local customization'" _ "$output"
+assert 'migration summary lists kept file' sh -c "printf '%s' \"\$1\" | grep -Fq '! .claude/skills/smart-commit/SKILL.md  (release: smart-commit'" _ "$output"
+output="$(cd "$sandbox/project" && bash "$bundle/install.sh" --project --tools claude,codex --force </dev/null 2>&1)"; rc=$?
+assert 'forced replacement completes' test "$rc" -eq 0
+assert 'forced replacement applies release' cmp -s "$bundle/skills/smart-commit/SKILL.md" "$sandbox/project/.claude/skills/smart-commit/SKILL.md"
+assert 'forced replacement keeps a backup' sh -c "grep -Fq 'my local customization' '$sandbox/project/.claude/skills/smart-commit/'SKILL.md.bak.*"
+assert 'forced replacement reports the backup' sh -c "printf '%s' \"\$1\" | grep -Fq 'your previous version was saved'" _ "$output"
+printf 'edited before removal\n' >> "$sandbox/project/.agents/skills/smart-commit/agents/openai.yaml"
+output="$(cd "$sandbox/project" && bash "$bundle/install.sh" --project --tools claude,codex --skills adr </dev/null 2>&1)"; rc=$?
+assert 'deselecting an edited skill needs migration' test "$rc" -eq 2
+assert 'deselection removes unchanged files' test ! -e "$sandbox/project/.agents/skills/smart-commit/SKILL.md"
+assert 'deselection keeps edited files' contains "$sandbox/project/.agents/skills/smart-commit/agents/openai.yaml" 'edited before removal'
+assert 'deselection removes empty directories' test ! -e "$sandbox/project/.claude/skills/smart-commit/agents"
+assert 'deselection is reported' sh -c "printf '%s' \"\$1\" | grep -Fq '(deselected)'" _ "$output"
+teardown
+
+printf '%s\n' '--- interactive skill picker ---'
+setup
+if python3 -c 'import pty' >/dev/null 2>&1; then
+  output="$(cd "$sandbox/project" && pty_install $'n\n1 3\nzz 99\n\ny\n' bash "$ROOT/install.sh" --project --tools claude --project-types infrastructure --technologies terraform --client Client)"; rc=$?
+  assert 'picker install succeeds' test "$rc" -eq 0
+  assert 'picker selection recorded' grep -Fqx -- '- **skills:** adr, engineering-auditor' "$sandbox/project/AGENTS.md"
+  assert 'picker explains ignored input' sh -c "printf '%s' \"\$1\" | grep -Fq \"Ignored 'zz'\"" _ "$output"
+  assert 'picker lists descriptions' sh -c "printf '%s' \"\$1\" | grep -Fq 'Create or revise an architecture decision record'" _ "$output"
+  assert 'picker summarizes planned changes' sh -c "printf '%s' \"\$1\" | grep -Eq '\\+ install +engineering-auditor'" _ "$output"
+  assert 'TERM=dumb disables color' sh -c "! printf '%s' \"\$1\" | grep -q \"\$(printf '\\033')\\[3\"" _ "$output"
+  mkdir -p "$sandbox/cancelled"
+  rc=0; (cd "$sandbox/cancelled" && pty_install $'q\n' bash "$ROOT/install.sh" --project --tools claude --project-types infrastructure --technologies terraform --client Client) >/dev/null || rc=$?
+  assert 'picker cancel exits non-zero' test "$rc" -ne 0
+  assert 'picker cancel writes nothing' sh -c "test -z \"\$(ls -A '$sandbox/cancelled')\""
+  export MINDFLAYER_HOME="$ROOT"
+  output="$(cd "$sandbox/project" && pty_install $'smart-pr\n\n' bash "$ROOT/tools/sync-skills.sh" --add)"; rc=$?
+  assert 'sync --add picker succeeds' test "$rc" -eq 0
+  assert 'sync --add picker lists only unselected skills' sh -c "! printf '%s' \"\$1\" | grep -Eq '^  \[.\] +[0-9]+ adr '" _ "$output"
+  assert 'sync --add picker records selection' grep -Fqx -- '- **skills:** adr, engineering-auditor, smart-pr' "$sandbox/project/AGENTS.md"
+  assert 'sync --add picker installs skill' test -f "$sandbox/project/.claude/skills/smart-pr/SKILL.md"
+  unset MINDFLAYER_HOME
+else
+  printf 'SKIP interactive picker tests (python3 pty unavailable)\n'
+fi
+teardown
+
+printf '%s\n' '--- selection-aware lifecycle ---'
+setup
+bundle="$sandbox/bundle"
+copy_test_bundle "$bundle"
+(cd "$sandbox/project" && bash "$bundle/install.sh" --project --tools claude --project-types infrastructure --technologies terraform --client Client --skills adr </dev/null) >/dev/null
+export MINDFLAYER_HOME="$bundle"
+output="$(cd "$sandbox/project" && bash "$ROOT/tools/check-skills-update.sh" 2>&1)"; rc=$?
+assert 'check passes with unselected skills' test "$rc" -eq 0
+assert 'check lists unselected skills as available' sh -c "printf '%s' \"\$1\" | grep -Eq '^release-notes +available \(not selected\)'" _ "$output"
+printf 'Upstream change.\n' >> "$bundle/skills/adr/SKILL.md"
+output="$(cd "$sandbox/project" && bash "$ROOT/tools/check-skills-update.sh" 2>&1)"; rc=$?
+assert 'check reports update available' sh -c "printf '%s' \"\$1\" | grep -Eq '^adr +UPDATE AVAILABLE'" _ "$output"
+assert 'check fails when an update is available' test "$rc" -eq 1
+output="$(cd "$sandbox/project" && bash "$ROOT/tools/sync-skills.sh" --dry-run 2>&1)"; rc=$?
+assert 'sync dry run shows diff' sh -c "printf '%s' \"\$1\" | grep -Fqx '+Upstream change.'" _ "$output"
+assert 'sync dry run writes nothing' not_contains "$sandbox/project/.claude/skills/adr/SKILL.md" 'Upstream change.'
+(cd "$sandbox/project" && bash "$ROOT/tools/sync-skills.sh") >/dev/null; rc=$?
+assert 'sync applies release update without --force' contains "$sandbox/project/.claude/skills/adr/SKILL.md" 'Upstream change.'
+assert 'sync release update exits 0' test "$rc" -eq 0
+printf 'local\n' >> "$sandbox/project/.claude/skills/adr/references/promotion.md"
+printf 'Another upstream change.\n' >> "$bundle/skills/adr/references/promotion.md"
+output="$(cd "$sandbox/project" && bash "$ROOT/tools/check-skills-update.sh" 2>&1)"
+assert 'check reports local changes' sh -c "printf '%s' \"\$1\" | grep -Eq '^adr +LOCAL CHANGES'" _ "$output"
+output="$(cd "$sandbox/project" && bash "$ROOT/tools/sync-skills.sh" 2>&1)"; rc=$?
+assert 'sync keeps local changes with status 2' test "$rc" -eq 2
+assert 'sync lists migration' sh -c "printf '%s' \"\$1\" | grep -Fq 'Migration required'" _ "$output"
+assert 'sync keeps locally changed file' contains "$sandbox/project/.claude/skills/adr/references/promotion.md" 'local'
+output="$(cd "$sandbox/project" && bash "$ROOT/tools/sync-skills.sh" --force 2>&1)"; rc=$?
+assert 'forced sync completes' test "$rc" -eq 0
+assert 'forced sync applies the release' contains "$sandbox/project/.claude/skills/adr/references/promotion.md" 'Another upstream change.'
+assert 'forced sync backs up the single file' sh -c "grep -qx 'local' '$sandbox/project/.claude/skills/adr/references/'promotion.md.bak.*"
+assert 'forced sync creates no discoverable skill backup' sh -c "! ls -d '$sandbox/project/.claude/skills/'adr.bak.* 2>/dev/null | grep -q ."
+assert 'forced sync reports the backup' sh -c "printf '%s' \"\$1\" | grep -Fq 'promotion.md.bak.'" _ "$output"
+rc=0; (cd "$sandbox/project" && bash "$ROOT/tools/sync-skills.sh" --add </dev/null) >/dev/null 2>&1 || rc=$?
+assert 'sync --add without names needs a terminal' test "$rc" -ne 0
+output="$(cd "$sandbox/project" && bash "$ROOT/tools/sync-skills.sh" --add </dev/null 2>&1)"
+assert 'sync --add without terminal lists available skills' sh -c "printf '%s' \"\$1\" | grep -Fq 'Available: branch-cleanup'" _ "$output"
+rc=0; (cd "$sandbox/project" && bash "$ROOT/tools/sync-skills.sh" --add bogus) >/dev/null 2>&1 || rc=$?
+assert 'sync --add rejects unknown skill' test "$rc" -ne 0
+(cd "$sandbox/project" && bash "$ROOT/tools/sync-skills.sh" --add kimball-model --dry-run) >/dev/null
+assert 'sync --add dry run does not change selection' grep -Fqx -- '- **skills:** adr' "$sandbox/project/AGENTS.md"
+(cd "$sandbox/project" && bash "$ROOT/tools/sync-skills.sh" --add kimball-model) >/dev/null
+assert 'sync --add records selection' grep -Fqx -- '- **skills:** adr, kimball-model' "$sandbox/project/AGENTS.md"
+assert 'sync --add installs skill' test -f "$sandbox/project/.claude/skills/kimball-model/references/modeling.md"
+assert 'sync --add keeps AGENTS.md ownership proof current' grep -Fq "AGENTS.md"$'\t'"file"$'\t'"$(checksum "$sandbox/project/AGENTS.md")" "$sandbox/project/.mindflayer-managed.tsv"
+unset MINDFLAYER_HOME
 teardown
 
 printf '%s\n' '--- stores and release notes fixtures ---'

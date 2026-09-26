@@ -53,6 +53,56 @@ Windows equivalent:
 
 Existing managed projects enter join mode: `AGENTS.md` is preserved while missing selected-tool artifacts are added. Project skills are installed as complete real-file trees under the selected consumers' discovery roots.
 
+## Choosing and updating project skills
+
+Project installs can include all eleven skills or only some of them.
+
+- **In a terminal**, the installer shows every skill with its status, release
+  version, and a short description, with the current selection ticked. Type
+  numbers or names to toggle them (`3 5-7`, `adr`), `a` for all, `n` for none,
+  Enter to continue, or `q` to cancel without changes. It then lists the
+  planned installs, updates, and removals and asks `Proceed? [Y]es, [n]o, [d]iffs`.
+- **In scripts and CI**, pass `--skills adr,smart-commit` (or `all`, or `none`).
+  Without `--skills`, a new project gets every skill and an existing project
+  keeps its current selection. Set `MINDFLAYER_NONINTERACTIVE=1` to never show
+  the list; it is never shown when `CI` is set or output is redirected.
+
+The selection is stored in the committed `AGENTS.md`, so everyone who clones the
+repository gets the same skills:
+
+```markdown
+- **skills:** adr, smart-commit
+```
+
+The line is absent when every skill is selected, which is also how projects
+installed by earlier releases are read. `none` records an empty selection.
+Skills that are removed from the selection are deleted only where the files are
+unchanged; edited files are kept and reported.
+
+Check what is installed, and what an update would change, without writing
+anything:
+
+```bash
+~/.ai-toolkit/install.sh --project --tools claude,codex --skills-status
+```
+
+Each skill has one of these statuses:
+
+| Status | Meaning | What an install or sync does |
+|---|---|---|
+| `not installed` | Not present in the skill root | Installs it when selected |
+| `up to date` | Identical to the release | Nothing |
+| `update available` | Unchanged since the toolkit installed it; the release differs | Shows a diff and applies the update |
+| `local changes` | Edited after the toolkit installed it | Shows a diff, keeps your file, and lists it under **Migration required** |
+| `not managed` | Present but not installed by the toolkit | Same as local changes |
+
+Diffs run from your file (`---`) to the release (`+++`), coloured when the
+output is a terminal (set `NO_COLOR=1` to turn colour off). When anything is
+listed under **Migration required**, the install or sync still completes but
+exits with status 2. Move your customizations out of toolkit-managed files, for
+example into a project-specific skill, then rerun with `--force`: each replaced
+file is first saved as `<file>.bak.<timestamp>`.
+
 ## Lifecycle
 
 Run project drift and synchronization commands from the project root:
@@ -60,6 +110,8 @@ Run project drift and synchronization commands from the project root:
 ```bash
 ~/.ai-toolkit/check-skills-update.sh
 ~/.ai-toolkit/sync-skills.sh --dry-run
+~/.ai-toolkit/sync-skills.sh --add            # choose skills to add from a list
+~/.ai-toolkit/sync-skills.sh --add kimball-model,smart-pr
 ~/.ai-toolkit/check-template-update.sh
 ~/.ai-toolkit/check-stores.sh --file ./stores.yml
 ~/.ai-toolkit/uninstall.sh --global
@@ -71,6 +123,8 @@ Windows uses the equivalent PowerShell lifecycle commands:
 ```powershell
 & "$HOME/.ai-toolkit/check-skills-update.ps1"
 & "$HOME/.ai-toolkit/sync-skills.ps1" -DryRun
+& "$HOME/.ai-toolkit/sync-skills.ps1" -Add
+& "$HOME/.ai-toolkit/sync-skills.ps1" -Add kimball-model,smart-pr
 & "$HOME/.ai-toolkit/check-template-update.ps1"
 & "$HOME/.ai-toolkit/check-stores.ps1" -File ./stores.yml
 & "$HOME/.ai-toolkit/uninstall.ps1" -Global

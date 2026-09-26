@@ -7,6 +7,8 @@ param(
     [string]$Mode,
     [switch]$DryRun,
     [switch]$Force,
+    [switch]$Add,
+    [string]$AddSkills,
 
     [Parameter(DontShow)]
     [switch]$Local
@@ -362,11 +364,368 @@ function Copy-ManifestSkillFiles {
     }
 }
 
+$script:UseColor = (-not [Console]::IsOutputRedirected) -and (-not $env:NO_COLOR) -and ($env:TERM -ne 'dumb')
+$script:Migrations = [Collections.Generic.List[object]]::new()
+
+function Format-Color {
+    param([Parameter(Mandatory)][string]$Code, [AllowEmptyString()][string]$Text)
+    if ($script:UseColor) { return "`e[$($Code)m$Text`e[0m" }
+    return $Text
+}
+
+function Get-NormalizedText {
+    param([Parameter(Mandatory)][string]$Path)
+    return ([IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8)).Replace("`r`n", "`n").Replace("`r", "`n")
+}
+
+function Split-TextLines {
+    param([AllowEmptyString()][string]$Text)
+    if (-not $Text) { return , @() }
+    $lines = $Text.Split("`n")
+    if ($Text.EndsWith("`n")) { $lines = $lines[0..($lines.Count - 2)] }
+    return , @($lines)
+}
+
+function Format-DiffRange {
+    param([int]$Start, [int]$Count)
+    if ($Count -eq 0) { return '{0},0' -f ($Start - 1) }
+    if ($Count -eq 1) { return '{0}' -f $Start }
+    return '{0},{1}' -f $Start, $Count
+}
+
+# Unified diff (3 lines of context) in the format of `diff -u`: deletions are
+# listed before insertions and nearby changes share one hunk.
+function Get-UnifiedDiff {
+    param(
+        [AllowEmptyCollection()][string[]]$OldLines,
+        [AllowEmptyCollection()][string[]]$NewLines,
+        [Parameter(Mandatory)][string]$OldLabel,
+        [Parameter(Mandatory)][string]$NewLabel
+    )
+    $old = @($OldLines)
+    $new = @($NewLines)
+    $prefix = 0
+    while ($prefix -lt $old.Count -and $prefix -lt $new.Count -and $old[$prefix] -ceq $new[$prefix]) { $prefix++ }
+    $suffix = 0
+    while ($suffix -lt ($old.Count - $prefix) -and $suffix -lt ($new.Count - $prefix) -and
+        $old[$old.Count - 1 - $suffix] -ceq $new[$new.Count - 1 - $suffix]) { $suffix++ }
+    $oldMiddle = $old.Count - $prefix - $suffix
+    $newMiddle = $new.Count - $prefix - $suffix
+    if ($oldMiddle -eq 0 -and $newMiddle -eq 0) { return @() }
+
+    # lcs[i, j] = longest common subsequence of old[i..] and new[j..] within the middle.
+    $lcs = [int[, ]]::new($oldMiddle + 1, $newMiddle + 1)
+    for ($i = $oldMiddle - 1; $i -ge 0; $i--) {
+        for ($j = $newMiddle - 1; $j -ge 0; $j--) {
+            if ($old[$prefix + $i] -ceq $new[$prefix + $j]) { $lcs[$i, $j] = $lcs[($i + 1), ($j + 1)] + 1 }
+            elseif ($lcs[($i + 1), $j] -ge $lcs[$i, ($j + 1)]) { $lcs[$i, $j] = $lcs[($i + 1), $j] }
+            else { $lcs[$i, $j] = $lcs[$i, ($j + 1)] }
+        }
+    }
+    $ops = [Collections.Generic.List[object]]::new()
+    for ($k = 0; $k -lt $prefix; $k++) { $ops.Add([pscustomobject]@{ Op = ' '; Text = $old[$k]; Old = $k; New = $k }) }
+    $i = 0; $j = 0
+    while ($i -lt $oldMiddle -or $j -lt $newMiddle) {
+        if ($i -lt $oldMiddle -and $j -lt $newMiddle -and $old[$prefix + $i] -ceq $new[$prefix + $j]) {
+            $ops.Add([pscustomobject]@{ Op = ' '; Text = $old[$prefix + $i]; Old = $prefix + $i; New = $prefix + $j }); $i++; $j++
+        }
+        elseif ($j -ge $newMiddle -or ($i -lt $oldMiddle -and $lcs[($i + 1), $j] -ge $lcs[$i, ($j + 1)])) {
+            $ops.Add([pscustomobject]@{ Op = '-'; Text = $old[$prefix + $i]; Old = $prefix + $i; New = $prefix + $j }); $i++
+        }
+        else {
+            $ops.Add([pscustomobject]@{ Op = '+'; Text = $new[$prefix + $j]; Old = $prefix + $i; New = $prefix + $j }); $j++
+        }
+    }
+    for ($k = 0; $k -lt $suffix; $k++) {
+        $ops.Add([pscustomobject]@{ Op = ' '; Text = $old[$old.Count - $suffix + $k]; Old = $old.Count - $suffix + $k; New = $new.Count - $suffix + $k })
+    }
+
+    $context = 3
+    $changes = @(for ($k = 0; $k -lt $ops.Count; $k++) { if ($ops[$k].Op -ne ' ') { $k } })
+    $output = [Collections.Generic.List[string]]::new()
+    $output.Add("--- $OldLabel")
+    $output.Add("+++ $NewLabel")
+    $index = 0
+    while ($index -lt $changes.Count) {
+        $first = $changes[$index]
+        $last = $first
+        while ($index + 1 -lt $changes.Count -and ($changes[$index + 1] - $last) -le (2 * $context + 1)) {
+            $index++
+            $last = $changes[$index]
+        }
+        $start = [Math]::Max(0, $first - $context)
+        $end = [Math]::Min($ops.Count - 1, $last + $context)
+        $oldCount = 0; $newCount = 0
+        $oldStart = $null; $newStart = $null
+        for ($k = $start; $k -le $end; $k++) {
+            $op = $ops[$k]
+            if ($op.Op -ne '+') { if ($null -eq $oldStart) { $oldStart = $op.Old + 1 }; $oldCount++ }
+            if ($op.Op -ne '-') { if ($null -eq $newStart) { $newStart = $op.New + 1 }; $newCount++ }
+        }
+        if ($null -eq $oldStart) { $oldStart = $ops[$start].Old + 1 }
+        if ($null -eq $newStart) { $newStart = $ops[$start].New + 1 }
+        $output.Add(('@@ -{0} +{1} @@' -f (Format-DiffRange $oldStart $oldCount), (Format-DiffRange $newStart $newCount)))
+        for ($k = $start; $k -le $end; $k++) { $output.Add($ops[$k].Op + $ops[$k].Text) }
+        $index++
+    }
+    return $output.ToArray()
+}
+
+function Write-Diff {
+    param([string]$LocalPath, [string]$ReleasePath, [string]$Label, [string]$LocalDescription, [string]$ReleaseDescription)
+    $item = Get-Item -LiteralPath $LocalPath -Force -ErrorAction SilentlyContinue
+    $localText = if ($null -ne $item -and -not $item.PSIsContainer -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) {
+        Get-NormalizedText $LocalPath
+    }
+    else { '' }
+    $lines = Get-UnifiedDiff -OldLines (Split-TextLines $localText) -NewLines (Split-TextLines (Get-NormalizedText $ReleasePath)) `
+        -OldLabel "$Label ($LocalDescription)" -NewLabel "$Label ($ReleaseDescription)"
+    foreach ($line in $lines) {
+        if ($line.StartsWith('--- ') -or $line.StartsWith('+++ ')) { Write-Output (Format-Color '1' $line) }
+        elseif ($line.StartsWith('@@')) { Write-Output (Format-Color '36' $line) }
+        elseif ($line.StartsWith('-')) { Write-Output (Format-Color '31' $line) }
+        elseif ($line.StartsWith('+')) { Write-Output (Format-Color '32' $line) }
+        else { Write-Output $line }
+    }
+}
+
+function Get-FileOwnershipProof {
+    param([string]$OwnershipPath, [string]$FullPath)
+    foreach ($line in [IO.File]::ReadAllLines($OwnershipPath, [Text.Encoding]::UTF8)) {
+        if (-not $line) { continue }
+        $fields = $line.Split("`t", 3)
+        if ($fields.Count -ne 3 -or $fields[1] -ne 'file') { continue }
+        $recorded = if ([IO.Path]::IsPathRooted($fields[0])) { [IO.Path]::GetFullPath($fields[0]) } else { [IO.Path]::GetFullPath((Join-Path (Get-Location).Path $fields[0])) }
+        if ($recorded.Equals([IO.Path]::GetFullPath($FullPath), [StringComparison]::OrdinalIgnoreCase)) { return $fields[2] }
+    }
+    return $null
+}
+
+# new | current | update (unchanged since install) | local (edited) | unmanaged
+function Get-SkillFileState {
+    param([string]$OwnershipPath, [string]$Target, [string]$Source)
+    $item = Get-Item -LiteralPath $Target -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return 'new' }
+    $proof = Get-FileOwnershipProof -OwnershipPath $OwnershipPath -FullPath $Target
+    if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        if ($null -ne $proof) { return 'local' } else { return 'unmanaged' }
+    }
+    if ((Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $Target -Algorithm SHA256).Hash) { return 'current' }
+    if ($null -eq $proof) { return 'unmanaged' }
+    if ((Get-CksumProof $Target) -eq $proof) { return 'update' }
+    return 'local'
+}
+
+function Get-AvailableSkills {
+    param([object[]]$ManifestRows)
+    return @($ManifestRows | Where-Object Type -eq 'skill' | ForEach-Object SkillName)
+}
+
+# The selection is declared in AGENTS.md ("- **skills:** a, b" or "none").
+# Without that line every skill is selected, which matches earlier releases.
+function Get-SkillSelection {
+    param([string]$AgentsPath, [string[]]$Available)
+    if (-not (Test-Path -LiteralPath $AgentsPath -PathType Leaf)) { return , @($Available) }
+    $match = [regex]::Match((Get-NormalizedText $AgentsPath), '(?m)^\s*- \*\*skills:\*\*(.*)$')
+    if (-not $match.Success) { return , @($Available) }
+    $value = $match.Groups[1].Value -replace '\s', ''
+    if (-not $value -or $value -eq 'none') { return , @() }
+    $kept = foreach ($token in $value.Split(',')) {
+        if (-not $token) { continue }
+        if ($Available -contains $token) { $token }
+        else { [Console]::Error.WriteLine("! AGENTS.md selects skill '$token', which this release does not provide; ignoring it") }
+    }
+    return , @($Available | Where-Object { @($kept) -contains $_ })
+}
+
+function Set-SkillsLineText {
+    param([string]$Text, [string[]]$Selection, [string[]]$Available)
+    $remove = (@($Selection) -join ',') -ceq (@($Available) -join ',')
+    $value = if (@($Selection).Count -eq 0) { 'none' } else { @($Selection) -join ', ' }
+    $line = "- **skills:** $value"
+    $lines = [Collections.Generic.List[string]]::new()
+    $lines.AddRange([string[]]$Text.Split("`n"))
+    $trailing = $Text.EndsWith("`n")
+    if ($trailing) { $lines.RemoveAt($lines.Count - 1) }
+    $existing = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^\s*- \*\*skills:\*\*') { $existing = $i; break } }
+    if ($existing -ge 0) {
+        if ($remove) { $lines.RemoveAt($existing) } else { $lines[$existing] = $line }
+    }
+    elseif (-not $remove) {
+        $anchor = -1
+        $inIdentity = $false
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^##\s+Repository identity\s*$') { $inIdentity = $true; continue }
+            if ($inIdentity -and $lines[$i].StartsWith('## ')) { break }
+            if ($inIdentity -and $lines[$i] -match '^- \*\*[^*]+:\*\*') { $anchor = $i }
+        }
+        if ($anchor -lt 0) {
+            for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i].Contains('<!-- template: AGENTS ')) { $anchor = $i; break } }
+        }
+        if ($anchor -lt 0) { Stop-Lifecycle 'could not update the skills line in AGENTS.md' }
+        $lines.Insert($anchor + 1, $line)
+    }
+    $result = $lines -join "`n"
+    if ($trailing) { $result += "`n" }
+    return $result
+}
+
+function Get-SkillDescription {
+    param([string]$SourceRoot, [string]$SkillName)
+    $yaml = Join-Path (Join-Path $SourceRoot $SkillName) 'agents/openai.yaml'
+    if (-not (Test-Path -LiteralPath $yaml -PathType Leaf)) { return '' }
+    $match = [regex]::Match((Get-NormalizedText $yaml), '(?m)^\s*short_description:\s*"(.*)"\s*$')
+    if ($match.Success) { return $match.Groups[1].Value }
+    return ''
+}
+
+function Read-SkillsToAdd {
+    param([string[]]$Candidates, [object[]]$Skills, [string]$SourceRoot)
+    $names = @($Candidates)
+    $marks = [bool[]]::new($names.Count)
+    while ($true) {
+        Write-Host ''
+        Write-Host 'Add skills to this project'
+        Write-Host ('         {0,-22} {1,-8} {2}' -f 'Skill', 'Release', 'Description')
+        for ($i = 0; $i -lt $names.Count; $i++) {
+            $mark = if ($marks[$i]) { '[x]' } else { '[ ]' }
+            $version = ($Skills | Where-Object SkillName -eq $names[$i] | Select-Object -First 1).Version
+            Write-Host ('  {0} {1,2} {2,-22} {3,-8} {4}' -f $mark, ($i + 1), $names[$i], $version, (Get-SkillDescription $SourceRoot $names[$i]))
+        }
+        Write-Host ''
+        Write-Host 'Toggle with numbers or names (e.g. "1 3-4"), a = all, n = none,'
+        Write-Host 'Enter = continue, q = cancel without changes.'
+        [Console]::Write('> ')
+        $inputLine = [Console]::ReadLine()
+        if ($null -eq $inputLine) { Stop-Lifecycle 'input closed; nothing was changed' }
+        $inputLine = $inputLine.Replace(',', ' ').Trim()
+        if (-not $inputLine) { break }
+        $lower = $inputLine.ToLowerInvariant()
+        if (@('q', 'quit', 'cancel').Contains($lower)) { Stop-Lifecycle 'cancelled; nothing was changed' }
+        if (@('a', 'all').Contains($lower)) { for ($i = 0; $i -lt $names.Count; $i++) { $marks[$i] = $true }; continue }
+        if (@('n', 'none').Contains($lower)) { for ($i = 0; $i -lt $names.Count; $i++) { $marks[$i] = $false }; continue }
+        foreach ($token in ($inputLine -split '\s+')) {
+            if ($token -match '^(\d+)-(\d+)$') {
+                $start = [int]$Matches[1]; $end = [int]$Matches[2]
+                if ($start -lt 1 -or $end -gt $names.Count -or $start -gt $end) { Write-Host "Ignored '$token': choose numbers from 1 to $($names.Count)."; continue }
+                for ($i = $start - 1; $i -lt $end; $i++) { $marks[$i] = -not $marks[$i] }
+            }
+            elseif ($token -match '^\d+$') {
+                $number = [int]$token
+                if ($number -lt 1 -or $number -gt $names.Count) { Write-Host "Ignored '$token': choose numbers from 1 to $($names.Count)."; continue }
+                $marks[$number - 1] = -not $marks[$number - 1]
+            }
+            else {
+                $position = [array]::IndexOf($names, $token)
+                if ($position -lt 0) { Write-Host "Ignored '$token': not a number or skill name in the list."; continue }
+                $marks[$position] = -not $marks[$position]
+            }
+        }
+    }
+    return , @(for ($i = 0; $i -lt $names.Count; $i++) { if ($marks[$i]) { $names[$i] } })
+}
+
+function Add-SkillsToSelection {
+    param([string]$AgentsPath, [string[]]$Available, [string[]]$Selection, [object[]]$Skills, [string]$SourceRoot, [string]$OwnershipPath)
+    if (-not (Test-Path -LiteralPath $AgentsPath -PathType Leaf) -or -not (Get-NormalizedText $AgentsPath).Contains('<!-- template: AGENTS ')) {
+        Stop-Lifecycle 'AGENTS.md is missing or not toolkit-managed; add skills with install.ps1 -Project -Skills LIST'
+    }
+    $candidates = @($Available | Where-Object { @($Selection) -notcontains $_ })
+    $requested = [Collections.Generic.List[string]]::new()
+    if ($AddSkills) {
+        foreach ($token in ($AddSkills -replace '\s', '').Split(',')) {
+            if (-not $token) { Stop-Lifecycle '-Add contains an empty value' }
+            if ($Available -notcontains $token) { Stop-Lifecycle "unknown skill '$token'; available skills: $($Available -join ', ')" }
+            if (@($Selection) -contains $token) { Write-Output "= $token is already selected"; continue }
+            if (-not $requested.Contains($token)) { $requested.Add($token) }
+        }
+    }
+    elseif ($candidates.Count -eq 0) {
+        Write-Output 'All available skills are already selected.'
+    }
+    elseif (-not $env:MINDFLAYER_NONINTERACTIVE -and -not $env:CI -and -not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected) {
+        foreach ($name in (Read-SkillsToAdd -Candidates $candidates -Skills $Skills -SourceRoot $SourceRoot)) { $requested.Add($name) }
+    }
+    else {
+        Stop-Lifecycle "-Add without skill names needs a terminal to choose from. Available: $($candidates -join ', '). Use -Add NAME[,NAME]"
+    }
+    # Output from this function is user-facing text, so the new selection is
+    # stored in script scope rather than returned through the pipeline.
+    $script:Selection = @($Selection)
+    if ($requested.Count -eq 0) { return }
+    $newSelection = @($Available | Where-Object { @($Selection) -contains $_ -or $requested.Contains($_) })
+    $script:Selection = $newSelection
+    if ($DryRun) {
+        Write-Output "would select skills in AGENTS.md: $($requested -join ', ')"
+        return
+    }
+    $agentsItem = Get-Item -LiteralPath $AgentsPath -Force
+    if (($agentsItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        Stop-Lifecycle 'AGENTS.md is a link; replace it with a regular file before changing the skill selection'
+    }
+    $text = Get-NormalizedText $AgentsPath
+    $updated = Set-SkillsLineText -Text $text -Selection $newSelection -Available $Available
+    Write-Output "~ AGENTS.md (added: $($requested -join ', '))"
+    $rendered = [IO.Path]::GetTempFileName()
+    try {
+        [IO.File]::WriteAllText($rendered, $updated, [Text.UTF8Encoding]::new($false))
+        Write-Diff $AgentsPath $rendered 'AGENTS.md' 'current' 'updated'
+    }
+    finally { Remove-Item -LiteralPath $rendered -Force -ErrorAction SilentlyContinue }
+    $proof = Get-FileOwnershipProof -OwnershipPath $OwnershipPath -FullPath $AgentsPath
+    $wasOwned = $null -ne $proof -and (Get-CksumProof $AgentsPath) -eq $proof
+    # Replace through a sibling temporary file so an interruption never truncates AGENTS.md.
+    $temporary = Join-Path (Split-Path -Parent $AgentsPath) (".AGENTS.md.{0}.tmp" -f [guid]::NewGuid().ToString('N'))
+    try {
+        [IO.File]::WriteAllText($temporary, $updated, [Text.UTF8Encoding]::new($false))
+        [IO.File]::Replace($temporary, $AgentsPath, [NullString]::Value)
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+    }
+    if ($wasOwned) { Set-FileOwnershipRecord -OwnershipPath $OwnershipPath -Path 'AGENTS.md' -Proof (Get-CksumProof $AgentsPath) }
+}
+
+function Write-MigrationSummary {
+    if ($script:Migrations.Count -eq 0) { return }
+    $kept = @($script:Migrations | Where-Object Kind -eq 'kept')
+    $removal = @($script:Migrations | Where-Object Kind -eq 'kept-removal')
+    $replaced = @($script:Migrations | Where-Object Kind -eq 'replaced')
+    Write-Output ''
+    Write-Output (Format-Color '1;31' 'Migration required')
+    if ($kept.Count -gt 0) {
+        Write-Output "  Kept with local changes, not updated ($($kept.Count)):"
+        foreach ($entry in $kept) { Write-Output "    ! $($entry.Path)  (release: $($entry.Detail))" }
+    }
+    if ($removal.Count -gt 0) {
+        Write-Output "  Kept although no longer installed, because they have local changes ($($removal.Count)):"
+        foreach ($entry in $removal) { Write-Output "    ! $($entry.Path)  ($($entry.Detail))" }
+    }
+    if ($replaced.Count -gt 0) {
+        Write-Output "  Replaced by the release; your previous version was saved ($($replaced.Count)):"
+        foreach ($entry in $replaced) { Write-Output "    ! $($entry.Path)  -> $($entry.Detail)" }
+    }
+    Write-Output '  Next steps:'
+    if ($kept.Count -gt 0) {
+        Write-Output "    - Review the diffs above: '-' lines are your version, '+' lines are the release."
+        Write-Output '      Move your customizations out of toolkit-managed files, then rerun with -Force'
+        Write-Output '      to take the release; -Force saves each file as <file>.bak.<timestamp> first.'
+    }
+    if ($removal.Count -gt 0) {
+        Write-Output '    - Files kept after their skill was removed stay listed here until you delete them.'
+        Write-Output '      Copy anything you still need into your own files, then delete them.'
+    }
+    if ($replaced.Count -gt 0) {
+        Write-Output '    - Re-apply any customizations you still need from the saved .bak files.'
+    }
+}
+
 try {
     if (-not $IsWindows -and -not $Local) {
         Stop-Lifecycle 'PowerShell skill lifecycle is supported only on Windows; -Local is reserved for internal portable tests'
     }
-    if ($Mode -eq 'Check' -and ($DryRun -or $Force)) {
+    if ($Mode -eq 'Check' -and ($DryRun -or $Force -or $Add -or $AddSkills)) {
         Stop-Lifecycle 'check-skills-update.ps1 accepts no options'
     }
 
@@ -381,6 +740,19 @@ try {
     $roots = @(Get-ManagedRoots $ownershipPath)
     $manifestRows = @(Get-ManifestRows -ManifestPath $manifestPath -Platform windows)
     $skills = @($manifestRows | Where-Object Type -eq 'skill')
+    $available = Get-AvailableSkills $manifestRows
+    $agentsPath = Join-Path (Get-Location).Path 'AGENTS.md'
+    $selection = Get-SkillSelection -AgentsPath $agentsPath -Available $available
+    if ($Add -or $AddSkills) {
+        $script:Selection = $selection
+        Add-SkillsToSelection -AgentsPath $agentsPath -Available $available -Selection $selection `
+            -Skills $skills -SourceRoot $sourceRoot -OwnershipPath $ownershipPath
+        $selection = @($script:Selection)
+        # Any selection is a list of known skill names; anything else is a bug.
+        if (@($selection | Where-Object { $available -notcontains $_ }).Count -gt 0) {
+            Stop-Lifecycle 'internal error: invalid skill selection'
+        }
+    }
     $status = 0
 
     foreach ($root in $roots) {
@@ -389,28 +761,45 @@ try {
             -OwnershipPath $ownershipPath `
             -TargetRoot $root.Path `
             -OwnershipRoot $root.OwnershipPath `
-            -ManifestRows $manifestRows)
+            -ManifestRows @($manifestRows | Where-Object { @($selection) -contains $_.SkillName }))
         foreach ($obsolete in $obsoleteRecords) {
-            if ($Mode -eq 'Check') {
-                Write-Output ("{0,-24} OBSOLETE" -f $obsolete.RecordedPath)
-                $status = 1
-                continue
+            $relativeToRoot = [IO.Path]::GetRelativePath($root.Path, $obsolete.FullPath).Replace('\', '/')
+            $isDeclared = $false
+            if ($relativeToRoot.Contains('/')) {
+                $obsoleteSkill = $relativeToRoot.Split('/')[0]
+                $obsoleteRelative = $relativeToRoot.Substring($obsoleteSkill.Length + 1)
+                $isDeclared = @($manifestRows | Where-Object { $_.SkillName -eq $obsoleteSkill -and $_.RelativePath -eq $obsoleteRelative }).Count -gt 0
             }
+            $reason = if ($isDeclared) { 'deselected' } else { 'obsolete' }
             $item = Get-Item -LiteralPath $obsolete.FullPath -Force -ErrorAction SilentlyContinue
             $isVerified = $null -eq $item -or
                 (-not $item.PSIsContainer -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0 -and
                     (Get-CksumProof $obsolete.FullPath) -eq $obsolete.Proof)
-            if (-not $isVerified) {
-                [Console]::Error.WriteLine("! preserved obsolete $($obsolete.RecordedPath) (modified or type changed)")
+            if ($null -ne $item -and -not $isVerified) {
+                if ($Mode -eq 'Check') {
+                    Write-Output ("{0,-24} LOCAL CHANGES ({1} file kept; migration required)" -f $obsolete.RecordedPath, $reason)
+                }
+                else {
+                    Write-Output "! keep $reason $($obsolete.RecordedPath) (local changes)"
+                    $script:Migrations.Add([pscustomobject]@{ Kind = 'kept-removal'; Path = $obsolete.RecordedPath; Detail = $reason })
+                }
+                $status = 1
+                continue
+            }
+            if ($Mode -eq 'Check') {
+                if ($null -eq $item) { continue }
+                if ($reason -eq 'obsolete') { Write-Output ("{0,-24} OBSOLETE" -f $obsolete.RecordedPath) }
+                else { Write-Output ("{0,-24} NOT SELECTED (owned; sync removes it)" -f $obsolete.RecordedPath) }
+                $status = 1
                 continue
             }
             if ($DryRun) {
-                Write-Output "would remove obsolete $($obsolete.RecordedPath)"
+                if ($null -ne $item) { Write-Output "would remove $reason $($obsolete.RecordedPath)" }
                 continue
             }
             if ($null -ne $item) { Remove-Item -LiteralPath $obsolete.FullPath -Force }
             Remove-FileOwnershipRecord -OwnershipPath $ownershipPath -RecordedPath $obsolete.RecordedPath
-            Write-Output "- $($obsolete.RecordedPath) (obsolete)"
+            if ($null -ne $item) { Write-Output "- $($obsolete.RecordedPath) ($reason)" }
         }
         foreach ($skill in $skills) {
             $files = @(Get-SkillFiles -ManifestRows $manifestRows -SkillName $skill.SkillName)
@@ -424,58 +813,125 @@ try {
                     Stop-Lifecycle "manifest skill source not found: $sourceFile"
                 }
             }
+            if (@($selection) -notcontains $skill.SkillName) {
+                if ($Mode -eq 'Check') { Write-Output ('{0,-24} available (not selected)' -f $skill.SkillName) }
+                continue
+            }
             $skillTarget = Join-Path $root.Path $skill.SkillName
             $ownershipSkillTarget = Join-Path $root.OwnershipPath $skill.SkillName
-            $targetExists = Test-Path -LiteralPath $skillTarget
-            $inSync = $targetExists -and (Test-ManifestFilesEqual -SourceRoot $skillSource -TargetRoot $skillTarget -Files $files)
+            $targetItem = Get-Item -LiteralPath $skillTarget -Force -ErrorAction SilentlyContinue
+            $states = @{}
+            $hasLocal = $null -ne $targetItem -and (-not $targetItem.PSIsContainer -or ($targetItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)
+            $hasChange = $false
+            $hasExisting = $false
+            foreach ($file in $files) {
+                $relative = $file.RelativePath.Replace('/', [IO.Path]::DirectorySeparatorChar)
+                $state = if ($hasLocal) { 'local' } else {
+                    Get-SkillFileState -OwnershipPath $ownershipPath -Target (Join-Path $skillTarget $relative) -Source (Join-Path $skillSource $relative)
+                }
+                $states[$file.RelativePath] = $state
+                if (@('local', 'unmanaged').Contains($state)) { $hasLocal = $true }
+                if (@('new', 'update').Contains($state)) { $hasChange = $true }
+                if ($state -ne 'new') { $hasExisting = $true }
+            }
 
             if ($Mode -eq 'Check') {
-                if (-not $targetExists) {
+                if (-not $hasExisting) {
                     Write-Output ('{0,-24} MISSING (toolkit {1})' -f $skill.SkillName, $skill.Version)
                     $status = 1
                 }
-                elseif ($inSync) {
-                    Write-Output ('{0,-24} in sync ({1})' -f $skill.SkillName, $skill.Version)
+                elseif ($states.Values -contains 'unmanaged') {
+                    Write-Output ('{0,-24} LOCAL CHANGES ({1}; not installed by the toolkit)' -f $skill.SkillName, $skill.Version)
+                    $status = 1
+                }
+                elseif ($hasLocal) {
+                    Write-Output ('{0,-24} LOCAL CHANGES ({1}; migration required)' -f $skill.SkillName, $skill.Version)
+                    $status = 1
+                }
+                elseif ($hasChange) {
+                    Write-Output ('{0,-24} UPDATE AVAILABLE ({1})' -f $skill.SkillName, $skill.Version)
+                    $status = 1
                 }
                 else {
-                    Write-Output ('{0,-24} DRIFTED ({1}, manifest files)' -f $skill.SkillName, $skill.Version)
-                    $status = 1
+                    Write-Output ('{0,-24} in sync ({1})' -f $skill.SkillName, $skill.Version)
                 }
                 continue
             }
 
-            $action = if ($targetExists) { 'replace' } else { 'add' }
-            if ($inSync) {
+            if (-not $hasChange -and -not $hasLocal) {
                 Write-Output "= $($skill.SkillName)"
                 continue
             }
-            if ($targetExists -and -not $Force) {
-                Write-Output "! preserve $($skill.SkillName) (drifted; use -Force)"
-                continue
-            }
-            if ($DryRun) {
-                Write-Output "would $action $($skill.SkillName)"
-                continue
-            }
-
-            if ($targetExists) {
+            # A skill directory replaced by a file or link is moved aside as a whole;
+            # it cannot contain a discoverable SKILL.md of its own.
+            if ($null -ne $targetItem -and $Force -and -not $DryRun -and
+                (-not $targetItem.PSIsContainer -or ($targetItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
                 $backup = Get-BackupPath $skillTarget
-                Copy-Item -LiteralPath $skillTarget -Destination $backup -Recurse
-                if (-not (Test-Path -LiteralPath $skillTarget -PathType Container)) {
-                    Remove-Item -LiteralPath $skillTarget -Force
+                Move-Item -LiteralPath $skillTarget -Destination $backup
+                Write-Output "b $backup"
+                $script:Migrations.Add([pscustomobject]@{ Kind = 'replaced'; Path = $skillTarget; Detail = $backup })
+            }
+            if (-not $DryRun) { [IO.Directory]::CreateDirectory($skillTarget) | Out-Null }
+            foreach ($file in $files) {
+                $relative = $file.RelativePath.Replace('/', [IO.Path]::DirectorySeparatorChar)
+                $sourceFile = Join-Path $skillSource $relative
+                $targetFile = Join-Path $skillTarget $relative
+                $label = "$($root.OwnershipPath.Replace('\', '/'))/$($skill.SkillName)/$($file.RelativePath)"
+                $release = "release $($skill.Version)"
+                $state = $states[$file.RelativePath]
+                if ($state -eq 'current') { continue }
+                if ($state -eq 'new') {
+                    if ($DryRun) { Write-Output "would add $label" }
+                    else {
+                        Copy-ManifestSkillFiles -SourceRoot $skillSource -TargetRoot $skillTarget -OwnershipRoot $ownershipSkillTarget -OwnershipPath $ownershipPath -Files @($file)
+                        Write-Output "+ $label"
+                    }
+                    continue
+                }
+                if ($state -eq 'update') {
+                    if ($DryRun) { Write-Output "would update $label" } else { Write-Output "~ $label (update to $($skill.SkillName) $($skill.Version))" }
+                    Write-Diff $targetFile $sourceFile $label 'installed' $release
+                    if (-not $DryRun) {
+                        Copy-ManifestSkillFiles -SourceRoot $skillSource -TargetRoot $skillTarget -OwnershipRoot $ownershipSkillTarget -OwnershipPath $ownershipPath -Files @($file)
+                    }
+                    continue
+                }
+                if ($Force) {
+                    if ($DryRun) { Write-Output "would replace $label (local changes; backup first)" } else { Write-Output "! replace $label (local changes; -Force)" }
+                    Write-Diff $targetFile $sourceFile $label 'your version' $release
+                    if (-not $DryRun) {
+                        # Back up the single file next to itself: a <skill>.bak directory in
+                        # the discovery root would be loaded by assistants as another skill.
+                        $backup = '(no previous file)'
+                        if (Test-Path -LiteralPath $targetFile) {
+                            $backup = Get-BackupPath $targetFile
+                            Copy-Item -LiteralPath $targetFile -Destination $backup -Recurse
+                            Write-Output "b $backup"
+                        }
+                        Copy-ManifestSkillFiles -SourceRoot $skillSource -TargetRoot $skillTarget -OwnershipRoot $ownershipSkillTarget -OwnershipPath $ownershipPath -Files @($file)
+                        $script:Migrations.Add([pscustomobject]@{ Kind = 'replaced'; Path = $label; Detail = $backup })
+                    }
+                }
+                else {
+                    Write-Output "! keep ${label}: $(Format-Color '1;31' 'LOCAL CHANGES - migration required')"
+                    Write-Diff $targetFile $sourceFile $label 'your version' $release
+                    $script:Migrations.Add([pscustomobject]@{ Kind = 'kept'; Path = $label; Detail = "$($skill.SkillName) $($skill.Version)" })
                 }
             }
-            [IO.Directory]::CreateDirectory($skillTarget) | Out-Null
-            Copy-ManifestSkillFiles `
-                -SourceRoot $skillSource `
-                -TargetRoot $skillTarget `
-                -OwnershipRoot $ownershipSkillTarget `
-                -OwnershipPath $ownershipPath `
-                -Files $files
-            Write-Output "+ $($skill.SkillName) ($($skill.Version))"
+            if (-not $DryRun -and $hasChange) { Write-Output "+ $($skill.SkillName) ($($skill.Version))" }
         }
     }
-    exit $status
+    if ($Mode -eq 'Check') {
+        if ($status -ne 0) {
+            Write-Output ''
+            Write-Output 'Run sync-skills -DryRun to see the differences, or sync-skills to apply updates.'
+        }
+        exit $status
+    }
+    Write-MigrationSummary
+    $unresolved = @($script:Migrations | Where-Object { $_.Kind -in 'kept', 'kept-removal' }).Count
+    if ($unresolved -gt 0) { exit 2 }
+    exit 0
 }
 catch {
     [Console]::Error.WriteLine($_.Exception.Message)
