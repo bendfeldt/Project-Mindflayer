@@ -50,7 +50,15 @@ Common flags:
 | `--technologies LIST` | `-Technologies LIST` | Technology identifiers |
 | `--client NAME` | `-Client NAME` | Client name for a new project |
 | `--prefix PREFIX` | `-Prefix PREFIX` | Resource prefix for a new project |
+| `--skills LIST` | `-Skills LIST` | Project skills to install: names, `all`, or `none` |
+| `--interactive` | `-Interactive` | Choose project skills from a list (offered automatically in a terminal) |
+| `--skills-status` | `-SkillsStatus` | Show installed skills, available updates, and diffs without changing anything |
 | `--force` | `-Force` | Back up and replace existing managed targets |
+
+Project installs record the chosen skills in `AGENTS.md`. Release updates to
+skills are applied with a diff; skill files you changed locally are kept, shown
+as a diff, and listed for migration (exit status 2). See the
+[how-to guide](how-to-guide.md#choosing-and-updating-project-skills).
 
 The one-line bootstrap is trusted through HTTPS and the repository release policy. It then verifies the selected archive checksum and GitHub Actions Sigstore identity before execution. Existing files are preserved unless `--force` is explicit.
 
@@ -75,6 +83,7 @@ The Bash test suite requires ShellCheck `0.11.0`, matching the pinned CI version
 
 ```bash
 bash tests/test-install.sh
+pwsh -NoProfile -File tests/test-install.ps1
 python3.12 -m unittest discover -s tests -p 'test_*.py'
 ```
 

@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+# Exit status 2 means "completed; migration required". Map every unexpected
+# failure (for example grep or cmp reporting an error with status 2) to 1.
+trap 'exit 1' ERR
 
-VERSION="3.7.0"
+VERSION="3.8.0"
 KNOWN_TOOLS="claude codex gemini cursor copilot"
 VALID_PROFILES="terraform databricks fabric"
 
@@ -21,7 +24,19 @@ PROJECT_ROOT=""
 PREFLIGHT_MANIFEST=""
 BUNDLE_ROOT=""
 AGENTS_TO_INSTALL=()
+SKILL_ROOTS=()
+PICK_NAMES=()
+PICK_MARKS=()
+PICKED=""
 CURRENT_PLATFORM=""
+SKILLS_REQUEST=""
+SKILLS_REQUESTED=0
+INTERACTIVE_REQUESTED=0
+SKILLS_STATUS_ONLY=0
+SELECTED_SKILLS=""
+USE_COLOR=0
+DIFFS_SHOWN=0
+EXIT_STATUS=0
 
 info() { printf '%s\n' "$*"; }
 warn() { printf ' ! %s\n' "$*"; }
@@ -41,10 +56,21 @@ Options:
   --profile NAME    Deprecated: terraform, databricks, or fabric (project mode)
   --client NAME     Client name (new project install)
   --prefix PREFIX   Resource prefix (new project install)
+  --skills LIST     Skills to install in the project: comma-separated names,
+                    "all", or "none" (project mode). Omitted: all skills for a
+                    new project, the AGENTS.md selection for an existing one.
+  --interactive     Choose skills from an interactive list (project mode).
+                    Offered automatically when a terminal is attached.
+  --skills-status   Show installed skills, available updates, and diffs, then
+                    exit without changing anything (project mode)
   --force           Authorize replacement; existing files are backed up first
   --help            Show this help
 
 Existing files are preserved unless --force explicitly authorizes replacement.
+Skill updates from a newer release are applied with a diff. Skill files with
+local changes are kept, shown as a diff, and listed for migration; the exit
+status is then 2. Set MINDFLAYER_NONINTERACTIVE=1 or NO_COLOR=1 to disable the
+interactive list or colored output.
 The toolkit repository itself is not a valid --project target.
 
 Requirements:
@@ -55,6 +81,7 @@ Requirements:
 USAGE
 }
 
+# shellcheck disable=SC2329 # invoked by the EXIT trap below
 cleanup() {
   if [ -n "$TMP_ROOT" ] && [ -d "$TMP_ROOT" ]; then
     rm -rf "$TMP_ROOT"
@@ -82,6 +109,9 @@ parse_args() {
       --technologies) require_value "$1" "${2:-}"; shift; TECHNOLOGIES="$1" ;;
       --client) require_value "$1" "${2:-}"; shift; CLIENT_NAME="$1" ;;
       --prefix) require_value "$1" "${2:-}"; shift; CLIENT_PREFIX="$1" ;;
+      --skills) require_value "$1" "${2:-}"; shift; SKILLS_REQUEST="$1"; SKILLS_REQUESTED=1 ;;
+      --interactive) INTERACTIVE_REQUESTED=1 ;;
+      --skills-status) SKILLS_STATUS_ONLY=1 ;;
       --force) REPLACE=1 ;;
       --local) : ;; # Backward-compatible no-op; installation is bundle-local.
       --help|-h) usage; exit 0 ;;
@@ -243,7 +273,7 @@ forget_ownership() {
 }
 
 remove_verified_owned_artifact() {
-  local path="$1" record kind proof artifact
+  local path="$1" reason="${2:-obsolete}" record kind proof artifact
   [ -n "$OWNERSHIP_FILE" ] && [ -f "$OWNERSHIP_FILE" ] || return 0
   assert_ownership_file_safe
   validate_owned_path "$path"
@@ -260,7 +290,8 @@ remove_verified_owned_artifact() {
   case "$kind" in
     file)
       if [ ! -f "$artifact" ] || [ "$(fingerprint "$artifact")" != "$proof" ]; then
-        warn "preserved obsolete $path (modified or type changed)"
+        warn "preserved $reason $path (modified or type changed)"
+        record_migration kept-removal "$path" "$reason"
         return 0
       fi
       ;;
@@ -278,7 +309,7 @@ remove_verified_owned_artifact() {
 
   rm -f "$artifact"
   forget_ownership "$path"
-  info " - $path (obsolete)"
+  info " - $path ($reason)"
 }
 
 backup_path() {
@@ -436,23 +467,36 @@ skill_names() {
   ' "$1"
 }
 
+# Removes owned files under a skill root that are no longer expected. With a
+# selection (project mode), files of unselected skills are removed as
+# "deselected"; files the manifest no longer declares are "obsolete".
 reconcile_skill_files() {
-  local manifest="$1" root="$2" expected snapshot path type consumers platforms
+  local manifest="$1" root="$2" selection="${3-all}" expected declared snapshot path type consumers platforms name
   [ -n "$OWNERSHIP_FILE" ] && [ -f "$OWNERSHIP_FILE" ] || return 0
   expected="$(mktemp)"
+  declared="$(mktemp)"
   snapshot="$(mktemp)"
   while IFS=$'\t' read -r path type _version consumers _ownership platforms; do
     case "$type" in skill|skill-resource) ;; *) continue ;; esac
     consumer_matches "$consumers" project:skills || continue
     platform_matches "$platforms" || continue
-    printf '%s\n' "$root/${path#skills/}" >> "$expected"
+    printf '%s\n' "$root/${path#skills/}" >> "$declared"
+    name="${path#skills/}"; name="${name%%/*}"
+    if [ "$selection" = all ] || list_contains "$name" "$selection"; then
+      printf '%s\n' "$root/${path#skills/}" >> "$expected"
+    fi
   done < <(manifest_rows "$manifest")
   cp "$OWNERSHIP_FILE" "$snapshot"
   while IFS=$'\t' read -r path _kind _proof; do
     case "$path" in "$root"/*) ;; *) continue ;; esac
-    grep -Fqx "$path" "$expected" || remove_verified_owned_artifact "$path"
+    grep -Fqx -- "$path" "$expected" && continue
+    if grep -Fqx -- "$path" "$declared"; then
+      remove_verified_owned_artifact "$path" deselected
+    else
+      remove_verified_owned_artifact "$path" obsolete
+    fi
   done < "$snapshot"
-  rm -f "$expected" "$snapshot"
+  rm -f "$expected" "$declared" "$snapshot"
 }
 
 skill_root_records() {
@@ -758,6 +802,641 @@ migrate_legacy_project_artifacts() {
   esac
 }
 
+# ---------------------------------------------------------------------------
+# Project skill selection, status detection, diffs, and migration reporting.
+# ---------------------------------------------------------------------------
+
+list_contains() {
+  case ",$2," in *",$1,"*) return 0 ;; *) return 1 ;; esac
+}
+
+setup_color() {
+  USE_COLOR=0
+  if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; then USE_COLOR=1; fi
+}
+
+paint() {
+  if [ "$USE_COLOR" -eq 1 ]; then printf '\033[%sm%s\033[0m' "$1" "$2"; else printf '%s' "$2"; fi
+}
+
+tty_paint() {
+  if [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; then printf '\033[%sm%s\033[0m' "$1" "$2"; else printf '%s' "$2"; fi
+}
+
+interactive_available() {
+  [ -z "${MINDFLAYER_NONINTERACTIVE:-}" ] && [ -z "${CI:-}" ] && [ -t 1 ] && { : < /dev/tty; } 2>/dev/null
+}
+
+# TMP_ROOT is created in main, never inside a command substitution, so every
+# helper shares one working directory that the EXIT trap removes.
+skill_work_dir() {
+  [ -n "$TMP_ROOT" ] && [ -d "$TMP_ROOT" ] || fail "internal error: working directory not initialized"
+  printf '%s' "$TMP_ROOT"
+}
+
+# Cache project skill metadata: skills.tsv (name, version, description) and
+# skill-files.tsv (name, relative path) in manifest order.
+load_skill_catalog() {
+  local work path type version consumers platforms name description
+  work="$(skill_work_dir)"
+  [ ! -f "$work/skills.tsv" ] || return 0
+  : > "$work/skills.tsv"
+  : > "$work/skill-files.tsv"
+  while IFS=$'\t' read -r path type version consumers _ownership platforms; do
+    case "$type" in skill|skill-resource) ;; *) continue ;; esac
+    consumer_matches "$consumers" project:skills || continue
+    platform_matches "$platforms" || continue
+    name="${path#skills/}"; name="${name%%/*}"
+    case "$name" in ''|*[!a-z0-9-]*) fail "unsafe skill name in manifest: $path" ;; esac
+    printf '%s\t%s\n' "$name" "${path#skills/"$name"/}" >> "$work/skill-files.tsv"
+    if [ "$type" = skill ]; then
+      description=""
+      if [ -f "$BUNDLE_ROOT/skills/$name/agents/openai.yaml" ]; then
+        description="$(sed -n 's/^[[:space:]]*short_description:[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$BUNDLE_ROOT/skills/$name/agents/openai.yaml" | head -1)"
+      fi
+      printf '%s\t%s\t%s\n' "$name" "$version" "$description" >> "$work/skills.tsv"
+    fi
+  done < <(manifest_rows "$PREFLIGHT_MANIFEST")
+  [ -s "$work/skills.tsv" ] || fail "the release bundle declares no project skills"
+}
+
+skill_names_list() { awk -F '\t' '{print $1}' "$(skill_work_dir)/skills.tsv"; }
+skill_version() { awk -F '\t' -v name="$1" '$1 == name {print $2; exit}' "$(skill_work_dir)/skills.tsv"; }
+skill_files() { awk -F '\t' -v name="$1" '$1 == name {print $2}' "$(skill_work_dir)/skill-files.tsv"; }
+all_skills_csv() { skill_names_list | paste -sd, -; }
+
+# Put a comma-separated selection into manifest order.
+canonical_skill_csv() {
+  local wanted="$1" name result=""
+  while IFS= read -r name; do
+    list_contains "$name" "$wanted" || continue
+    result="${result:+$result,}$name"
+  done < <(skill_names_list)
+  printf '%s' "$result"
+}
+
+parse_skill_request() {
+  local request="$1" token seen="" available
+  available="$(all_skills_csv)"
+  request="$(printf '%s' "$request" | tr -d '[:space:]')"
+  case "$request" in
+    all) printf '%s' "$available"; return 0 ;;
+    none) return 0 ;;
+    '') fail "--skills requires a value: skill names, all, or none" ;;
+  esac
+  IFS=',' read -r -a tokens <<< "$request"
+  for token in "${tokens[@]}"; do
+    [ -n "$token" ] || fail "--skills contains an empty value"
+    case "$token" in all|none) fail "--skills: '$token' cannot be combined with skill names" ;; esac
+    list_contains "$token" "$available" || fail "unknown skill '$token'; available skills: ${available//,/, }"
+    ! list_contains "$token" "$seen" || fail "duplicate skill '$token' in --skills"
+    seen="${seen:+$seen,}$token"
+  done
+  canonical_skill_csv "$seen"
+}
+
+agents_has_skills_line() {
+  [ -f "$1" ] && grep -Eq '^[[:space:]]*- \*\*skills:\*\*' "$1"
+}
+
+# Reads the stored selection. Unknown names (for example a skill retired by a
+# newer release) are reported and ignored.
+stored_skill_selection() {
+  local agents="$1" raw token kept="" available
+  available="$(all_skills_csv)"
+  raw="$(sed -n 's/^[[:space:]]*- \*\*skills:\*\*[[:space:]]*//p' "$agents" | head -1 | tr -d '[:space:]')"
+  [ "$raw" != none ] && [ -n "$raw" ] || return 0
+  IFS=',' read -r -a tokens <<< "$raw"
+  for token in "${tokens[@]}"; do
+    [ -n "$token" ] || continue
+    if list_contains "$token" "$available"; then
+      kept="${kept:+$kept,}$token"
+    else
+      warn "AGENTS.md selects skill '$token', which this release does not provide; ignoring it" >&2
+    fi
+  done
+  canonical_skill_csv "$kept"
+}
+
+skills_line_value() {
+  if [ -z "$1" ]; then printf 'none'; else printf '%s' "${1//,/, }"; fi
+}
+
+# Writes AGENTS.md content with the skills line set (or removed when every
+# skill is selected, so default projects keep the unchanged template).
+render_agents_selection() {
+  local source="$1" destination="$2" selection="$3" mode=set line
+  if [ "$selection" = "$(all_skills_csv)" ]; then mode=remove; fi
+  line="- **skills:** $(skills_line_value "$selection")"
+  awk -v mode="$mode" -v line="$line" '
+    { lines[NR] = $0 }
+    END {
+      for (i = 1; i <= NR; i++) if (lines[i] ~ /^[[:space:]]*- \*\*skills:\*\*/) { existing = i; break }
+      if (!existing && mode == "set") {
+        for (i = 1; i <= NR; i++) {
+          if (lines[i] ~ /^##[[:space:]]+Repository identity[[:space:]]*$/) { in_identity = 1; continue }
+          if (in_identity && lines[i] ~ /^## /) break
+          if (in_identity && lines[i] ~ /^- \*\*[^*]+:\*\*/) anchor = i
+        }
+        if (!anchor) for (i = 1; i <= NR; i++) if (lines[i] ~ /<!-- template: AGENTS /) { anchor = i; break }
+        if (!anchor) exit 3
+      }
+      for (i = 1; i <= NR; i++) {
+        if (i == existing) { if (mode == "set") print line; continue }
+        print lines[i]
+        if (i == anchor) print line
+      }
+    }
+  ' "$source" > "$destination"
+}
+
+recorded_file_proof() {
+  [ -n "$OWNERSHIP_FILE" ] && [ -f "$OWNERSHIP_FILE" ] || return 0
+  awk -F '\t' -v value="$1" '$1 == value && $2 == "file" {print $3; exit}' "$OWNERSHIP_FILE"
+}
+
+# State of one manifest file in a skill root:
+#   new       missing locally
+#   current   identical to the release
+#   update    unchanged since the toolkit installed it; the release differs
+#   local     installed by the toolkit, then edited
+#   unmanaged exists but was not installed by the toolkit
+file_state() {
+  local destination="$1" source="$2" proof
+  if [ ! -e "$destination" ] && [ ! -L "$destination" ]; then printf 'new'; return; fi
+  proof="$(recorded_file_proof "$destination")"
+  if [ -L "$destination" ] || [ ! -f "$destination" ]; then
+    if [ -n "$proof" ]; then printf 'local'; else printf 'unmanaged'; fi
+    return
+  fi
+  if cmp -s "$source" "$destination"; then printf 'current'; return; fi
+  if [ -z "$proof" ]; then printf 'unmanaged'
+  elif [ "$(fingerprint "$destination")" = "$proof" ]; then printf 'update'
+  else printf 'local'; fi
+}
+
+state_rank() {
+  case "$1" in not-installed) printf 0 ;; current) printf 1 ;; update) printf 2 ;; local) printf 3 ;; unmanaged) printf 4 ;; esac
+}
+
+# Aggregated state of a skill in one root, including owned files the release
+# no longer declares.
+skill_root_state() {
+  local root="$1" name="$2" relative state worst=current existing=0 path proof
+  if [ ! -e "$root/$name" ] && [ ! -L "$root/$name" ]; then printf 'not-installed'; return; fi
+  while IFS= read -r relative; do
+    state="$(file_state "$root/$name/$relative" "$BUNDLE_ROOT/skills/$name/$relative")"
+    if [ "$state" = new ]; then state=update; else existing=1; fi
+    [ "$(state_rank "$state")" -le "$(state_rank "$worst")" ] || worst="$state"
+  done < <(skill_files "$name")
+  if [ -n "$OWNERSHIP_FILE" ] && [ -f "$OWNERSHIP_FILE" ]; then
+    while IFS=$'\t' read -r path proof; do
+      skill_files "$name" | grep -Fqx -- "${path#"$root/$name/"}" && continue
+      [ -e "$path" ] || continue
+      existing=1
+      if [ -f "$path" ] && [ ! -L "$path" ] && [ "$(fingerprint "$path")" = "$proof" ]; then state=update; else state=local; fi
+      [ "$(state_rank "$state")" -le "$(state_rank "$worst")" ] || worst="$state"
+    done < <(awk -F '\t' -v prefix="$root/$name/" '$2 == "file" && index($1, prefix) == 1 {print $1 "\t" $3}' "$OWNERSHIP_FILE")
+  fi
+  if [ "$existing" -eq 0 ] && [ "$worst" = update ]; then
+    # The directory exists but holds none of the skill's files.
+    if [ -n "$(find "$root/$name" -mindepth 1 -print -quit 2>/dev/null)" ]; then printf 'unmanaged'; else printf 'not-installed'; fi
+    return
+  fi
+  printf '%s' "$worst"
+}
+
+# Writes states.tsv: name, aggregated state across the selected roots, and
+# whether the toolkit owns the skill in any root.
+compute_skill_states() {
+  local work name state worst root owned missing
+  work="$(skill_work_dir)"
+  : > "$work/states.tsv"
+  while IFS= read -r name; do
+    worst=""
+    missing=0
+    owned=no
+    for root in "${SKILL_ROOTS[@]}"; do
+      state="$(skill_root_state "$root" "$name")"
+      if [ "$state" = not-installed ]; then
+        missing=1
+      elif [ -z "$worst" ] || [ "$(state_rank "$state")" -gt "$(state_rank "$worst")" ]; then
+        worst="$state"
+      fi
+      if [ -n "$(recorded_file_proof "$root/$name/SKILL.md")" ]; then owned=yes; fi
+    done
+    if [ -z "$worst" ]; then
+      worst=not-installed
+    elif [ "$missing" -eq 1 ] && [ "$worst" = current ]; then
+      # Installed in some roots only: adding it to the others is an update.
+      worst=update
+    fi
+    printf '%s\t%s\t%s\n' "$name" "$worst" "$owned" >> "$work/states.tsv"
+  done < <(skill_names_list)
+}
+
+skill_state() { awk -F '\t' -v name="$1" '$1 == name {print $2; exit}' "$(skill_work_dir)/states.tsv"; }
+
+state_label() {
+  case "$1" in
+    not-installed) printf 'not installed' ;;
+    current) printf 'up to date' ;;
+    update) printf 'update available' ;;
+    local) printf 'local changes' ;;
+    unmanaged) printf 'not managed' ;;
+  esac
+}
+
+state_color() {
+  case "$1" in current) printf '32' ;; update) printf '33' ;; local|unmanaged) printf '31' ;; *) printf '2' ;; esac
+}
+
+colorize_diff() {
+  if [ "$USE_COLOR" -eq 1 ]; then
+    awk '
+      /^(---|\+\+\+) / { printf "\033[1m%s\033[0m\n", $0; next }
+      /^@@/ { printf "\033[36m%s\033[0m\n", $0; next }
+      /^-/ { printf "\033[31m%s\033[0m\n", $0; next }
+      /^\+/ { printf "\033[32m%s\033[0m\n", $0; next }
+      { print }
+    '
+  else
+    cat
+  fi
+}
+
+# Unified diff from the local file (---) to the release (+++).
+show_diff() {
+  local local_file="$1" release_file="$2" label="$3" local_description="$4" release_description="$5"
+  [ -f "$local_file" ] && [ ! -L "$local_file" ] || local_file=/dev/null
+  { diff -u -L "$label ($local_description)" -L "$label ($release_description)" "$local_file" "$release_file" || true; } | colorize_diff
+}
+
+record_migration() {
+  [ "$OWNERSHIP_SCOPE" = project ] || return 0
+  printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$(skill_work_dir)/migrations.tsv"
+}
+
+# Prints the diffs for every changed file of the given skills in all roots.
+print_skill_diffs() {
+  local names="$1" name root relative destination state version
+  for name in ${names//,/ }; do
+    version="$(skill_version "$name")"
+    for root in "${SKILL_ROOTS[@]}"; do
+      while IFS= read -r relative; do
+        destination="$root/$name/$relative"
+        state="$(file_state "$destination" "$BUNDLE_ROOT/skills/$name/$relative")"
+        case "$state" in
+          update) show_diff "$destination" "$BUNDLE_ROOT/skills/$name/$relative" "$destination" installed "release $version" ;;
+          local|unmanaged)
+            info "$(paint '1;31' "LOCAL CHANGES - migration required:") $destination"
+            show_diff "$destination" "$BUNDLE_ROOT/skills/$name/$relative" "$destination" "your version" "release $version"
+            ;;
+        esac
+      done < <(skill_files "$name")
+    done
+  done
+}
+
+draw_picker() {
+  local title="$1" index name version description state mark
+  {
+    printf '\n%s\n' "$(tty_paint 1 "$title")"
+    printf '         %-22s %-17s %-8s %s\n' Skill Status Release Description
+    for index in "${!PICK_NAMES[@]}"; do
+      name="${PICK_NAMES[$index]}"
+      state="$(skill_state "$name")"
+      version="$(skill_version "$name")"
+      description="$(awk -F '\t' -v name="$name" '$1 == name {print $3; exit}' "$(skill_work_dir)/skills.tsv")"
+      if [ "${PICK_MARKS[$index]}" -eq 1 ]; then mark='[x]'; else mark='[ ]'; fi
+      printf '  %s %2d %-22s %s %-8s %s\n' "$mark" "$((index + 1))" "$name" \
+        "$(tty_paint "$(state_color "$state")" "$(printf '%-17s' "$(state_label "$state")")")" "$version" "$description"
+    done
+    printf '\nToggle with numbers or names (e.g. "3 5-7"), a = all, n = none,\n'
+    printf 'Enter = continue, q = cancel without changes.\n'
+  } > /dev/tty
+}
+
+# Interactive multi-select. Sets PICKED to a manifest-ordered comma list.
+run_picker() {
+  local title="$1" candidates="$2" preselected="$3" input token start end index name matched count
+  local tokens=()
+  PICK_NAMES=()
+  PICK_MARKS=()
+  for name in ${candidates//,/ }; do
+    PICK_NAMES+=("$name")
+    if list_contains "$name" "$preselected"; then PICK_MARKS+=(1); else PICK_MARKS+=(0); fi
+  done
+  count="${#PICK_NAMES[@]}"
+  [ "$count" -gt 0 ] || { PICKED=""; return 0; }
+  while :; do
+    draw_picker "$title"
+    printf '> ' > /dev/tty
+    IFS= read -r input < /dev/tty || fail "input closed; nothing was changed"
+    input="$(printf '%s' "$input" | tr ',' ' ')"
+    case "$input" in
+      '') break ;;
+      q|Q|quit|cancel) fail "cancelled; nothing was changed" ;;
+      a|A|all) for index in "${!PICK_MARKS[@]}"; do PICK_MARKS[index]=1; done; continue ;;
+      n|N|none) for index in "${!PICK_MARKS[@]}"; do PICK_MARKS[index]=0; done; continue ;;
+    esac
+    read -r -a tokens <<< "$input"
+    for token in "${tokens[@]}"; do
+      case "$token" in
+        *[!0-9-]*|-*|*-)
+          matched=0
+          for index in "${!PICK_NAMES[@]}"; do
+            if [ "${PICK_NAMES[$index]}" = "$token" ]; then PICK_MARKS[index]=$((1 - PICK_MARKS[index])); matched=1; fi
+          done
+          [ "$matched" -eq 1 ] || printf '%s\n' "$(tty_paint 33 "Ignored '$token': not a number or skill name in the list.")" > /dev/tty
+          ;;
+        *-*)
+          start="${token%%-*}"; end="${token#*-}"
+          case "$end" in *-*) printf "Ignored '%s': invalid range.\n" "$token" > /dev/tty; continue ;; esac
+          if [ "$start" -lt 1 ] || [ "$end" -gt "$count" ] || [ "$start" -gt "$end" ]; then
+            printf '%s\n' "$(tty_paint 33 "Ignored '$token': choose numbers from 1 to $count.")" > /dev/tty
+            continue
+          fi
+          for ((index = start - 1; index < end; index++)); do PICK_MARKS[index]=$((1 - PICK_MARKS[index])); done
+          ;;
+        *)
+          if [ "$token" -lt 1 ] || [ "$token" -gt "$count" ]; then
+            printf '%s\n' "$(tty_paint 33 "Ignored '$token': choose numbers from 1 to $count.")" > /dev/tty
+            continue
+          fi
+          PICK_MARKS[token - 1]=$((1 - PICK_MARKS[token - 1]))
+          ;;
+      esac
+    done
+  done
+  PICKED=""
+  for index in "${!PICK_NAMES[@]}"; do
+    [ "${PICK_MARKS[$index]}" -eq 1 ] || continue
+    PICKED="${PICKED:+$PICKED,}${PICK_NAMES[$index]}"
+  done
+}
+
+# Summarizes planned skill changes. Returns 1 when nothing would change.
+print_skill_plan() {
+  local selection="$1" name state owned changes=0 line
+  while IFS=$'\t' read -r name state owned; do
+    line=""
+    if list_contains "$name" "$selection"; then
+      case "$state" in
+        not-installed) line="$(paint 32 '+ install ')  $name $(skill_version "$name")" ;;
+        update) line="$(paint 33 '~ update  ')  $name -> $(skill_version "$name")" ;;
+        local|unmanaged)
+          if [ "$REPLACE" -eq 1 ]; then
+            line="$(paint 31 '! replace ')  $name ($(state_label "$state"); your version is backed up first)"
+          else
+            line="$(paint 31 '! keep    ')  $name ($(state_label "$state"); migration required, --force replaces)"
+          fi
+          ;;
+      esac
+    else
+      case "$state" in
+        not-installed) ;;
+        unmanaged) line="$(paint 2 '= leave   ')  $name (not installed by the toolkit)" ;;
+        local) line="$(paint 31 '- remove  ')  $name (unchanged files only; edited files are kept)" ;;
+        *) [ "$owned" = yes ] && line="$(paint 31 '- remove  ')  $name" ;;
+      esac
+    fi
+    [ -n "$line" ] || continue
+    [ "$changes" -gt 0 ] || info "Planned skill changes:"
+    info "  $line"
+    changes=$((changes + 1))
+  done < "$(skill_work_dir)/states.tsv"
+  [ "$changes" -gt 0 ]
+}
+
+confirm_skill_plan() {
+  local selection="$1" answer changed_names="" name state _owned
+  while IFS=$'\t' read -r name state _owned; do
+    list_contains "$name" "$selection" || continue
+    case "$state" in update|local|unmanaged) changed_names="${changed_names:+$changed_names,}$name" ;; esac
+  done < "$(skill_work_dir)/states.tsv"
+  while :; do
+    if [ -n "$changed_names" ]; then
+      printf 'Proceed? [Y]es, [n]o, [d]iffs: ' > /dev/tty
+    else
+      printf 'Proceed? [Y]es, [n]o: ' > /dev/tty
+    fi
+    IFS= read -r answer < /dev/tty || fail "input closed; nothing was changed"
+    case "$answer" in
+      ''|y|Y|yes) return 0 ;;
+      n|N|no|q|Q) fail "cancelled; nothing was changed" ;;
+      d|D)
+        if [ -n "$changed_names" ]; then print_skill_diffs "$changed_names"; DIFFS_SHOWN=1; fi
+        ;;
+    esac
+  done
+}
+
+# Installs or updates one manifest file of a selected skill, showing a diff
+# for every change and recording local changes for migration.
+install_skill_file() {
+  local name="$1" relative="$2" root="$3" source destination state version backup
+  source="$(fetch_temp "skills/$name/$relative")"
+  destination="$root/$name/$relative"
+  version="$(skill_version "$name")"
+  validate_owned_path "$destination"
+  state="$(file_state "$destination" "$source")"
+  case "$state" in
+    new|current) install_file "$source" "$destination" ;;
+    update)
+      info " ~ $destination (update to $name $version)"
+      [ "$DIFFS_SHOWN" -eq 1 ] || show_diff "$destination" "$source" "$destination" installed "release $version"
+      rm -f "$destination"
+      cp "$source" "$destination"
+      record_ownership "$destination" file "$(fingerprint "$destination")"
+      ;;
+    local|unmanaged)
+      if [ "$REPLACE" -eq 1 ]; then
+        warn "$destination has local changes; replacing it with $name $version (--force)"
+        [ "$DIFFS_SHOWN" -eq 1 ] || show_diff "$destination" "$source" "$destination" "your version" "release $version"
+        backup="$(backup_path "$destination")"
+        cp -R "$destination" "$backup"
+        rm -rf "$destination"
+        info " b $backup"
+        mkdir -p "$(dirname "$destination")"
+        cp "$source" "$destination"
+        record_ownership "$destination" file "$(fingerprint "$destination")"
+        record_migration replaced "$destination" "$backup"
+      else
+        warn "$destination has local changes; kept. $(paint '1;31' 'LOCAL CHANGES - migration required')"
+        [ "$DIFFS_SHOWN" -eq 1 ] || show_diff "$destination" "$source" "$destination" "your version" "release $version"
+        record_migration kept "$destination" "$name $version"
+      fi
+      ;;
+  esac
+}
+
+remove_empty_skill_dirs() {
+  local root="$1" name="$2" relative directory
+  while IFS= read -r relative; do
+    directory="$(dirname "$root/$name/$relative")"
+    while [ "$directory" != "$root" ] && [ "$directory" != "$root/$name/." ]; do
+      rmdir "$directory" 2>/dev/null || break
+      directory="$(dirname "$directory")"
+    done
+  done < <(skill_files "$name")
+}
+
+print_migration_summary() {
+  local file work kept=0 replaced=0 removal=0 kind path detail
+  work="$(skill_work_dir)"
+  file="$work/migrations.tsv"
+  [ -s "$file" ] || return 0
+  kept="$(awk -F '\t' '$1 == "kept" {n++} END {print n + 0}' "$file")"
+  replaced="$(awk -F '\t' '$1 == "replaced" {n++} END {print n + 0}' "$file")"
+  removal="$(awk -F '\t' '$1 == "kept-removal" {n++} END {print n + 0}' "$file")"
+  info ""
+  info "$(paint '1;31' 'Migration required')"
+  if [ "$kept" -gt 0 ]; then
+    info "  Kept with local changes, not updated ($kept):"
+    while IFS=$'\t' read -r kind path detail; do
+      [ "$kind" = kept ] && info "    ! $path  (release: $detail)"
+    done < "$file"
+  fi
+  if [ "$removal" -gt 0 ]; then
+    info "  Kept although no longer installed, because they have local changes ($removal):"
+    while IFS=$'\t' read -r kind path detail; do
+      [ "$kind" = kept-removal ] && info "    ! $path  ($detail)"
+    done < "$file"
+  fi
+  if [ "$replaced" -gt 0 ]; then
+    info "  Replaced by the release; your previous version was saved ($replaced):"
+    while IFS=$'\t' read -r kind path detail; do
+      [ "$kind" = replaced ] && info "    ! $path  -> $detail"
+    done < "$file"
+  fi
+  info "  Next steps:"
+  if [ "$kept" -gt 0 ]; then
+    info "    - Review the diffs above: '-' lines are your version, '+' lines are the release."
+    info "      Move your customizations out of toolkit-managed files (for example into a"
+    info "      project-specific skill), then rerun with --force to take the release."
+    info "      --force saves your version as <file>.bak.<timestamp> before replacing it."
+  fi
+  if [ "$removal" -gt 0 ]; then
+    info "    - Files kept after their skill was removed stay listed here until you delete them."
+    info "      Copy anything you still need into your own files, then delete them."
+  fi
+  if [ "$replaced" -gt 0 ]; then
+    info "    - Re-apply any customizations you still need from the saved .bak files."
+  fi
+  if [ "$kept" -gt 0 ] || [ "$removal" -gt 0 ]; then EXIT_STATUS=2; fi
+}
+
+join_roots() {
+  local root joined=""
+  for root in "${SKILL_ROOTS[@]}"; do joined="${joined:+$joined, }$root"; done
+  printf '%s' "$joined"
+}
+
+# Shows the selection, per-root status, and diffs without changing anything.
+print_skills_status() {
+  local agents=AGENTS.md selection name state _owned version root root_state marker
+  load_skill_catalog
+  compute_skill_states
+  if [ -f "$agents" ] && agents_has_skills_line "$agents"; then
+    selection="$(stored_skill_selection "$agents")"
+    info "Selected in AGENTS.md: $(skills_line_value "$selection")"
+  else
+    selection="$(all_skills_csv)"
+    if [ -f "$agents" ]; then info "Selected in AGENTS.md: all skills (no skills line)"; else info "No AGENTS.md yet: a new install selects all skills"; fi
+  fi
+  for root in "${SKILL_ROOTS[@]}"; do
+    info ""
+    info "$(paint 1 "$root")"
+    info "$(printf '      %-22s %-17s %s' Skill Status Release)"
+    while IFS= read -r name; do
+      root_state="$(skill_root_state "$root" "$name")"
+      version="$(skill_version "$name")"
+      if list_contains "$name" "$selection"; then marker='[x]'; else marker='[ ]'; fi
+      info "  $marker $(printf '%-22s' "$name") $(paint "$(state_color "$root_state")" "$(printf '%-17s' "$(state_label "$root_state")")") $version"
+    done < <(skill_names_list)
+  done
+  local changed=""
+  while IFS=$'\t' read -r name state _owned; do
+    case "$state" in update|local|unmanaged) changed="${changed:+$changed,}$name" ;; esac
+  done < "$(skill_work_dir)/states.tsv"
+  info ""
+  if [ -n "$changed" ]; then
+    info "$(paint 1 'Differences (--- installed, +++ release):')"
+    print_skill_diffs "$changed"
+    info ""
+    info "Apply release updates by rerunning without --skills-status. Files with local"
+    info "changes are kept and reported for migration unless --force is given."
+  else
+    info "All installed skills match this release."
+  fi
+}
+
+# Resolves which skills the project should have. Runs before any write.
+resolve_skill_selection() {
+  local is_join="$1" agents=AGENTS.md current
+  load_skill_catalog
+  compute_skill_states
+  if [ "$is_join" -eq 1 ] && agents_has_skills_line "$agents"; then
+    current="$(stored_skill_selection "$agents")"
+  else
+    current="$(all_skills_csv)"
+  fi
+  if [ "$SKILLS_REQUESTED" -eq 1 ]; then
+    SELECTED_SKILLS="$(parse_skill_request "$SKILLS_REQUEST")"
+  elif [ "$INTERACTIVE_REQUESTED" -eq 1 ] || interactive_available; then
+    { : < /dev/tty; } 2>/dev/null || fail "--interactive needs a terminal; use --skills LIST instead"
+    run_picker "Choose skills to install in $(join_roots)" "$(all_skills_csv)" "$current"
+    SELECTED_SKILLS="$PICKED"
+    if print_skill_plan "$SELECTED_SKILLS" > /dev/tty; then
+      confirm_skill_plan "$SELECTED_SKILLS"
+    fi
+  else
+    SELECTED_SKILLS="$current"
+  fi
+}
+
+# Replaces a file's content through a temporary sibling and a rename, so an
+# interruption never leaves it truncated. Symbolic links are refused because
+# writing through one could change a file outside the project.
+replace_file_atomically() {
+  local target="$1" content="$2" temporary
+  [ ! -L "$target" ] || fail "$target is a symbolic link; replace it with a regular file before changing the skill selection"
+  temporary="$(mktemp "$(dirname "$target")/.$(basename "$target").XXXXXX")" || fail "cannot create a temporary file next to $target"
+  cp -p "$target" "$temporary" 2>/dev/null || true
+  cat "$content" > "$temporary"
+  mv -f "$temporary" "$target"
+}
+
+# Renders the AGENTS.md selection before any write. Prints nothing and returns
+# 1 when AGENTS.md does not need to change.
+prepare_agents_selection() {
+  local agents=AGENTS.md rendered
+  [ -f "$agents" ] || return 1
+  if ! grep -q '<!-- template: AGENTS ' "$agents"; then
+    [ "$SELECTED_SKILLS" = "$(all_skills_csv)" ] || warn "AGENTS.md is not toolkit-managed; the skill selection was not recorded"
+    return 1
+  fi
+  rendered="$(skill_work_dir)/AGENTS.selection.md"
+  render_agents_selection "$agents" "$rendered" "$SELECTED_SKILLS" || fail "could not record the skill selection in AGENTS.md"
+  if cmp -s "$agents" "$rendered"; then return 1; fi
+  [ ! -L "$agents" ] || fail "AGENTS.md is a symbolic link; replace it with a regular file before changing the skill selection"
+  return 0
+}
+
+# Adds, updates, or removes the AGENTS.md skills line to match the selection.
+update_agents_selection() {
+  local agents=AGENTS.md rendered proof was_owned=0
+  prepare_agents_selection || return 0
+  rendered="$(skill_work_dir)/AGENTS.selection.md"
+  info " ~ AGENTS.md (skills: $(if [ "$SELECTED_SKILLS" = "$(all_skills_csv)" ]; then printf 'all'; else skills_line_value "$SELECTED_SKILLS"; fi))"
+  show_diff "$agents" "$rendered" AGENTS.md current updated
+  proof="$(recorded_file_proof AGENTS.md)"
+  [ -z "$proof" ] || [ "$(fingerprint "$agents")" != "$proof" ] || was_owned=1
+  replace_file_atomically "$agents" "$rendered"
+  [ "$was_owned" -eq 0 ] || record_ownership AGENTS.md file "$(fingerprint "$agents")"
+}
+
 install_project() {
   [ ! -f manifest.tsv ] || [ ! -f install.sh ] || [ ! -d skills ] || fail "the toolkit repository is exempt from --project installation"
   local is_join=0 legacy_platform stored_project_types stored_technologies catalog
@@ -765,6 +1444,19 @@ install_project() {
   PROJECT_ROOT="$(pwd -P)"
   OWNERSHIP_FILE="$(pwd)/.mindflayer-managed.tsv"
   validate_ownership_file
+  SKILL_ROOTS=()
+  local skill_root
+  while IFS= read -r skill_root; do
+    SKILL_ROOTS+=("$skill_root")
+  done < <(selected_skill_roots project)
+  if [ "$SKILLS_STATUS_ONLY" -eq 1 ]; then
+    [ "${#SKILL_ROOTS[@]}" -gt 0 ] || fail "--skills-status needs a tool with a skill root: claude, codex, or copilot"
+    print_skills_status
+    return 0
+  fi
+  if [ "${#SKILL_ROOTS[@]}" -eq 0 ] && { [ "$SKILLS_REQUESTED" -eq 1 ] || [ "$INTERACTIVE_REQUESTED" -eq 1 ]; }; then
+    fail "the selected tools have no project skill root; skills are used by claude, codex, and copilot"
+  fi
   if [ -f AGENTS.md ] && grep -q '<!-- template: AGENTS ' AGENTS.md; then is_join=1; fi
 
   [ -z "$PROFILE" ] || { [ -z "$PROJECT_TYPES" ] && [ -z "$TECHNOLOGIES" ]; } || fail "--profile cannot be combined with --project-types or --technologies"
@@ -818,7 +1510,16 @@ install_project() {
   if [ "$is_join" -eq 0 ]; then
     [ -n "$CLIENT_NAME" ] || fail "--client is required for a new project install"
     [ "$PROJECT_MODE" != legacy ] || [ -n "$CLIENT_PREFIX" ] || fail "--prefix is required for a legacy profile install"
-    local template rendered
+  fi
+
+  # Every question is asked before the first write, so cancelling changes nothing.
+  if [ "${#SKILL_ROOTS[@]}" -gt 0 ]; then
+    resolve_skill_selection "$is_join"
+    if [ "$is_join" -eq 1 ]; then prepare_agents_selection > /dev/null || true; fi
+  fi
+
+  if [ "$is_join" -eq 0 ]; then
+    local template rendered selected_rendered
     rendered="$(mktemp)"
     if [ "$PROJECT_MODE" = legacy ]; then
       template="$(fetch_temp templates/AGENTS.md)"
@@ -827,34 +1528,34 @@ install_project() {
       template="$(fetch_temp templates/AGENTS-composable.md)"
       replace_composable_tokens "$template" "$rendered"
     fi
+    if [ "${#SKILL_ROOTS[@]}" -gt 0 ]; then
+      selected_rendered="$(skill_work_dir)/AGENTS.new.md"
+      render_agents_selection "$rendered" "$selected_rendered" "$SELECTED_SKILLS" || fail "could not record the skill selection in AGENTS.md"
+      cat "$selected_rendered" > "$rendered"
+    fi
     install_file "$rendered" AGENTS.md
     rm -f "$rendered"
   else
     info " = AGENTS.md (join mode)"
   fi
 
-  local manifest path type consumers platforms source destination skill_root
-  local skill_roots=()
+  local manifest name relative
   manifest="$PREFLIGHT_MANIFEST"
 
-  while IFS= read -r skill_root; do
-    skill_roots+=("$skill_root")
-  done < <(selected_skill_roots project)
-
-  if [ "${#skill_roots[@]}" -gt 0 ]; then
-    for skill_root in "${skill_roots[@]}"; do
-      reconcile_skill_files "$manifest" "$skill_root"
+  if [ "${#SKILL_ROOTS[@]}" -gt 0 ]; then
+    [ "$is_join" -eq 0 ] || update_agents_selection
+    for skill_root in "${SKILL_ROOTS[@]}"; do
+      reconcile_skill_files "$manifest" "$skill_root" "$SELECTED_SKILLS"
+      while IFS= read -r name; do
+        list_contains "$name" "$SELECTED_SKILLS" || remove_empty_skill_dirs "$skill_root" "$name"
+      done < <(skill_names_list)
     done
-    while IFS=$'\t' read -r path type _version consumers _ownership platforms; do
-      case "$type" in skill|skill-resource) ;; *) continue ;; esac
-      consumer_matches "$consumers" project:skills || continue
-      platform_matches "$platforms" || continue
-      source="$(fetch_temp "$path")"
-      for skill_root in "${skill_roots[@]}"; do
-        destination="$skill_root/${path#skills/}"
-        install_file "$source" "$destination"
+    while IFS=$'\t' read -r name relative; do
+      list_contains "$name" "$SELECTED_SKILLS" || continue
+      for skill_root in "${SKILL_ROOTS[@]}"; do
+        install_skill_file "$name" "$relative" "$skill_root"
       done
-    done < <(manifest_rows "$manifest")
+    done < "$(skill_work_dir)/skill-files.tsv"
   fi
 
   local agent
@@ -887,13 +1588,28 @@ install_project() {
   append_gitignore_exact CLAUDE.local.md
   append_gitignore_exact .mindflayer-managed.tsv
   info "Configured project for: ${AGENTS_TO_INSTALL[*]}"
+  if [ "${#SKILL_ROOTS[@]}" -gt 0 ]; then
+    info "Skills: $(if [ "$SELECTED_SKILLS" = "$(all_skills_csv)" ]; then printf 'all'; else skills_line_value "$SELECTED_SKILLS"; fi)"
+  fi
+  print_migration_summary
 }
 
 main() {
   parse_args "$@"
   [ -n "$INSTALL_MODE" ] || fail "specify exactly one of --global or --project"
   detect_platform
+  setup_color
+  if [ "$INSTALL_MODE" = global ] && { [ "$SKILLS_REQUESTED" -eq 1 ] || [ "$INTERACTIVE_REQUESTED" -eq 1 ] || [ "$SKILLS_STATUS_ONLY" -eq 1 ]; }; then
+    fail "--skills, --interactive, and --skills-status apply to --project installs only"
+  fi
+  if [ "$SKILLS_REQUESTED" -eq 1 ] && [ "$INTERACTIVE_REQUESTED" -eq 1 ]; then
+    fail "choose skills either with --skills or with --interactive, not both"
+  fi
+  if [ "$SKILLS_STATUS_ONLY" -eq 1 ] && { [ "$SKILLS_REQUESTED" -eq 1 ] || [ "$INTERACTIVE_REQUESTED" -eq 1 ] || [ "$REPLACE" -eq 1 ]; }; then
+    fail "--skills-status only reports; it cannot be combined with --skills, --interactive, or --force"
+  fi
   validate_tools
+  TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/mindflayer-install.XXXXXX")" || fail "cannot create a temporary directory"
   BUNDLE_ROOT="$(source_root)"
   PREFLIGHT_MANIFEST="$(fetch_temp manifest.tsv)"
   validate_manifest "$PREFLIGHT_MANIFEST"
@@ -902,3 +1618,4 @@ main() {
 }
 
 main "$@"
+exit "$EXIT_STATUS"

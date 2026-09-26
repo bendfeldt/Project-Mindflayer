@@ -22,7 +22,7 @@ PACKAGE_RELEASE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = PACKAGE_RELEASE
 SPEC.loader.exec_module(PACKAGE_RELEASE)
 
-RELEASE_VERSION = "3.7.0"
+RELEASE_VERSION = "3.8.0"
 
 
 class ReleasePackageTests(unittest.TestCase):
@@ -165,7 +165,11 @@ exit "$FAKE_COSIGN_EXIT"
         return result, caller, staging_root, log
 
     def run_powershell_bootstrap(
-        self, temporary_root: Path, *, installer_exit: int = 0
+        self,
+        temporary_root: Path,
+        *,
+        installer_exit: int = 0,
+        bootstrap_arguments: str = "-Local -Project -Tools codex -Force",
     ) -> tuple[subprocess.CompletedProcess[str], Path, Path, str]:
         caller = temporary_root / "caller"
         fake_bin = temporary_root / "bin"
@@ -206,17 +210,17 @@ function Get-FileHash {
 }
 function Expand-Archive {
     param([string]$LiteralPath, [string]$DestinationPath)
-    $bundleRoot = Join-Path $DestinationPath 'project-mindflayer-3.7.0-windows'
+    $bundleRoot = Join-Path $DestinationPath 'project-mindflayer-3.8.0-windows'
     [void](New-Item -ItemType Directory -Path $bundleRoot)
     $installer = @'
-param([switch]$Project, [string]$Tools, [switch]$Force, [switch]$Local)
-[IO.File]::AppendAllText($env:FAKE_COMMAND_LOG, "$Project|$Tools|$Force|$Local|$PWD`n")
+param([switch]$Project, [string]$Tools, [switch]$Force, [switch]$Local, [string[]]$Skills, [switch]$SkillsStatus)
+[IO.File]::AppendAllText($env:FAKE_COMMAND_LOG, "$Project|$Tools|$Force|$Local|$PWD|$($Skills -join ',')|$SkillsStatus`n")
 exit [int]$env:FAKE_INSTALLER_EXIT
 '@
     [IO.File]::WriteAllText((Join-Path $bundleRoot 'install.ps1'), $installer)
 }
-& $env:BOOTSTRAP_PATH -Local -Project -Tools codex -Force
-""",
+& $env:BOOTSTRAP_PATH __BOOTSTRAP_ARGUMENTS__
+""".replace("__BOOTSTRAP_ARGUMENTS__", bootstrap_arguments),
             encoding="utf-8",
         )
 
@@ -419,6 +423,26 @@ exit [int]$env:FAKE_INSTALLER_EXIT
             self.assertEqual(list(staging_root.iterdir()), [])
             self.assertIn("True|codex|True|True|", log)
             self.assertIn(str(caller.resolve()), log)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is unavailable")
+    def test_powershell_bootstrap_forwards_skill_selection_parameters(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            result, _, _, log = self.run_powershell_bootstrap(
+                Path(directory),
+                bootstrap_arguments="-Local -Project -Tools codex -Skills adr,smart-pr -SkillsStatus",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("|adr,smart-pr|True\n", log)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is unavailable")
+    def test_powershell_bootstrap_accepts_migration_status(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            result, caller, staging_root, _ = self.run_powershell_bootstrap(
+                Path(directory), installer_exit=2
+            )
+            self.assertNotIn("installer failed", result.stderr)
+            self.assertEqual(list(caller.iterdir()), [])
+            self.assertEqual(list(staging_root.iterdir()), [])
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is unavailable")
     def test_powershell_bootstrap_propagates_installer_failure_and_cleans_staging(self) -> None:

@@ -11,6 +11,9 @@ param(
     [string]$Profile,
     [string]$Client,
     [string]$Prefix,
+    [string[]]$Skills,
+    [switch]$Interactive,
+    [switch]$SkillsStatus,
     [switch]$Force,
     [switch]$Help,
     [Parameter(DontShow)]
@@ -20,7 +23,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:Version = '3.7.0'
+$script:Version = '3.8.0'
 $script:CosignVersion = '2.4.1'
 $script:Repository = 'bendfeldt/Project-Mindflayer'
 $script:StagingDirectory = Join-Path ([IO.Path]::GetTempPath()) "project-mindflayer-$([guid]::NewGuid().ToString('N'))"
@@ -89,7 +92,9 @@ try {
         throw 'verified release does not contain install.ps1'
     }
     & $installer @PSBoundParameters
-    if ($LASTEXITCODE -ne 0) {
+    # Exit status 2 means the install completed but files with local changes need
+    # migration; the installer has already printed what to do.
+    if ($LASTEXITCODE -notin 0, 2) {
         throw "installer failed with exit code $LASTEXITCODE"
     }
 }
