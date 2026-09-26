@@ -1,22 +1,33 @@
 #!/usr/bin/env python3
-"""Create an unsent RFC-formatted .eml draft from subject and HTML files.
+"""Create an unsent RFC-formatted draft from subject and HTML files.
 
 The command is a dry run unless ``--write`` is supplied. Recipient headers are
 intentionally omitted so the resulting draft cannot address anyone by default.
 
+``--out`` writes a .eml file. ``--open`` (macOS) pops the draft up in Outlook
+from a temporary .emltpl, the documented Outlook for Mac template format, and
+deletes it.
+
 Usage:
-  make_email_draft.py <subject.txt> <body.html> --out <draft.eml>
-  make_email_draft.py <subject.txt> <body.html> --out <draft.eml> --write
+  make_email_draft.py <subject.txt> <body.html> --out <draft.eml> [--write]
+  make_email_draft.py <subject.txt> <body.html> --open [--write]
 """
 from __future__ import annotations
 
 import argparse
+import shutil
+import subprocess
 import sys
-from email.header import Header
+import tempfile
+import time
 from email.message import EmailMessage
 from email.policy import SMTP
 from pathlib import Path
 from typing import Sequence
+
+
+# Outlook reads the file after `open` returns; keep it that long.
+OPEN_GRACE_SECONDS = 5
 
 
 class DraftError(ValueError):
@@ -51,7 +62,8 @@ def build_draft(subject: str, html_body: str) -> bytes:
     """Build a recipient-free HTML draft serialized with SMTP CRLF lines."""
     message = EmailMessage(policy=SMTP)
     message["X-Unsent"] = "1"
-    message["Subject"] = Header(subject, charset="utf-8").encode()
+    # The policy encodes and folds it; a pre-folded header fails on 3.13+.
+    message["Subject"] = subject
     message.set_content(
         html_body,
         subtype="html",
@@ -75,15 +87,39 @@ def write_draft(path: Path, content: bytes, *, overwrite: bool) -> None:
         raise DraftError(f"cannot write draft {path}: {exc}") from exc
 
 
+def open_in_outlook(content: bytes) -> None:
+    """Pop the draft up in Outlook for Mac, then delete the temporary copy."""
+    if sys.platform != "darwin":
+        raise DraftError("--open is supported on macOS only; use --out")
+    directory = Path(tempfile.mkdtemp(prefix="release-notes-"))
+    try:
+        path = directory / "release-notes-draft.emltpl"
+        path.write_bytes(content)
+        subprocess.run(
+            ["open", "-a", "Microsoft Outlook", str(path)],
+            check=True,
+            capture_output=True,
+        )
+        time.sleep(OPEN_GRACE_SECONDS)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise DraftError(f"cannot open the draft in Outlook: {exc}") from exc
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("subject_file", type=Path)
     parser.add_argument("body_file", type=Path)
-    parser.add_argument("--out", type=Path, required=True, help="output .eml path")
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--out", type=Path, help="output .eml path")
+    target.add_argument(
+        "--open", action="store_true", help="pop the draft up in Outlook (macOS)"
+    )
     parser.add_argument(
         "--write",
         action="store_true",
-        help="create the local draft (default: validate and print the plan only)",
+        help="create or open the draft (default: validate and print the plan only)",
     )
     parser.add_argument(
         "--overwrite",
@@ -101,20 +137,23 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         subject = read_subject(args.subject_file)
-        html_body = read_html_body(args.body_file)
-        content = build_draft(subject, html_body)
+        content = build_draft(subject, read_html_body(args.body_file))
+        target = "Outlook" if args.open else args.out
         if not args.write:
             print(
-                f"dry run: would write recipient-free draft to {args.out} "
+                f"dry run: would create a recipient-free draft in {target} "
                 f"({len(content)} bytes)"
             )
             return 0
-        write_draft(args.out, content, overwrite=args.overwrite)
+        if args.open:
+            open_in_outlook(content)
+        else:
+            write_draft(args.out, content, overwrite=args.overwrite)
     except DraftError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    print(f"draft written: {args.out} (recipients: none)")
+    print(f"draft created in {target} (recipients: none)")
     return 0
 
 

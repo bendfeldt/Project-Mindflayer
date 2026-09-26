@@ -26,8 +26,7 @@ environment.
 |---|---|
 | Bash installer and lifecycle scripts | Linux and macOS |
 | PowerShell installer and lifecycle scripts | Windows |
-| Outlook AppleScript release-draft helper and its Python wrapper | macOS |
-| Portable Python `.eml` release-draft generator | Linux, macOS, and Windows |
+| Portable Python release-draft generator (Outlook on macOS, `.eml` elsewhere) | Linux, macOS, and Windows |
 
 Platform-specific artifacts are not installed on other platforms. Skill content
 remains portable except where its capability explicitly selects one of these
@@ -93,7 +92,7 @@ responsibility.
 | Engineering auditor | Python 3.12 or newer; bundled scripts use only the standard library |
 | Release notes | Python 3.12 or newer; Azure CLI for Azure DevOps, GitHub CLI for GitHub, and existing provider authentication. On Windows the Azure CLI is the `az.cmd` shim and is invoked through the command processor |
 | Portable release email draft | Python 3.12 or newer on any supported platform; produces an unsent `.eml` file without authentication or recipients |
-| macOS Outlook draft | Microsoft Outlook (Legacy Outlook; New Outlook does not support scripted drafts), `osascript`, and Automation permission for the app running the assistant to control Outlook (System Settings → Privacy & Security → Automation; macOS upgrades can reset it). The workflow creates an unsent draft only after approval. Without Outlook, macOS uses the portable `.eml` generator |
+| macOS Outlook draft | Microsoft Outlook; the workflow opens an unsent, editable draft only after approval. Without Outlook, macOS uses the portable `.eml` generator |
 | Terraform scaffold | Terraform CLI for formatting, initialization, and validation; relevant provider access when requested |
 | Databricks operations | Databricks CLI and an explicitly user-selected `--profile <name>` |
 | Snowflake operations | Snowflake CLI and an explicitly selected named connection |

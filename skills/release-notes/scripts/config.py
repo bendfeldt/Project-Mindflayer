@@ -201,57 +201,19 @@ def supported_email_tools(platform: str) -> set[str]:
     return {"none"}
 
 
-OUTLOOK_BUNDLE_ID = "com.microsoft.Outlook"
-OUTLOOK_APP_NAME = "Microsoft Outlook.app"
-
-
-def outlook_available(
-    app_dirs: Sequence[Path] | None = None, runner=subprocess.run
-) -> bool:
-    """Report whether Microsoft Outlook is installed on this Mac.
-
-    Checks the usual application folders, then asks Spotlight by bundle id. It
-    never sends Apple Events, so it cannot trigger an Automation prompt or
-    launch Outlook; whether Outlook accepts scripting is only known when the
-    draft is actually created.
-    """
-    dirs = app_dirs if app_dirs is not None else (
-        Path("/Applications"), Path.home() / "Applications")
-    if any((directory / OUTLOOK_APP_NAME).is_dir() for directory in dirs):
-        return True
-    mdfind = shutil.which("mdfind")
-    if mdfind is None:
-        return False
-    try:
-        proc = runner(
-            [mdfind, f"kMDItemCFBundleIdentifier == '{OUTLOOK_BUNDLE_ID}'"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return proc.returncode == 0 and bool(proc.stdout.strip())
-
-
-def resolve_email(stored: dict | None, platform: str, outlook_probe=None) -> dict:
+def resolve_email(stored: dict | None, platform: str) -> dict:
     """Reconcile a stored `email` block with the platform running it.
 
     Engagement files are written once, on one machine, and then used from
     whichever machine the release happens to be cut on. A tool recorded on macOS
     cannot run on Windows, so fall back to what this platform supports and say
     that the fall-back happened rather than selecting something unusable.
-
-    `outlook_probe`, when given, is called on macOS to confirm Outlook is
-    installed; without Outlook the `.eml` generator is used instead.
     """
     block = dict(stored or {})
     configured = block.get("tool") or email_tool_for_platform(platform)
     tool = configured
     if configured not in supported_email_tools(platform):
         tool = email_tool_for_platform(platform)
-    if tool == "outlook-macos" and outlook_probe is not None:
-        block["outlook_available"] = bool(outlook_probe())
-        if not block["outlook_available"]:
-            tool = "eml"
     block["tool"] = tool
     block["configured_tool"] = configured
     block["platform_override"] = tool != configured
@@ -549,7 +511,7 @@ def default_repo_config(provider: str, project: str | None, language: str = "en"
     }
 
 
-def effective_config(repo: Path, *, probe_outlook: bool = False) -> dict:
+def effective_config(repo: Path) -> dict:
     """Merge remote detection, engagement roster and repo conventions.
 
     Precedence, lowest first: provider defaults, engagement file, repo config.
@@ -580,8 +542,7 @@ def effective_config(repo: Path, *, probe_outlook: bool = False) -> dict:
     merged["engagement"] = (engagement or {}).get("engagement")
     merged["engagement_path"] = (engagement or {}).get("_path")
     merged["email"] = resolve_email(
-        (engagement or {}).get("email"), sys.platform,
-        outlook_available if probe_outlook else None,
+        (engagement or {}).get("email"), sys.platform
     )
     merged["has_repo_config"] = bool(repo_cfg)
     return merged
@@ -608,7 +569,7 @@ def check_cli(provider: str) -> list[str]:
 
 
 def validate(repo: Path) -> int:
-    cfg = effective_config(repo, probe_outlook=True)
+    cfg = effective_config(repo)
     problems: list[str] = []
 
     if not cfg["has_repo_config"]:
@@ -620,12 +581,7 @@ def validate(repo: Path) -> int:
     if cfg["provider"] == "ado" and not cfg["work_item_project"]:
         problems.append("work_item_project is unset and could not be derived")
     email = cfg["email"]
-    if email.get("outlook_available") is False:
-        problems.append(
-            "Microsoft Outlook was not found on this Mac; "
-            f"using '{email['tool']}' instead"
-        )
-    elif email["platform_override"]:
+    if email["platform_override"]:
         problems.append(
             f"email.tool '{email['configured_tool']}' cannot run on "
             f"{sys.platform}; using '{email['tool']}' instead"

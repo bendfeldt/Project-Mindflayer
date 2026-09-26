@@ -139,23 +139,11 @@ Invoke the generator with `python3` on Linux and macOS and with `python` on
 native Windows.
 
 - **macOS (`email.tool: outlook-macos`, the default):** first run
-  `python3 make_outlook_draft.py <subject.txt> <body.html>` as a dry run; it
-  checks that `osascript` and Outlook are present without contacting Outlook.
-  After explicit approval, repeat with `--write`. The wrapper runs
-  `make_outlook_draft.applescript`, which launches Outlook, waits up to two
-  minutes, and opens an unsent draft with no recipients. When Outlook is not
-  installed, or the engagement records `email.tool: eml`, use the `.eml` route
-  below instead — the generator is installed on macOS as well.
-  If the wrapper fails, relay its explanation verbatim and offer the `.eml`
-  route; never retry or switch routes without asking. Common causes:
-  - `-1743` — the app running the agent lost permission to control Outlook,
-    typically after a macOS upgrade. Re-enable it in System Settings → Privacy
-    & Security → Automation, or `tccutil reset AppleEvents <app bundle id>`.
-  - `-1708`, `-10000`, `-2741` — New Outlook does not accept the scripting
-    command; switch to Legacy Outlook.
-  - `-1712` — Outlook was still starting; finish its first-launch screens and
-    retry.
-  - `-600`, `-10814` — Outlook could not be found or launched.
+  `python3 make_email_draft.py <subject.txt> <body.html> --open` as a dry run;
+  after explicit approval, repeat with `--write`. Outlook pops the draft up
+  from a temporary `.emltpl`, the documented Outlook for Mac template format,
+  which is then deleted. When Outlook is not installed, or the engagement
+  records `email.tool: eml`, use the `.eml` route below instead.
 - **`.eml` route (`email.tool: eml`; the default on Linux and Windows):** first
   run `python3 make_email_draft.py <subject.txt> <body.html> --out <draft.eml>`
   as a non-writing dry run. After the user approves the completed subject and
@@ -164,6 +152,10 @@ native Windows.
 - **Other platforms (`email.tool: none`):** produce the subject and HTML files
   only; do not choose another mail client implicitly.
 
+The draft carries no signature: New Outlook for Mac does not support
+AppleScript and no API applies the account signature, so the sender inserts it
+in Outlook before sending.
+
 `config.py` reconciles a recorded `email.tool` with the platform actually running
 it, so an engagement bootstrapped on macOS falls back to `eml` on Linux or
 Windows instead of selecting Outlook there. `--validate` reports that fall-back;
@@ -171,7 +163,8 @@ report it to the user rather than treating it as the configured choice.
 
 The `.eml` generator uses only the Python standard library, emits SMTP CRLF
 line endings, an RFC-encoded UTF-8 subject and HTML content, sets `X-Unsent: 1`,
-and omits `To`, `Cc`, and `Bcc`. It never opens a mail client or sends mail.
+and omits `To`, `Cc`, and `Bcc`. It never sends mail and opens Outlook only
+with `--open --write`.
 Every artifact the skill writes — subject, HTML body, evidence, plans, run
 results — is UTF-8 with LF endings on every platform, so a release can be
 prepared on one machine and drafted on another.
