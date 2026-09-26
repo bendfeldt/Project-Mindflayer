@@ -8,6 +8,7 @@ the platform that exhibits them.
 """
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import unittest
@@ -138,13 +139,16 @@ class ExecutableResolutionTests(unittest.TestCase):
         would have rejected every Azure DevOps REST URL. So execute a shim and
         assert on its argv rather than on the line handed to it.
 
-        This covers the characters `cmd.exe` and the POSIX shell treat alike —
-        the separators (`&`), spaces, and percent-encoding. It deliberately
-        leaves out `$`, which `cmd.exe` treats as an ordinary character but a
-        POSIX shell expands: `$expand` is a real Azure DevOps parameter, and
-        only Windows ever reaches this branch, so a POSIX host cannot stand in
-        for that one. `test_command_shims_are_quoted_for_the_command_processor`
-        asserts `$expand` survives into the command line instead.
+        On Windows the shim is a real batch file that forwards `%*` to Python,
+        as `az.cmd` does, so the line goes through `cmd.exe`. Elsewhere a POSIX
+        shell script stands in for it. This covers the characters both treat
+        alike — the separators (`&`), spaces, and percent-encoding. It
+        deliberately leaves out `$`, which `cmd.exe` treats as an ordinary
+        character but a POSIX shell expands: `$expand` is a real Azure DevOps
+        parameter, and only Windows ever reaches this branch, so a POSIX host
+        cannot stand in for that one.
+        `test_command_shims_are_quoted_for_the_command_processor` asserts
+        `$expand` survives into the command line instead.
         """
         url = (
             "https://dev.azure.com/contoso/Team%20Projekt%20%C3%86/_apis/wit"
@@ -152,10 +156,20 @@ class ExecutableResolutionTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as directory:
             shim = Path(directory) / "az.cmd"
-            shim.write_text(
-                '#!/bin/sh\nprintf \'%s\\n\' "$@"\n', encoding="utf-8"
-            )
-            shim.chmod(0o755)
+            if os.name == "nt":
+                printer = Path(directory) / "print_args.py"
+                printer.write_text(
+                    "import sys\nprint('\\n'.join(sys.argv[1:]))\n",
+                    encoding="utf-8",
+                )
+                shim.write_bytes(
+                    f'@"{sys.executable}" "{printer}" %*\r\n'.encode("utf-8")
+                )
+            else:
+                shim.write_text(
+                    '#!/bin/sh\nprintf \'%s\\n\' "$@"\n', encoding="utf-8"
+                )
+                shim.chmod(0o755)
 
             with mock.patch("config.ON_WINDOWS", True), \
                     mock.patch("config.shutil.which", return_value=str(shim)):
@@ -197,7 +211,8 @@ class ExecutableResolutionTests(unittest.TestCase):
         self.assertIn("command shim", str(caught.exception.code))
 
     def test_shims_are_not_shell_invoked_off_windows(self) -> None:
-        with mock.patch("config.shutil.which", return_value="/opt/vendor/az.cmd"):
+        with mock.patch("config.ON_WINDOWS", False), \
+                mock.patch("config.shutil.which", return_value="/opt/vendor/az.cmd"):
             command = resolve_command(["az", "account", "show"])
 
         self.assertFalse(command.shell)
