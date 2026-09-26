@@ -138,11 +138,24 @@ Outlook renders that reliably and it survives copy-paste into a reply.
 Invoke the generator with `python3` on Linux and macOS and with `python` on
 native Windows.
 
-- **macOS (`email.tool: outlook-macos`, the default):** after explicit approval,
-  run `osascript make_outlook_draft.applescript <subject.txt> <body.html>`. This
-  retains the existing Outlook draft flow. When Outlook is not installed, or the
-  engagement records `email.tool: eml`, use the `.eml` route below instead — the
-  generator is installed on macOS as well.
+- **macOS (`email.tool: outlook-macos`, the default):** first run
+  `python3 make_outlook_draft.py <subject.txt> <body.html>` as a dry run; it
+  checks that `osascript` and Outlook are present without contacting Outlook.
+  After explicit approval, repeat with `--write`. The wrapper runs
+  `make_outlook_draft.applescript`, which launches Outlook, waits up to two
+  minutes, and opens an unsent draft with no recipients. When Outlook is not
+  installed, or the engagement records `email.tool: eml`, use the `.eml` route
+  below instead — the generator is installed on macOS as well.
+  If the wrapper fails, relay its explanation verbatim and offer the `.eml`
+  route; never retry or switch routes without asking. Common causes:
+  - `-1743` — the app running the agent lost permission to control Outlook,
+    typically after a macOS upgrade. Re-enable it in System Settings → Privacy
+    & Security → Automation, or `tccutil reset AppleEvents <app bundle id>`.
+  - `-1708`, `-10000`, `-2741` — New Outlook does not accept the scripting
+    command; switch to Legacy Outlook.
+  - `-1712` — Outlook was still starting; finish its first-launch screens and
+    retry.
+  - `-600`, `-10814` — Outlook could not be found or launched.
 - **`.eml` route (`email.tool: eml`; the default on Linux and Windows):** first
   run `python3 make_email_draft.py <subject.txt> <body.html> --out <draft.eml>`
   as a non-writing dry run. After the user approves the completed subject and
