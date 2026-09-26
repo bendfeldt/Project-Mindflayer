@@ -68,11 +68,10 @@ assert 'manifest platform declarations are valid' awk -F '\t' '$1 !~ /^#/ {delet
 assert 'Bash artifacts are Unix scoped' awk -F '\t' '($1 ~ /^(bootstrap|install)\.sh$/ || $1 ~ /^tools\/.*\.sh$/) && $6 != "linux,macos" {exit 1}' "$ROOT/manifest.tsv"
 # shellcheck disable=SC2016
 assert 'PowerShell artifacts are Windows scoped' awk -F '\t' '($1 ~ /^(bootstrap|install)\.ps1$/ || $1 ~ /^tools\/.*\.ps1$/) && $6 != "windows" {exit 1}' "$ROOT/manifest.tsv"
-assert 'AppleScript helper is macOS scoped' grep -Fqx $'skills/release-notes/scripts/make_outlook_draft.applescript\tskill-resource\t2.3.0\tglobal,project:skills\tmanaged-tree\tmacos' "$ROOT/manifest.tsv"
-assert 'Outlook draft wrapper is macOS scoped' grep -Fqx $'skills/release-notes/scripts/make_outlook_draft.py\tskill-resource\t2.5.0\tglobal,project:skills\tmanaged-tree\tmacos' "$ROOT/manifest.tsv"
+assert 'AppleScript helper is macOS scoped' grep -Fqx $'skills/release-notes/scripts/make_outlook_draft.applescript\tskill-resource\t2.2.0\tglobal,project:skills\tmanaged-tree\tmacos' "$ROOT/manifest.tsv"
 assert 'email helper is scoped to every platform' grep -Fqx $'skills/release-notes/scripts/make_email_draft.py\tskill-resource\t2.3.0\tglobal,project:skills\tmanaged-tree\tlinux,macos,windows' "$ROOT/manifest.tsv"
 assert 'repository tests are not distributable' sh -c "! grep -Eq 'skills/.*/test_[^[:space:]]+\\.py' '$ROOT/manifest.tsv'"
-assert 'system requirements distributed' grep -Fq $'docs/system-requirements.md\tdocument\t1.5.0' "$ROOT/manifest.tsv"
+assert 'system requirements distributed' grep -Fq $'docs/system-requirements.md\tdocument\t1.4.0' "$ROOT/manifest.tsv"
 assert 'local mode hidden from public help' sh -c "! bash '$ROOT/install.sh' --help | grep -Fq -- '--local'"
 for public_install_file in "$ROOT/README.md" "$ROOT/how-to-guide.md" "$ROOT/skills/setup-repo/SKILL.md"; do
   assert "no public local mode: ${public_install_file##*/}" not_contains "$public_install_file" '--local'
@@ -192,10 +191,8 @@ assert 'ownership state' test -f "$HOME/.ai-toolkit/managed.tsv"
 assert 'nested release script' test -f "$HOME/.ai-toolkit/skills/release-notes/scripts/config.py"
 if [ "$TEST_PLATFORM" = macos ]; then
   assert 'macOS helper installed' test -f "$HOME/.ai-toolkit/skills/release-notes/scripts/make_outlook_draft.applescript"
-  assert 'macOS draft wrapper installed' test -f "$HOME/.ai-toolkit/skills/release-notes/scripts/make_outlook_draft.py"
 else
   assert 'macOS helper excluded on Linux' test ! -e "$HOME/.ai-toolkit/skills/release-notes/scripts/make_outlook_draft.applescript"
-  assert 'macOS draft wrapper excluded on Linux' test ! -e "$HOME/.ai-toolkit/skills/release-notes/scripts/make_outlook_draft.py"
 fi
 assert 'portable email helper installed' test -f "$HOME/.ai-toolkit/skills/release-notes/scripts/make_email_draft.py"
 assert 'repository test modules excluded' sh -c "! find '$HOME/.ai-toolkit/skills' -type f -name 'test_*.py' | grep -q ."
@@ -270,10 +267,8 @@ for tools in claude codex gemini cursor copilot claude,codex,gemini,cursor,copil
         assert "project tests excluded: $tools -> $skill_root" sh -c "! find '$sandbox/project/$skill_root' -type f -name 'test_*.py' | grep -q ."
         if [ "$TEST_PLATFORM" = macos ]; then
           assert "project macOS helper: $tools -> $skill_root" test -f "$sandbox/project/$skill_root/release-notes/scripts/make_outlook_draft.applescript"
-          assert "project macOS draft wrapper: $tools -> $skill_root" test -f "$sandbox/project/$skill_root/release-notes/scripts/make_outlook_draft.py"
         else
           assert "project AppleScript excluded on Linux: $tools -> $skill_root" test ! -e "$sandbox/project/$skill_root/release-notes/scripts/make_outlook_draft.applescript"
-          assert "project draft wrapper excluded on Linux: $tools -> $skill_root" test ! -e "$sandbox/project/$skill_root/release-notes/scripts/make_outlook_draft.py"
         fi
         assert "project portable email helper: $tools -> $skill_root" test -f "$sandbox/project/$skill_root/release-notes/scripts/make_email_draft.py"
         ;;
@@ -581,7 +576,6 @@ assert 'store check prefers checkout' sh -c "printf '%s' '$output' | grep -Fq 'R
 assert 'release remote fixtures' sh -c "cd '$ROOT/skills/release-notes/scripts' && python3 test_remote.py >/dev/null"
 assert 'release task planning' sh -c "cd '$ROOT/skills/release-notes/scripts' && python3 test_tasks.py >/dev/null"
 assert 'release email drafts' sh -c "cd '$ROOT/skills/release-notes/scripts' && python3 test_email_draft.py >/dev/null"
-assert 'release Outlook drafts' sh -c "cd '$ROOT/skills/release-notes/scripts' && python3 test_outlook_draft.py >/dev/null 2>&1"
 teardown
 
 printf '\nPASS: %d  FAIL: %d\n' "$PASS" "$FAIL"

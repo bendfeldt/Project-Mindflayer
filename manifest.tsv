@@ -1,5 +1,5 @@
 # path	type	version	consumers	ownership	platforms
-manifest.tsv	manifest	1.6.0	global	managed-file	linux,macos,windows
+manifest.tsv	manifest	1.5.0	global	managed-file	linux,macos,windows
 bootstrap.sh	script	3.7.0	global	managed-file	linux,macos
 bootstrap.ps1	script	3.7.0	global	managed-file	windows
 install.sh	script	3.7.0	global	managed-file	linux,macos
@@ -15,7 +15,7 @@ GEMINI.md	shim	1.0.0	global:gemini,project:gemini	managed-file	linux,macos,windo
 docs/architecture.md	document	3.7.2	global	managed-file	linux,macos,windows
 docs/consumer-extensions.md	document	1.1.0	global	managed-file	linux,macos,windows
 docs/operating-standards.md	document	1.0.0	global	managed-file	linux,macos,windows
-docs/system-requirements.md	document	1.5.0	global	managed-file	linux,macos,windows
+docs/system-requirements.md	document	1.4.0	global	managed-file	linux,macos,windows
 docs/terraform-patterns.md	document	2.0.0	global	managed-file	linux,macos,windows
 docs/kimball-reference.md	document	2.0.0	global	managed-file	linux,macos,windows
 docs/decisions/0001-universal-agents-guidance.md	decision	1.2.0	global	managed-file	linux,macos,windows
@@ -74,16 +74,15 @@ skills/promote-adr/references/promotion.md	skill-resource	2.0.0	global,project:s
 skills/promote-skill/SKILL.md	skill	2.0.0	global,project:skills	managed-tree	linux,macos,windows
 skills/promote-skill/agents/openai.yaml	skill-resource	2.0.0	global,project:skills	managed-tree	linux,macos,windows
 skills/promote-skill/references/promotion.md	skill-resource	2.0.0	global,project:skills	managed-tree	linux,macos,windows
-skills/release-notes/SKILL.md	skill	2.5.0	global,project:skills	managed-tree	linux,macos,windows
+skills/release-notes/SKILL.md	skill	2.4.0	global,project:skills	managed-tree	linux,macos,windows
 skills/release-notes/agents/openai.yaml	skill-resource	2.2.0	global,project:skills	managed-tree	linux,macos,windows
 skills/release-notes/references/providers.md	skill-resource	2.3.0	global,project:skills	managed-tree	linux,macos,windows
-skills/release-notes/references/templates.md	skill-resource	2.5.0	global,project:skills	managed-tree	linux,macos,windows
+skills/release-notes/references/templates.md	skill-resource	2.4.0	global,project:skills	managed-tree	linux,macos,windows
 skills/release-notes/scripts/collect_evidence.py	skill-resource	2.3.0	global,project:skills	managed-tree	linux,macos,windows
-skills/release-notes/scripts/config.py	skill-resource	2.6.0	global,project:skills	managed-tree	linux,macos,windows
+skills/release-notes/scripts/config.py	skill-resource	2.5.0	global,project:skills	managed-tree	linux,macos,windows
 skills/release-notes/scripts/manage_tasks.py	skill-resource	2.4.0	global,project:skills	managed-tree	linux,macos,windows
 skills/release-notes/scripts/make_email_draft.py	skill-resource	2.3.0	global,project:skills	managed-tree	linux,macos,windows
-skills/release-notes/scripts/make_outlook_draft.applescript	skill-resource	2.3.0	global,project:skills	managed-tree	macos
-skills/release-notes/scripts/make_outlook_draft.py	skill-resource	2.5.0	global,project:skills	managed-tree	macos
+skills/release-notes/scripts/make_outlook_draft.applescript	skill-resource	2.2.0	global,project:skills	managed-tree	macos
 skills/release-notes/scripts/merge_release.py	skill-resource	2.4.0	global,project:skills	managed-tree	linux,macos,windows
 skills/release-notes/scripts/providers.py	skill-resource	2.3.0	global,project:skills	managed-tree	linux,macos,windows
 skills/release-notes/scripts/publish_descriptions.py	skill-resource	2.4.0	global,project:skills	managed-tree	linux,macos,windows

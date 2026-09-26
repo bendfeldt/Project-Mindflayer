@@ -516,7 +516,6 @@ try {
             Assert-Equal -Actual $row.Platforms -Expected 'linux,macos' -Message "Bash artifact platforms for $($row.Path)"
         }
         Assert-Equal -Actual ($manifestRows | Where-Object Path -eq 'skills/release-notes/scripts/make_outlook_draft.applescript').Platforms -Expected 'macos' -Message 'AppleScript platform'
-        Assert-Equal -Actual ($manifestRows | Where-Object Path -eq 'skills/release-notes/scripts/make_outlook_draft.py').Platforms -Expected 'macos' -Message 'Outlook draft wrapper platform'
         Assert-Equal -Actual ($manifestRows | Where-Object Path -eq 'skills/release-notes/scripts/make_email_draft.py').Platforms -Expected 'linux,macos,windows' -Message 'Portable email generator platforms'
         Assert-Equal -Actual @($manifestRows | Where-Object { $_.Path.StartsWith('tests/', [StringComparison]::Ordinal) -or $_.Path -match '/test_[^/]*\.py$' }).Count -Expected 0 -Message 'Repository test modules must not be distributed'
     }
@@ -554,8 +553,7 @@ try {
         Assert-ProjectSkillInventory -ProjectPath $context.Project -Platform windows -SkillRoots @('.claude/skills', '.agents/skills')
         Assert-PathExists -Path (Join-Path $context.Project '.agents/skills/release-notes/scripts/make_email_draft.py') -Message 'PowerShell project email draft generator'
         Assert-PathNotExists -Path (Join-Path $context.Project '.agents/skills/release-notes/scripts/make_outlook_draft.applescript') -Message 'AppleScript excluded from PowerShell project'
-        Assert-PathNotExists -Path (Join-Path $context.Project '.agents/skills/release-notes/scripts/make_outlook_draft.py') -Message 'Outlook draft wrapper excluded from PowerShell project'
-        foreach ($testModule in @('test_email_draft.py', 'test_outlook_draft.py', 'test_remote.py', 'test_tasks.py')) {
+        foreach ($testModule in @('test_email_draft.py', 'test_remote.py', 'test_tasks.py')) {
             Assert-PathNotExists -Path (Join-Path $context.Project ".agents/skills/release-notes/scripts/$testModule") -Message "Repository test module $testModule excluded from portable project"
         }
         Assert-PathNotExists -Path (Join-Path $context.Project 'codex.md') -Message 'Legacy Codex shim'
@@ -813,8 +811,7 @@ try {
             Assert-ProjectSkillInventory -ProjectPath $context.Project -Platform windows -SkillRoots @('.claude/skills', '.agents/skills')
             Assert-PathExists -Path (Join-Path $context.Project '.agents/skills/release-notes/scripts/make_email_draft.py') -Message 'Windows email draft generator'
             Assert-PathNotExists -Path (Join-Path $context.Project '.agents/skills/release-notes/scripts/make_outlook_draft.applescript') -Message 'macOS AppleScript excluded from Windows project'
-            Assert-PathNotExists -Path (Join-Path $context.Project '.agents/skills/release-notes/scripts/make_outlook_draft.py') -Message 'macOS Outlook draft wrapper excluded from Windows project'
-            foreach ($testModule in @('test_email_draft.py', 'test_outlook_draft.py', 'test_remote.py', 'test_tasks.py')) {
+            foreach ($testModule in @('test_email_draft.py', 'test_remote.py', 'test_tasks.py')) {
                 Assert-PathNotExists -Path (Join-Path $context.Project ".agents/skills/release-notes/scripts/$testModule") -Message "Repository test module $testModule excluded from Windows project"
             }
 

@@ -244,26 +244,6 @@ class EmailToolResolutionTests(unittest.TestCase):
         self.assertEqual(resolved["tool"], "eml")
         self.assertFalse(resolved["platform_override"])
 
-    def test_macos_without_outlook_falls_back_to_eml(self) -> None:
-        resolved = resolve_email({"tool": "outlook-macos"}, "darwin", lambda: False)
-        self.assertEqual(resolved["tool"], "eml")
-        self.assertEqual(resolved["configured_tool"], "outlook-macos")
-        self.assertTrue(resolved["platform_override"])
-        self.assertFalse(resolved["outlook_available"])
-
-    def test_outlook_is_kept_when_present_or_not_probed(self) -> None:
-        resolved = resolve_email(None, "darwin", lambda: True)
-        self.assertEqual(resolved["tool"], "outlook-macos")
-        self.assertFalse(resolved["platform_override"])
-        self.assertTrue(resolved["outlook_available"])
-        self.assertNotIn("outlook_available", resolve_email(None, "darwin"))
-
-    def test_outlook_probe_is_not_called_off_macos(self) -> None:
-        probe = mock.Mock(return_value=False)
-        resolve_email({"tool": "outlook-macos"}, "linux", probe)
-        resolve_email({"tool": "eml"}, "darwin", probe)
-        probe.assert_not_called()
-
     def test_absent_configuration_takes_the_platform_default(self) -> None:
         self.assertEqual(resolve_email(None, "darwin")["tool"], "outlook-macos")
         self.assertEqual(resolve_email({}, "win32")["tool"], "eml")
