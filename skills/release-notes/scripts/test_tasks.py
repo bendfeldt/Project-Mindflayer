@@ -10,9 +10,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from collect_evidence import Conventions
+from collect_evidence import Conventions, Git, assign_assets, map_tasks
 from config import (
     ConfigError,
+    asset_rule_problems,
     configure_stdio,
     default_repo_config,
     resolve_run_directory,
@@ -290,6 +291,142 @@ def test_id_free_evidence_discovery() -> None:
         assert "automation/release.yml" in discovered["unclaimed_folders"]
 
 
+ASSET_RULES = [
+    {
+        "kind": "Model",
+        "pattern": r"^(?P<root>data_solution/(?P<solution>[^/]+))/transformation/models/"
+        r"(?:.+/)?(?P<asset>[^/]+)/(?P=asset)\.(?:sql|yml)$",
+    },
+    {
+        "kind": "Source",
+        "pattern": r"^(?P<root>data_solution/(?P<solution>[^/]+))/source_configs/"
+        r"(?P<asset>[^/]+)\.yaml$",
+    },
+    {
+        "kind": "Source",
+        "pattern": r"^(?P<root>data_solution/(?P<solution>[^/]+))/adapters/(?P<asset>[^/]+)\.py$",
+    },
+    {
+        "kind": "Model",
+        "pattern": r"^(?P<root>data_solution/(?P<solution>[^/]+))/transformation/tests/.+\.sql$",
+        "resolve": "dbt_ref",
+    },
+]
+
+
+def commit_all(repository: Path, message: str) -> str:
+    subprocess.run(["git", "add", "-A"], cwd=repository, check=True)
+    subprocess.run(["git", "commit", "-qm", message], cwd=repository, check=True)
+    return git_revision(repository, "HEAD")
+
+
+def write(repository: Path, relative: str, text: str) -> None:
+    path = repository / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def test_asset_rule_discovery() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        repository = Path(directory)
+        subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+        for key, value in (
+            ("user.email", "test@example.invalid"),
+            ("user.name", "Release Test"),
+            ("core.autocrlf", "false"),
+        ):
+            subprocess.run(["git", "config", key, value], cwd=repository, check=True)
+        models = "data_solution/foo/transformation/models"
+        write(repository, f"{models}/curated/sales/sales.sql", "select 1 as amount\n")
+        write(repository, f"{models}/clean/orders/orders.sql", "select 1 as id\n")
+        write(repository, f"{models}/clean/legacy/legacy.sql", "select 1 as id\n")
+        write(repository, "data_solution/foo/source_configs/crm.yaml", "type: rest_api\n")
+        write(repository, "data_solution/foo/adapters/crm.py", "VALUE = 1\n")
+        write(repository, "data_solution/foo/config.yml", "database: foo\n")
+        base = commit_all(repository, "test: base")
+
+        write(repository, f"{models}/curated/sales/sales.sql", "select 2 as amount\n")
+        (repository / f"{models}/clean/area").mkdir(parents=True)
+        subprocess.run(
+            ["git", "mv", f"{models}/clean/orders", f"{models}/clean/area/orders"],
+            cwd=repository, check=True,
+        )
+        (repository / f"{models}/clean/legacy/legacy.sql").unlink()
+        write(repository, "data_solution/foo/source_configs/crm.yaml", "type: sharepoint\n")
+        write(repository, "data_solution/foo/adapters/crm.py", "VALUE = 2\n")
+        write(repository, "data_solution/foo/config.yml", "database: bar\n")
+        write(
+            repository, "data_solution/foo/transformation/tests/assert_sales.sql",
+            "select * from {{ ref('sales') }} where amount < 0\n",
+        )
+        write(
+            repository, "data_solution/foo/transformation/tests/assert_join.sql",
+            "select * from {{ ref('sales') }} join {{ ref('orders') }} on true\n",
+        )
+        head = commit_all(repository, "test: release")
+
+        conventions = Conventions({**config("Repo"), "asset_rules": ASSET_RULES})
+        git = Git(repository, base, head, conventions)
+        assets = assign_assets(git, conventions, git.changed())
+        files = {
+            key: sorted(path for _, path, _ in asset["files"])
+            for key, asset in assets.items()
+        }
+        assert sorted(files) == [
+            "data_solution/foo/model/legacy",
+            "data_solution/foo/model/orders",
+            "data_solution/foo/model/sales",
+            "data_solution/foo/source/crm",
+        ], files
+        assert assets["data_solution/foo/model/sales"]["title"] == "Model: foo/sales"
+        assert files["data_solution/foo/model/sales"] == [
+            f"{models}/curated/sales/sales.sql",
+            "data_solution/foo/transformation/tests/assert_sales.sql",
+        ]
+        assert files["data_solution/foo/source/crm"] == [
+            "data_solution/foo/adapters/crm.py",
+            "data_solution/foo/source_configs/crm.yaml",
+        ]
+        (status, _, old), = assets["data_solution/foo/model/orders"]["files"]
+        assert status.startswith("R") and old == f"{models}/clean/orders/orders.sql"
+        assert assets["data_solution/foo/model/legacy"]["files"][0][0] == "D"
+
+        claimed = {path for paths in files.values() for path in paths}
+        leftover = sorted(
+            path for _, path, _ in git.changed() if path not in claimed
+        )
+        assert leftover == [
+            "data_solution/foo/config.yml",
+            "data_solution/foo/transformation/tests/assert_join.sql",
+        ], leftover
+
+        titles = {key: asset["title"] for key, asset in assets.items()}
+        mapping, problems = map_tasks(
+            [{"id": "7", "title": "Model: foo/sales"}], set(assets), conventions, titles
+        )
+        assert mapping == {"7": "data_solution/foo/model/sales"} and not problems
+
+
+def test_asset_rule_validation() -> None:
+    assert asset_rule_problems(None) == []
+    assert asset_rule_problems(ASSET_RULES) == []
+    problems = asset_rule_problems(
+        [
+            {"kind": "", "pattern": r"^(?P<root>a)/(?P<asset>b)$"},
+            {"kind": "Model", "pattern": r"^(?P<asset>b)$"},
+            {"kind": "Model", "pattern": "("},
+            {"kind": "Model", "pattern": r"^(?P<root>a)$", "resolve": "unknown"},
+        ]
+    )
+    assert len(problems) == 4, problems
+    try:
+        Conventions({"asset_rules": [{"kind": "Model", "pattern": "("}]})
+    except SystemExit as exc:
+        assert "invalid asset_rules" in str(exc)
+    else:
+        raise AssertionError("expected invalid asset_rules to fail")
+
+
 def test_multi_pair_release_and_merge() -> None:
     provider_a = FakeProvider("1", "100", "RepoA")
     provider_b = FakeProvider("2", "200", "RepoB")
@@ -509,6 +646,8 @@ def main() -> int:
         test_unique_titles,
         test_ado_child_payload,
         test_id_free_evidence_discovery,
+        test_asset_rule_discovery,
+        test_asset_rule_validation,
         test_multi_pair_release_and_merge,
         test_all_pairs_preflight_before_write,
         test_populated_description_is_preserved,

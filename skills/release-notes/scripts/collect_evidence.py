@@ -36,8 +36,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import (  # noqa: E402
     DEFAULT_ITEM_SUFFIXES, DEFAULT_MERGE_PATTERNS, DEFAULT_TITLE_PREFIXES,
     DEFAULT_TASK_TITLE_PREFIXES,
-    configure_stdio, effective_config, read_json, run_capture, write_json,
+    asset_rule_problems, configure_stdio, effective_config, read_json, run_capture,
+    write_json,
 )
+
+_DBT_REF = re.compile(r"""\bref\(\s*(?:['"][^'"]+['"]\s*,\s*)?['"]([^'"]+)['"]""")
 
 
 class Conventions:
@@ -56,6 +59,13 @@ class Conventions:
         patterns = cfg.get("merge_commit_patterns") or DEFAULT_MERGE_PATTERNS["ado"]
         self.merge_patterns = [re.compile(p) for p in patterns]
         self.child_types = cfg.get("child_types") or []
+        problems = asset_rule_problems(cfg.get("asset_rules"))
+        if problems:
+            raise SystemExit("invalid asset_rules: " + "; ".join(problems))
+        self.asset_rules = [
+            {**rule, "regex": re.compile(rule["pattern"])}
+            for rule in cfg.get("asset_rules") or []
+        ]
 
     def match_merge(self, subject: str) -> tuple[str | None, str]:
         """-> (pr_number, title). Falls back to the raw subject when unmatched."""
@@ -76,6 +86,26 @@ class Conventions:
 
     def group_key(self, path: str) -> str:
         return self.item_folder(path) or "/".join(path.split("/")[:2])
+
+    def match_asset(self, *paths: str | None) -> tuple[dict, re.Match] | None:
+        """First asset rule matching the new path, else the old path of a move or delete."""
+        for path in paths:
+            if not path:
+                continue
+            for rule in self.asset_rules:
+                match = rule["regex"].match(path)
+                if match:
+                    return rule, match
+        return None
+
+    @staticmethod
+    def asset_task(rule: dict, match: re.Match, asset: str) -> tuple[str, str]:
+        """-> (task key, title), e.g. ('solution/a/model/sales', 'Model: a/sales')."""
+        root = match.group("root").strip("/")
+        groups = match.groupdict()
+        owner = groups.get("solution") or Path(root).name
+        kind = str(rule["kind"]).strip()
+        return f"{root}/{kind.casefold()}/{asset}", f"{kind}: {owner}/{asset}"
 
     def parse_title(self, title: str) -> tuple[str | None, str]:
         """'Report: Sales/Attendance' -> ('.Report', 'Attendance')."""
@@ -169,8 +199,8 @@ class Git:
                 i += 2
         return out
 
-    def commits(self, folder: str) -> list[dict]:
-        out = self.run("log", "--format=%H\x1f%s", f"{self.base}..{self.head}", "--", folder)
+    def commits(self, *paths: str) -> list[dict]:
+        out = self.run("log", "--format=%H\x1f%s", f"{self.base}..{self.head}", "--", *paths)
         rows = []
         for line in out.splitlines():
             if not line.strip():
@@ -188,6 +218,41 @@ class Git:
 
 
 # --------------------------------------------------------------------- mapping
+
+Change = tuple[str, str, "str | None"]
+
+
+def assign_assets(git: Git, conv: Conventions,
+                  changed: list[Change]) -> dict[str, dict]:
+    """Group changed files into asset-level tasks using the configured asset_rules.
+
+    A file matches on its new path, or on its old path when it was moved away
+    or deleted, so removals and renames still land on the asset they belonged
+    to. A `dbt_ref` rule attaches the file to the single model it `ref()`s;
+    with no ref, or several, the file stays with its folder-level task.
+
+    Returns:
+        task key -> {"title", "files"} for every asset with at least one file.
+    """
+    assets: dict[str, dict] = {}
+    for status, path, old in changed:
+        found = conv.match_asset(path, old)
+        if found is None:
+            continue
+        rule, match = found
+        if rule.get("resolve") == "dbt_ref":
+            ref = git.show(git.head, path) or git.show(git.base, old or path)
+            names = set(_DBT_REF.findall(ref))
+            if len(names) != 1:
+                continue
+            asset = names.pop()
+        else:
+            asset = match.group("asset")
+        key, title = conv.asset_task(rule, match, asset)
+        entry = assets.setdefault(key, {"title": title, "files": []})
+        entry["files"].append((status, path, old))
+    return assets
+
 
 def load_tasks(path: Path, child_types: list[str]) -> list[dict]:
     """Load child tasks, filtering by tracker item type and deduplicating by id.
@@ -228,11 +293,17 @@ def load_tasks(path: Path, child_types: list[str]) -> list[dict]:
     return sorted(tasks.values(), key=lambda t: int(t["id"]))
 
 
-def map_tasks(tasks: list[dict], folders: set[str],
-              conv: Conventions) -> tuple[dict[str, str], list[str]]:
+def map_tasks(tasks: list[dict], folders: set[str], conv: Conventions,
+              titles: dict[str, str] | None = None) -> tuple[dict[str, str], list[str]]:
+    """Map existing tasks to folders: exact generated title first, then the title's leaf name."""
+    by_title = {title.casefold(): folder for folder, title in (titles or {}).items()}
     mapping: dict[str, str] = {}
     problems: list[str] = []
     for task in tasks:
+        exact = by_title.get(str(task["title"] or "").strip().casefold())
+        if exact:
+            mapping[task["id"]] = exact
+            continue
         suffix, name = conv.parse_title(task["title"])
         cands = []
         for folder in folders:
@@ -375,10 +446,11 @@ def report_evidence(git: Git, folder: str, files) -> dict:
     return ev
 
 
-def generic_evidence(git: Git, folder: str, files) -> dict:
+def generic_evidence(git: Git, paths: list[str], files) -> dict:
+    stat = git.run("diff", "--stat", git.range, "--", *paths) if paths else ""
     return {
         "files_sample": [f"{s} {p}" for s, p, _ in files[:40]],
-        "diffstat": git.run("diff", "--stat", git.range, "--", folder).strip().splitlines()[-1:],
+        "diffstat": stat.strip().splitlines()[-1:],
     }
 
 
@@ -409,32 +481,45 @@ def main() -> None:
     conv = Conventions(effective_config(repo) if args.config else None)
     git = Git(repo, args.base, args.head, conv)
     all_changed = git.changed(args.pathspec)
-    folders = {k for _, p, _ in all_changed if (k := conv.group_key(p))}
+    assets = assign_assets(git, conv, all_changed)
+    asset_paths = {p for asset in assets.values() for _, p, _ in asset["files"]}
+    folders = {
+        k for _, p, _ in all_changed if p not in asset_paths and (k := conv.group_key(p))
+    }
     item_folders = {f for f in folders if f.endswith(conv.item_suffixes)}
+    asset_titles = {key: asset["title"] for key, asset in assets.items()}
 
     if args.tasks:
         tasks = load_tasks(args.tasks, conv.child_types)
-        mapping, problems = map_tasks(tasks, item_folders or folders, conv)
+        try:
+            titles = {**conv.task_titles(item_folders), **asset_titles}
+        except SystemExit:
+            titles = asset_titles
+        mapping, problems = map_tasks(
+            tasks, (item_folders or folders) | set(assets), conv, titles
+        )
         claimed = set(mapping.values())
-        unclaimed = sorted(folders - claimed)
+        unclaimed = sorted((folders | set(assets)) - claimed)
     else:
-        titles = conv.task_titles(item_folders)
+        titles = {**conv.task_titles(item_folders), **asset_titles}
+        keys = sorted(item_folders) + sorted(assets)
         tasks = [
             {
-                "id": folder,
-                "task_key": folder,
-                "title": titles[folder],
+                "id": key,
+                "task_key": key,
+                "title": titles[key],
                 "has_description": False,
                 "state": None,
                 "url": None,
             }
-            for folder in sorted(item_folders)
+            for key in keys
         ]
-        mapping = {folder: folder for folder in sorted(item_folders)}
+        mapping = {key: key for key in keys}
         problems = []
         unclaimed = sorted(folders - item_folders)
 
-    print(f"tasks: {len(tasks)}  mapped: {len(mapping)}  changed folders: {len(folders)}")
+    print(f"tasks: {len(tasks)}  mapped: {len(mapping)}  changed folders: {len(folders)}"
+          f"  assets: {len(assets)}")
     for tid, folder in sorted(mapping.items(), key=lambda kv: str(kv[0])):
         title = next(t["title"] for t in tasks if t["id"] == tid)
         print(f"  {tid}  {title}  ->  {folder}")
@@ -456,13 +541,24 @@ def main() -> None:
     evidence = {}
     for task in tasks:
         folder = mapping[task["id"]]
-        files = git.changed(folder)
+        if folder in assets:
+            files = assets[folder]["files"]
+            paths = sorted({x for _, p, o in files for x in (p, o) if x})
+        else:
+            in_folder = git.changed(folder)
+            files = [f for f in in_folder if f[1] not in asset_paths]
+            # A folder that lost files to asset tasks reports only what is left.
+            paths = (
+                [folder] if len(files) == len(in_folder)
+                else sorted({x for _, p, o in files for x in (p, o) if x})
+            )
         ev = {
             **task,
             "folder": folder,
+            "paths": paths,
             "file_count": len(files),
             "status_counts": dict(Counter(s[0] for s, _, _ in files)),
-            "commits": git.commits(folder),
+            "commits": git.commits(*paths) if paths else [],
             "files": [{"status": s, "path": p, "old": o} for s, p, o in files][:400],
         }
         if folder.endswith(".SemanticModel"):
@@ -470,7 +566,7 @@ def main() -> None:
         elif folder.endswith(".Report"):
             ev.update(report_evidence(git, folder, files))
         else:
-            ev.update(generic_evidence(git, folder, files))
+            ev.update(generic_evidence(git, paths, files))
         evidence[task["id"]] = ev
 
     payload = {

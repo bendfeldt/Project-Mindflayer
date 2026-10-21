@@ -128,6 +128,19 @@ The create call uses Azure DevOps REST 7.1 JSON Patch with `System.Title`, `Syst
 
 The default allowed parent type is `User Story`. Teams using another Azure DevOps process must set `parent_types` explicitly in repository config. Override generated title labels with the suffix-to-prefix `task_title_prefixes` mapping; parsing of existing titles continues to use `title_prefixes`.
 
+#### Asset-level tasks
+
+When one deployable folder holds many independently testable assets (dbt models, ingestion sources), add `asset_rules` to the repository config. Each rule has a `kind` and a regex `pattern` with named groups `root` and `asset` (optionally `solution`); the first rule matching a file's new path, or its old path for a move or delete, sends that file to the Task `<kind>: <solution>/<asset>` with key `<root>/<kind lowercased>/<asset>`. A rule with `"resolve": "dbt_ref"` needs only `root` and attaches the file to the single model its `ref()` names. Files no rule claims stay with their folder-level Task. Without `asset_rules`, grouping is unchanged.
+
+```json
+"asset_rules": [
+  {"kind": "Model", "pattern": "^(?P<root>data_solution/(?P<solution>[^/]+))/transformation/models/(?:.+/)?(?P<asset>[^/]+)/(?P=asset)\\.(?:sql|yml)$"},
+  {"kind": "Model", "pattern": "^(?P<root>data_solution/(?P<solution>[^/]+))/transformation/tests/.+\\.sql$", "resolve": "dbt_ref"}
+]
+```
+
+`config.py --validate` reports malformed rules.
+
 ### Writing a description
 
 ```bash

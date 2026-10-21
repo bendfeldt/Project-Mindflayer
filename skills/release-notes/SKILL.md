@@ -10,7 +10,7 @@ Invoke them with `python3` on Linux and macOS, and with `python` on native Windo
 
 1. Read [provider behavior](references/providers.md) and [templates](references/templates.md).
 2. Resolve configuration precedence: explicit CLI values, repository config, then documented defaults. Reject ambiguous project or work-item mappings.
-3. Run `scripts/collect_evidence.py` using an absolute path derived from the skill directory. Omit `--tasks` when missing Azure DevOps child Tasks must be planned; this produces folder-keyed task candidates.
+3. Run `scripts/collect_evidence.py` using an absolute path derived from the skill directory. Omit `--tasks` when missing Azure DevOps child Tasks must be planned; this produces folder-keyed task candidates, or asset-keyed ones where the repository config defines `asset_rules`.
 4. Prepare provider-formatted descriptions keyed by each evidence `task_key`.
 5. For each Azure DevOps PR/User Story pair, run `scripts/manage_tasks.py plan --pr-id <PR> --parent-id <US>`. Each PR and User Story must appear in exactly one pair.
 6. Run `scripts/manage_tasks.py compose` with every pair plan, including a single pair. Review the complete composed dry run. Pair plans are never directly applicable.
