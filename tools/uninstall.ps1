@@ -172,6 +172,8 @@ try {
         if ($record.Kind -eq 'directory') {
             if (-not (Test-Path -LiteralPath $path -PathType Container)) { continue }
             if (@(Get-ChildItem -LiteralPath $path -Force).Count -ne 0) {
+                # A skill root only marks where skills go; the user's own skills stay.
+                if ($record.Proof -eq 'skill-root') { continue }
                 Write-Output " preserve: $path (not empty)"
                 $preserved++
                 continue

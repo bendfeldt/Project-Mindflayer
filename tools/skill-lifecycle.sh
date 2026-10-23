@@ -8,6 +8,11 @@ MODE="${1:-}"
 [ -n "$MODE" ] || { printf 'error: lifecycle mode required\n' >&2; exit 1; }
 shift
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ -f "$SCRIPT_DIR/skill-state.sh" ] || { printf 'error: skill-state.sh not found next to %s\n' "${BASH_SOURCE[0]}" >&2; exit 1; }
+# shellcheck source=tools/skill-state.sh
+. "$SCRIPT_DIR/skill-state.sh"
+
 TOOLKIT_HOME="${MINDFLAYER_HOME:-${MINDFlAYER_HOME:-$HOME/.ai-toolkit}}"
 SOURCE="$TOOLKIT_HOME/skills"
 MANIFEST="$TOOLKIT_HOME/manifest.tsv"
@@ -23,7 +28,8 @@ ADD_REQUEST=""
 AVAILABLE=""
 SELECTION=""
 AGENTS_FILE=""
-MIGRATIONS=""
+MIGRATIONS_FILE=""
+SELECTION_INVALID=0
 USE_COLOR=0
 EXIT_STATUS=0
 
@@ -92,6 +98,7 @@ validate_ownership_file() {
     [ -z "${extra:-}" ] || fail "ownership record must contain exactly three fields: $path"
     [ -n "$proof" ] || fail "ownership record contains empty evidence: $path"
     case "$kind" in file|symlink|directory|line) ;; *) fail "unknown ownership class for $path: $kind" ;; esac
+    if skill_record_under_replaced_dir "$path"; then continue; fi
     resolve_owned_path "$path"
   done < "$OWNERSHIP_FILE"
 }
@@ -159,11 +166,13 @@ parse_arguments() {
   esac
 }
 
+# Skill roots come from the installer's skill-root records and, for projects
+# installed before those records existed, from owned SKILL.md files.
 managed_roots() {
   awk -F '\t' '
-    $2 == "file" && $1 ~ /\/skills\/[^\/]+\/SKILL[.]md$/ {
+    ($2 == "directory" && $3 == "skill-root") || ($2 == "file" && $1 ~ /\/skills\/[^\/]+\/SKILL[.]md$/) {
       root=$1
-      sub(/\/[^\/]+\/SKILL[.]md$/, "", root)
+      if ($2 == "file") sub(/\/[^\/]+\/SKILL[.]md$/, "", root)
       if (root ~ /^\// || root ~ /(^|\/)\.\.($|\/)/ || root == "." || root == "") {
         printf "error: unsafe managed skill root: %s\n", root > "/dev/stderr"
         unsafe=1
@@ -269,21 +278,9 @@ forget_file_ownership() {
   mv "$temporary" "$OWNERSHIP_FILE"
 }
 
-list_contains() {
-  case ",$2," in *",$1,"*) return 0 ;; *) return 1 ;; esac
-}
-
 setup_color() {
   USE_COLOR=0
   if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; then USE_COLOR=1; fi
-}
-
-paint() {
-  if [ "$USE_COLOR" -eq 1 ]; then printf '\033[%sm%s\033[0m' "$1" "$2"; else printf '%s' "$2"; fi
-}
-
-fingerprint() {
-  cksum "$1" | awk '{print $1 ":" $2}'
 }
 
 # Skills the release provides for projects on this platform, in manifest order.
@@ -299,13 +296,8 @@ available_skills() {
   printf '%s' "$result"
 }
 
-canonical_skill_csv() {
-  local wanted="$1" name result=""
-  for name in ${AVAILABLE//,/ }; do
-    list_contains "$name" "$wanted" || continue
-    result="${result:+$result,}$name"
-  done
-  printf '%s' "$result"
+skill_files() {
+  manifest_skill_files "$1"
 }
 
 skill_version() {
@@ -318,101 +310,14 @@ skill_description() {
   sed -n 's/^[[:space:]]*short_description:[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$file" | head -1
 }
 
-# The selection is declared in AGENTS.md ("- **skills:** a, b" or "none").
-# Without that line every skill is selected, which matches earlier releases.
-read_selection() {
-  local raw token kept=""
-  if [ ! -f "$AGENTS_FILE" ] || ! grep -Eq '^[[:space:]]*- \*\*skills:\*\*' "$AGENTS_FILE"; then
-    printf '%s' "$AVAILABLE"
-    return 0
-  fi
-  raw="$(sed -n 's/^[[:space:]]*- \*\*skills:\*\*[[:space:]]*//p' "$AGENTS_FILE" | head -1 | tr -d '[:space:]')"
-  [ "$raw" != none ] && [ -n "$raw" ] || return 0
-  IFS=',' read -r -a tokens <<< "$raw"
-  for token in "${tokens[@]}"; do
-    [ -n "$token" ] || continue
-    if list_contains "$token" "$AVAILABLE"; then
-      kept="${kept:+$kept,}$token"
-    else
-      printf "! AGENTS.md selects skill '%s', which this release does not provide; ignoring it\n" "$token" >&2
-    fi
-  done
-  canonical_skill_csv "$kept"
-}
-
-render_agents_selection() {
-  local source="$1" destination="$2" selection="$3" mode=set value
-  if [ "$selection" = "$AVAILABLE" ]; then mode=remove; fi
-  if [ -z "$selection" ]; then value=none; else value="${selection//,/, }"; fi
-  awk -v mode="$mode" -v line="- **skills:** $value" '
-    { lines[NR] = $0 }
-    END {
-      for (i = 1; i <= NR; i++) if (lines[i] ~ /^[[:space:]]*- \*\*skills:\*\*/) { existing = i; break }
-      if (!existing && mode == "set") {
-        for (i = 1; i <= NR; i++) {
-          if (lines[i] ~ /^##[[:space:]]+Repository identity[[:space:]]*$/) { in_identity = 1; continue }
-          if (in_identity && lines[i] ~ /^## /) break
-          if (in_identity && lines[i] ~ /^- \*\*[^*]+:\*\*/) anchor = i
-        }
-        if (!anchor) for (i = 1; i <= NR; i++) if (lines[i] ~ /<!-- template: AGENTS /) { anchor = i; break }
-        if (!anchor) exit 3
-      }
-      for (i = 1; i <= NR; i++) {
-        if (i == existing) { if (mode == "set") print line; continue }
-        print lines[i]
-        if (i == anchor) print line
-      }
-    }
-  ' "$source" > "$destination"
-}
-
-recorded_file_proof() {
-  awk -F '\t' -v value="$1" '$1 == value && $2 == "file" {print $3; exit}' "$OWNERSHIP_FILE"
-}
-
-# new | current | update (unchanged since install) | local (edited) | unmanaged
-file_state() {
-  local destination="$1" source="$2" proof
-  if [ ! -e "$destination" ] && [ ! -L "$destination" ]; then printf 'new'; return; fi
-  proof="$(recorded_file_proof "$destination")"
-  if [ -L "$destination" ] || [ ! -f "$destination" ]; then
-    if [ -n "$proof" ]; then printf 'local'; else printf 'unmanaged'; fi
-    return
-  fi
-  if cmp -s "$source" "$destination"; then printf 'current'; return; fi
-  if [ -z "$proof" ]; then printf 'unmanaged'
-  elif [ "$(fingerprint "$destination")" = "$proof" ]; then printf 'update'
-  else printf 'local'; fi
-}
-
-colorize_diff() {
-  if [ "$USE_COLOR" -eq 1 ]; then
-    awk '
-      /^(---|\+\+\+) / { printf "\033[1m%s\033[0m\n", $0; next }
-      /^@@/ { printf "\033[36m%s\033[0m\n", $0; next }
-      /^-/ { printf "\033[31m%s\033[0m\n", $0; next }
-      /^\+/ { printf "\033[32m%s\033[0m\n", $0; next }
-      { print }
-    '
-  else
-    cat
-  fi
-}
-
-show_diff() {
-  local local_file="$1" release_file="$2" label="$3" local_description="$4" release_description="$5"
-  [ -f "$local_file" ] && [ ! -L "$local_file" ] || local_file=/dev/null
-  { diff -u -L "$label ($local_description)" -L "$label ($release_description)" "$local_file" "$release_file" || true; } | colorize_diff
-}
-
-record_migration() {
-  printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$MIGRATIONS"
-}
-
 # Removes owned files that are no longer expected: files of skills that are
 # not selected ("deselected") and files the release dropped ("obsolete").
+# An invalid selection removes nothing as deselected, and files below a skill
+# directory replaced by a link or file are never touched.
 reconcile_owned_skill_files() {
-  local target="$1" target_path expected declared snapshot path kind proof artifact reason name
+  local target="$1" target_path expected declared snapshot path kind proof artifact reason name keep
+  keep="$SELECTION"
+  [ "$SELECTION_INVALID" -eq 0 ] || keep="$AVAILABLE"
   expected="$(mktemp)"
   declared="$(mktemp)"
   snapshot="$(mktemp)"
@@ -422,13 +327,18 @@ reconcile_owned_skill_files() {
     case "$type" in skill|skill-resource) ;; *) continue ;; esac
     consumer_includes_project_skills "$consumers" || continue
     platform_includes_current "$platforms" || continue
-    resolve_owned_path "$target/${path#skills/}"
-    printf '%s\n' "$SAFE_PATH" >> "$declared"
     name="${path#skills/}"; name="${name%%/*}"
-    list_contains "$name" "$SELECTION" && printf '%s\n' "$SAFE_PATH" >> "$expected"
+    if skill_dir_replaced "$target" "$name"; then
+      SAFE_PATH="$target_path/${path#skills/}"
+    else
+      resolve_owned_path "$target/${path#skills/}"
+    fi
+    printf '%s\n' "$SAFE_PATH" >> "$declared"
+    if list_contains "$name" "$keep"; then printf '%s\n' "$SAFE_PATH" >> "$expected"; fi
   done < "$MANIFEST"
   cp "$OWNERSHIP_FILE" "$snapshot"
   while IFS=$'\t' read -r path kind proof; do
+    if skill_record_under_replaced_dir "$path"; then continue; fi
     resolve_owned_path "$path"
     artifact="$SAFE_PATH"
     case "$artifact" in "$target_path"/*) ;; *) continue ;; esac
@@ -466,31 +376,11 @@ reconcile_owned_skill_files() {
   rm -f "$expected" "$declared" "$snapshot"
 }
 
-# Aggregated state of one skill in one root.
-skill_root_state() {
-  local target="$1" name="$2" relative state worst=current rank existing=0
-  if [ ! -e "$target/$name" ] && [ ! -L "$target/$name" ]; then printf 'missing'; return; fi
-  while IFS= read -r relative; do
-    [ -n "$relative" ] || continue
-    state="$(file_state "$target/$name/$relative" "$SOURCE/$name/$relative")"
-    if [ "$state" = new ]; then state=update; else existing=1; fi
-    case "$state:$worst" in
-      unmanaged:*) worst=unmanaged ;;
-      local:unmanaged) ;;
-      local:*) worst=local ;;
-      update:current) worst=update ;;
-    esac
-  done < <(manifest_skill_files "$name")
-  rank="$worst"
-  if [ "$existing" -eq 0 ]; then rank=missing; fi
-  printf '%s' "$rank"
-}
-
 check_skill() {
   local target="$1" name="$2" version="$3" state
-  state="$(skill_root_state "$target" "$name")"
+  state="$(skill_root_state "$target" "$name" "$SOURCE")"
   case "$state" in
-    missing) printf '%-24s MISSING (toolkit %s)\n' "$name" "$version"; STATUS=1 ;;
+    not-installed) printf '%-24s MISSING (toolkit %s)\n' "$name" "$version"; STATUS=1 ;;
     current) printf '%-24s in sync (%s)\n' "$name" "$version" ;;
     update) printf '%-24s UPDATE AVAILABLE (%s)\n' "$name" "$version"; STATUS=1 ;;
     local) printf '%-24s LOCAL CHANGES (%s; migration required)\n' "$name" "$version"; STATUS=1 ;;
@@ -513,8 +403,22 @@ sync_skill() {
   local target="$1" name="$2" version="$3" skill_target relative source_file target_file state
   local changed=0 has_local=0 backup
   skill_target="$target/$name"
-  if [ -L "$skill_target" ] || { [ -e "$skill_target" ] && [ ! -d "$skill_target" ]; }; then
-    has_local=1
+  # A skill directory replaced by a link or file is never written through: it
+  # is kept as a local change, or moved aside as a whole with --force.
+  if skill_dir_replaced "$target" "$name"; then
+    if [ "$REPLACE" -eq 0 ]; then
+      printf '! keep %s: %s (a link or file replaces the skill directory)\n' "$skill_target" "$(paint '1;31' 'LOCAL CHANGES - migration required')"
+      record_migration kept "$skill_target" "$name $version"
+      return
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+      printf 'would replace %s (not a skill directory; backup first)\n' "$skill_target"
+      return
+    fi
+    backup="$(backup_path "$skill_target")"
+    mv "$skill_target" "$backup"
+    printf 'b %s\n' "$backup"
+    record_migration replaced "$skill_target" "$backup"
   fi
   while IFS= read -r relative; do
     [ -n "$relative" ] || continue
@@ -525,15 +429,6 @@ sync_skill() {
   if [ "$changed" -eq 0 ] && [ "$has_local" -eq 0 ]; then
     printf '= %s\n' "$name"
     return
-  fi
-  # A skill directory replaced by a file or link is backed up as a whole; it
-  # cannot contain a discoverable SKILL.md of its own.
-  if { [ -L "$skill_target" ] || { [ -e "$skill_target" ] && [ ! -d "$skill_target" ]; }; } &&
-    [ "$REPLACE" -eq 1 ] && [ "$DRY_RUN" -eq 0 ]; then
-    backup="$(backup_path "$skill_target")"
-    mv "$skill_target" "$backup"
-    printf 'b %s\n' "$backup"
-    record_migration replaced "$skill_target" "$backup"
   fi
   [ "$DRY_RUN" -eq 1 ] || mkdir -p "$skill_target"
   while IFS= read -r relative; do
@@ -577,41 +472,6 @@ sync_skill() {
     esac
   done < <(manifest_skill_files "$name")
   if [ "$DRY_RUN" -eq 0 ] && [ "$changed" -eq 1 ]; then printf '+ %s (%s)\n' "$name" "$version"; fi
-}
-
-print_migration_summary() {
-  local kept replaced removal kind path detail
-  [ -s "$MIGRATIONS" ] || return 0
-  kept="$(awk -F '\t' '$1 == "kept" {n++} END {print n + 0}' "$MIGRATIONS")"
-  replaced="$(awk -F '\t' '$1 == "replaced" {n++} END {print n + 0}' "$MIGRATIONS")"
-  removal="$(awk -F '\t' '$1 == "kept-removal" {n++} END {print n + 0}' "$MIGRATIONS")"
-  printf '\n%s\n' "$(paint '1;31' 'Migration required')"
-  if [ "$kept" -gt 0 ]; then
-    printf '  Kept with local changes, not updated (%s):\n' "$kept"
-    while IFS=$'\t' read -r kind path detail; do [ "$kind" = kept ] && printf '    ! %s  (release: %s)\n' "$path" "$detail"; done < "$MIGRATIONS"
-  fi
-  if [ "$removal" -gt 0 ]; then
-    printf '  Kept although no longer installed, because they have local changes (%s):\n' "$removal"
-    while IFS=$'\t' read -r kind path detail; do [ "$kind" = kept-removal ] && printf '    ! %s  (%s)\n' "$path" "$detail"; done < "$MIGRATIONS"
-  fi
-  if [ "$replaced" -gt 0 ]; then
-    printf '  Replaced by the release; your previous version was saved (%s):\n' "$replaced"
-    while IFS=$'\t' read -r kind path detail; do [ "$kind" = replaced ] && printf '    ! %s  -> %s\n' "$path" "$detail"; done < "$MIGRATIONS"
-  fi
-  printf '  Next steps:\n'
-  if [ "$kept" -gt 0 ]; then
-    printf "    - Review the diffs above: '-' lines are your version, '+' lines are the release.\n"
-    printf '      Move your customizations out of toolkit-managed files, then rerun with --force\n'
-    printf '      to take the release; --force saves each file as <file>.bak.<timestamp> first.\n'
-  fi
-  if [ "$removal" -gt 0 ]; then
-    printf '    - Files kept after their skill was removed stay listed here until you delete them.\n'
-    printf '      Copy anything you still need into your own files, then delete them.\n'
-  fi
-  if [ "$replaced" -gt 0 ]; then
-    printf '    - Re-apply any customizations you still need from the saved .bak files.\n'
-  fi
-  if [ "$kept" -gt 0 ] || [ "$removal" -gt 0 ]; then EXIT_STATUS=2; fi
 }
 
 pick_skills_to_add() {
@@ -680,6 +540,7 @@ add_skills() {
   if [ ! -f "$AGENTS_FILE" ] || ! grep -q '<!-- template: AGENTS ' "$AGENTS_FILE"; then
     fail "AGENTS.md is missing or not toolkit-managed; add skills with install.sh --project --skills LIST"
   fi
+  [ "$SELECTION_INVALID" -eq 0 ] || fail "fix the skills line in AGENTS.md before adding skills ($SKILL_SELECTION_PROBLEM)"
   for name in ${AVAILABLE//,/ }; do
     list_contains "$name" "$SELECTION" || candidates="${candidates:+$candidates,}$name"
   done
@@ -703,13 +564,13 @@ add_skills() {
   fi
   [ -n "$requested" ] || return 0
   [ ! -L "$AGENTS_FILE" ] || fail "AGENTS.md is a symbolic link; replace it with a regular file before changing the skill selection"
-  SELECTION="$(canonical_skill_csv "$SELECTION,$requested")"
+  SELECTION="$(canonical_skill_csv "$SELECTION,$requested" "$AVAILABLE")"
   if [ "$DRY_RUN" -eq 1 ]; then
     printf 'would select skills in AGENTS.md: %s\n' "${requested//,/, }"
     return 0
   fi
   rendered="$(mktemp)"
-  render_agents_selection "$AGENTS_FILE" "$rendered" "$SELECTION" || { rm -f "$rendered"; fail "could not update the skills line in AGENTS.md"; }
+  render_agents_selection "$AGENTS_FILE" "$rendered" "$SELECTION" "$AVAILABLE" || { rm -f "$rendered"; fail "could not update the skills line in AGENTS.md"; }
   printf '~ AGENTS.md (added: %s)\n' "${requested//,/, }"
   show_diff "$AGENTS_FILE" "$rendered" AGENTS.md current updated
   proof="$(recorded_file_proof AGENTS.md)"
@@ -738,10 +599,20 @@ main() {
   roots="$(managed_roots)" || fail "ownership record contains unsafe skill paths"
   [ -n "$roots" ] || fail "no managed project skill roots found in $OWNERSHIP_FILE; install skills with install.sh --project --tools TOOL --skills LIST"
   AVAILABLE="$(available_skills)"
-  SELECTION="$(read_selection)"
-  MIGRATIONS="$(mktemp)"
-  trap 'rm -f "$MIGRATIONS"' EXIT
+  read_skill_selection "$AGENTS_FILE" "$AVAILABLE"
+  SELECTION="$SKILL_SELECTION"
+  SELECTION_INVALID="$SKILL_SELECTION_INVALID"
+  MIGRATIONS_FILE="$(mktemp)"
+  trap 'rm -f "$MIGRATIONS_FILE"' EXIT
   [ "$ADD_REQUESTED" -eq 0 ] || add_skills
+  if [ "$SELECTION_INVALID" -eq 1 ]; then
+    if [ "$MODE" = check ]; then
+      printf '%-24s INVALID SELECTION (%s; nothing is removed)\n' AGENTS.md "$SKILL_SELECTION_PROBLEM"
+      STATUS=1
+    else
+      record_migration invalid-selection AGENTS.md "$SKILL_SELECTION_PROBLEM"
+    fi
+  fi
 
   while IFS= read -r target; do
     printf '%s\n' "$target"
@@ -758,7 +629,11 @@ main() {
       fi
       validate_skill_files "$name"
       if ! list_contains "$name" "$SELECTION"; then
-        [ "$MODE" = check ] && printf '%-24s available (not selected)\n' "$name"
+        if [ "$MODE" = check ]; then
+          printf '%-24s available (not selected)\n' "$name"
+        elif [ "$DRY_RUN" -eq 0 ] && [ "$SELECTION_INVALID" -eq 0 ]; then
+          remove_empty_skill_dirs "$target" "$name"
+        fi
         continue
       fi
       if [ "$MODE" = check ]; then
@@ -776,7 +651,7 @@ main() {
     EXIT_STATUS="$STATUS"
     return 0
   fi
-  print_migration_summary
+  print_migration_summary || EXIT_STATUS=$?
 }
 
 main "$@"

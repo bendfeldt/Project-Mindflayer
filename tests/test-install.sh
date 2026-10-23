@@ -72,7 +72,7 @@ assert 'PowerShell artifacts are Windows scoped' awk -F '\t' '($1 ~ /^(bootstrap
 assert 'retired AppleScript helper is not distributable' sh -c "! grep -Fq make_outlook_draft.applescript '$ROOT/manifest.tsv'"
 assert 'email helper is scoped to every platform' grep -Fqx $'skills/release-notes/scripts/make_email_draft.py\tskill-resource\t2.4.0\tglobal,project:skills\tmanaged-tree\tlinux,macos,windows' "$ROOT/manifest.tsv"
 assert 'repository tests are not distributable' sh -c "! grep -Eq 'skills/.*/test_[^[:space:]]+\\.py' '$ROOT/manifest.tsv'"
-assert 'system requirements distributed' grep -Fq $'docs/system-requirements.md\tdocument\t1.5.1' "$ROOT/manifest.tsv"
+assert 'system requirements distributed' grep -Fq $'docs/system-requirements.md\tdocument\t1.5.2' "$ROOT/manifest.tsv"
 assert 'local mode hidden from public help' sh -c "! bash '$ROOT/install.sh' --help | grep -Fq -- '--local'"
 for public_install_file in "$ROOT/README.md" "$ROOT/how-to-guide.md" "$ROOT/skills/setup-repo/SKILL.md"; do
   assert "no public local mode: ${public_install_file##*/}" not_contains "$public_install_file" '--local'
@@ -604,8 +604,25 @@ setup
 assert 'legacy template records selection after metadata' sh -c "grep -A1 -F -- '- **resource prefix:**' '$sandbox/project/AGENTS.md' | grep -Fqx -- '- **skills:** terraform-scaffold'"
 printf '%s\n' "$(sed 's/^- \*\*skills:\*\*.*/- **skills:** terraform-scaffold, retired-skill/' "$sandbox/project/AGENTS.md")" > "$sandbox/project/AGENTS.md"
 output="$(cd "$sandbox/project" && run_install --project --tools claude 2>&1)"; rc=$?
-assert 'unknown stored skill does not fail install' test "$rc" -eq 0
+assert 'unknown stored skill needs migration' test "$rc" -eq 2
 assert 'unknown stored skill is reported' sh -c "printf '%s' \"\$1\" | grep -Fq \"selects skill 'retired-skill'\"" _ "$output"
+assert 'unknown stored skill is listed for migration' sh -c "printf '%s' \"\$1\" | grep -Fq 'The skills line in AGENTS.md is invalid'" _ "$output"
+assert 'invalid skills line is kept as written' grep -Fqx -- '- **skills:** terraform-scaffold, retired-skill' "$sandbox/project/AGENTS.md"
+assert 'valid skills of an invalid line stay installed' test -f "$sandbox/project/.claude/skills/terraform-scaffold/SKILL.md"
+teardown
+
+setup
+new_selected_project --skills adr,kimball-model >/dev/null
+printf '%s\n' "$(sed 's/^- \*\*skills:\*\*.*/- **skills:** adr, kimbal-model/' "$sandbox/project/AGENTS.md")" > "$sandbox/project/AGENTS.md"
+rc=0; (cd "$sandbox/project" && run_install --project --tools claude,codex) >/dev/null 2>&1 || rc=$?
+assert 'misspelled skill needs migration' test "$rc" -eq 2
+assert 'misspelled skill is not removed by install' test -f "$sandbox/project/.claude/skills/kimball-model/SKILL.md"
+printf '%s\n' "$(sed 's/^- \*\*skills:\*\*.*/- **skills:**/' "$sandbox/project/AGENTS.md")" > "$sandbox/project/AGENTS.md"
+rc=0; (cd "$sandbox/project" && run_install --project --tools claude,codex) >/dev/null 2>&1 || rc=$?
+assert 'empty skills line needs migration' test "$rc" -eq 2
+assert 'empty skills line removes nothing' sh -c "test -f '$sandbox/project/.claude/skills/adr/SKILL.md' && test -f '$sandbox/project/.agents/skills/kimball-model/SKILL.md'"
+status_output="$(cd "$sandbox/project" && run_install --project --tools claude,codex --skills-status 2>&1)"
+assert 'skills status reports an invalid line' sh -c "printf '%s' \"\$1\" | grep -Fq 'invalid skills line'" _ "$status_output"
 teardown
 
 setup
@@ -746,6 +763,79 @@ assert 'sync --add dry run does not change selection' grep -Fqx -- '- **skills:*
 assert 'sync --add records selection' grep -Fqx -- '- **skills:** adr, kimball-model' "$sandbox/project/AGENTS.md"
 assert 'sync --add installs skill' test -f "$sandbox/project/.claude/skills/kimball-model/references/modeling.md"
 assert 'sync --add keeps AGENTS.md ownership proof current' grep -Fq "AGENTS.md"$'\t'"file"$'\t'"$(checksum "$sandbox/project/AGENTS.md")" "$sandbox/project/.mindflayer-managed.tsv"
+unset MINDFLAYER_HOME
+teardown
+
+printf '%s\n' '--- lifecycle edge cases ---'
+setup
+export MINDFLAYER_HOME="$ROOT"
+new_selected_project --skills none >/dev/null
+assert 'skill roots are recorded before any skill' sh -c "head -2 '$sandbox/project/.mindflayer-managed.tsv' | cut -f1,3 | sort | tr '\t\n' ' ' | grep -Fqx '.agents/skills skill-root .claude/skills skill-root '"
+rc=0; (cd "$sandbox/project" && bash "$ROOT/tools/check-skills-update.sh") >/dev/null 2>&1 || rc=$?
+assert 'check works with no skills installed' test "$rc" -eq 0
+rc=0; (cd "$sandbox/project" && bash "$ROOT/tools/sync-skills.sh" --add adr,kimball-model) >/dev/null 2>&1 || rc=$?
+assert 'sync --add works after selecting none' test "$rc" -eq 0
+assert 'sync --add installs into every recorded root' sh -c "test -f '$sandbox/project/.claude/skills/adr/SKILL.md' && test -f '$sandbox/project/.agents/skills/kimball-model/SKILL.md'"
+
+sed_agents() { printf '%s\n' "$(sed "$1" "$sandbox/project/AGENTS.md")" > "$sandbox/project/AGENTS.md"; }
+sed_agents 's/^- \*\*skills:\*\*.*/- **skills:** adr, kimbal-model/'
+output="$(cd "$sandbox/project" && bash "$ROOT/tools/sync-skills.sh" 2>&1)"; rc=$?
+assert 'sync with a misspelled skill needs migration' test "$rc" -eq 2
+assert 'sync never removes a misspelled skill' test -f "$sandbox/project/.claude/skills/kimball-model/references/modeling.md"
+assert 'sync explains the invalid line' sh -c "printf '%s' \"\$1\" | grep -Fq 'The skills line in AGENTS.md is invalid'" _ "$output"
+output="$(cd "$sandbox/project" && bash "$ROOT/tools/check-skills-update.sh" 2>&1)"; rc=$?
+assert 'check reports an invalid selection' sh -c "printf '%s' \"\$1\" | grep -Eq '^AGENTS.md +INVALID SELECTION'" _ "$output"
+assert 'check fails on an invalid selection' test "$rc" -eq 1
+rc=0; (cd "$sandbox/project" && bash "$ROOT/tools/sync-skills.sh" --add smart-pr) >/dev/null 2>&1 || rc=$?
+assert 'sync --add refuses an invalid selection' test "$rc" -eq 1
+assert 'refused --add keeps the line as written' grep -Fqx -- '- **skills:** adr, kimbal-model' "$sandbox/project/AGENTS.md"
+sed_agents 's/^- \*\*skills:\*\*.*/- **skills:**/'
+rc=0; (cd "$sandbox/project" && bash "$ROOT/tools/sync-skills.sh") >/dev/null 2>&1 || rc=$?
+assert 'sync with an empty skills line needs migration' test "$rc" -eq 2
+assert 'sync with an empty skills line removes nothing' sh -c "test -f '$sandbox/project/.claude/skills/adr/SKILL.md' && test -f '$sandbox/project/.claude/skills/kimball-model/SKILL.md'"
+
+sed_agents 's/^- \*\*skills:\*\*.*/- **skills:** adr/'
+(cd "$sandbox/project" && bash "$ROOT/tools/sync-skills.sh") >/dev/null 2>&1
+assert 'deselection removes empty skill directories' test ! -e "$sandbox/project/.claude/skills/kimball-model"
+
+sed_agents 's/^- \*\*skills:\*\*.*/- **skills:** adr, kimball-model/'
+(cd "$sandbox/project" && bash "$ROOT/tools/sync-skills.sh") >/dev/null 2>&1
+mkdir -p "$sandbox/outside"
+rm -rf "$sandbox/project/.claude/skills/kimball-model"
+ln -s "$sandbox/outside" "$sandbox/project/.claude/skills/kimball-model"
+output="$(cd "$sandbox/project" && bash "$ROOT/tools/sync-skills.sh" 2>&1)"; rc=$?
+assert 'linked skill directory is kept for migration' test "$rc" -eq 2
+assert 'linked skill directory is reported' sh -c "printf '%s' \"\$1\" | grep -Fq 'a link or file replaces the skill directory'" _ "$output"
+assert 'other skills still sync next to a linked skill' test -f "$sandbox/project/.agents/skills/kimball-model/SKILL.md"
+assert 'sync never writes through a skill link' sh -c "! find '$sandbox/outside' -type f | grep -q ."
+output="$(cd "$sandbox/project" && bash "$ROOT/tools/check-skills-update.sh" 2>&1)"
+assert 'check reports a linked skill as local changes' sh -c "printf '%s' \"\$1\" | grep -Eq '^kimball-model +LOCAL CHANGES'" _ "$output"
+rc=0; (cd "$sandbox/project" && bash "$ROOT/install.sh" --project --tools claude,codex </dev/null) >/dev/null 2>&1 || rc=$?
+assert 'install keeps a linked skill for migration' test "$rc" -eq 2
+assert 'install never writes through a skill link' sh -c "! find '$sandbox/outside' -type f | grep -q ."
+rc=0; (cd "$sandbox/project" && bash "$ROOT/tools/sync-skills.sh" --force) >/dev/null 2>&1 || rc=$?
+assert 'forced sync replaces a linked skill' test "$rc" -eq 0
+assert 'forced sync installs a real skill directory' sh -c "test -d '$sandbox/project/.claude/skills/kimball-model' && test ! -L '$sandbox/project/.claude/skills/kimball-model'"
+assert 'forced sync keeps the link as a backup' sh -c "ls -d '$sandbox/project/.claude/skills/'kimball-model.bak.* >/dev/null 2>&1"
+assert 'forced sync leaves the link target untouched' sh -c "! find '$sandbox/outside' -type f | grep -q ."
+rm -f "$sandbox/project/.claude/skills/"kimball-model.bak.*
+
+mkdir -p "$sandbox/project/.claude/skills/my-own-skill"
+printf 'mine\n' > "$sandbox/project/.claude/skills/my-own-skill/SKILL.md"
+rm -f "$sandbox/project/.claude/skills/adr/agents/openai.yaml"
+(cd "$sandbox/project" && bash "$ROOT/tools/uninstall.sh" --project --confirm --force) >/dev/null 2>&1; rc=$?
+assert 'uninstall succeeds next to user skills and deleted files' test "$rc" -eq 0
+assert 'uninstall keeps user skills' test -f "$sandbox/project/.claude/skills/my-own-skill/SKILL.md"
+assert 'uninstall removes toolkit skills' test ! -e "$sandbox/project/.claude/skills/adr"
+assert 'skill root marker does not retain the ownership record' test ! -e "$sandbox/project/.mindflayer-managed.tsv"
+teardown
+
+setup
+new_selected_project --skills adr >/dev/null
+printf '%s' "$(sed 's/$/\r/' "$sandbox/project/AGENTS.md")" > "$sandbox/project/AGENTS.md"; printf '\r\n' >> "$sandbox/project/AGENTS.md"
+(cd "$sandbox/project" && bash "$ROOT/tools/sync-skills.sh" --add smart-pr) >/dev/null 2>&1
+assert 'sync --add keeps CRLF line endings' sh -c "! grep -v \"\$(printf '\r')\$\" '$sandbox/project/AGENTS.md' | grep -q ."
+assert 'sync --add records the selection in a CRLF file' grep -Fq -- '- **skills:** adr, smart-pr' "$sandbox/project/AGENTS.md"
 unset MINDFLAYER_HOME
 teardown
 

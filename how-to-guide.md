@@ -79,6 +79,13 @@ installed by earlier releases are read. `none` records an empty selection.
 Skills that are removed from the selection are deleted only where the files are
 unchanged; edited files are kept and reported.
 
+If the line names a skill this release does not provide (for example a typo),
+or has no value at all, it is treated as invalid: nothing is removed, the line
+is left as written, and the run lists it under **Migration required**. Fix the
+line, then rerun. A skill directory replaced by a symbolic link or a file is
+never written through; it is reported as local changes, and `--force` moves it
+aside before installing the release.
+
 Check what is installed, and what an update would change, without writing
 anything:
 
