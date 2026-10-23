@@ -3,16 +3,20 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import json
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-from collect_evidence import Conventions
+from collect_evidence import Conventions, Git, assign_assets, map_tasks
 from config import (
+    DEFAULT_MERGE_PATTERNS,
     ConfigError,
+    asset_rule_problems,
     configure_stdio,
     default_repo_config,
     resolve_run_directory,
@@ -20,13 +24,22 @@ from config import (
 from manage_tasks import (
     TaskPlanError,
     apply_release,
+    artifact_name,
     build_pair_plan,
     compose_release,
+    plan_hash,
+    plan_release_pairs,
+    print_release_plan,
+    source_identity,
     verify_release_plan,
     write_pair_artifact,
 )
 from merge_release import STRINGS, load_artifacts, render_md
-from providers import AdoProvider, Provider
+import providers
+from providers import (
+    AdoProvider, GitHubProvider, Provider, ProviderError, choose_assignee,
+)
+from publish_descriptions import assign_items
 from publish_descriptions import write_artifact as write_description_artifact
 
 
@@ -290,6 +303,604 @@ def test_id_free_evidence_discovery() -> None:
         assert "automation/release.yml" in discovered["unclaimed_folders"]
 
 
+ASSET_RULES = [
+    {
+        "kind": "Model",
+        "pattern": r"^(?P<root>data_solution/(?P<solution>[^/]+))/transformation/models/"
+        r"(?:.+/)?(?P<asset>[^/]+)/(?P=asset)\.(?:sql|yml)$",
+    },
+    {
+        "kind": "Source",
+        "pattern": r"^(?P<root>data_solution/(?P<solution>[^/]+))/source_configs/"
+        r"(?P<asset>[^/]+)\.yaml$",
+    },
+    {
+        "kind": "Source",
+        "pattern": r"^(?P<root>data_solution/(?P<solution>[^/]+))/adapters/(?P<asset>[^/]+)\.py$",
+    },
+    {
+        "kind": "Model",
+        "pattern": r"^(?P<root>data_solution/(?P<solution>[^/]+))/transformation/tests/.+\.sql$",
+        "resolve": "dbt_ref",
+    },
+]
+
+
+def commit_all(repository: Path, message: str) -> str:
+    subprocess.run(["git", "add", "-A"], cwd=repository, check=True)
+    subprocess.run(["git", "commit", "-qm", message], cwd=repository, check=True)
+    return git_revision(repository, "HEAD")
+
+
+def write(repository: Path, relative: str, text: str) -> None:
+    path = repository / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def git_as(repository: Path, email: str, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", f"user.email={email}", "-c", "user.name=Dev", *args],
+        cwd=repository, check=True, capture_output=True,
+    )
+
+
+def change_and_commit(repository: Path, email: str, lines: int, message: str) -> None:
+    with (repository / "f.txt").open("a") as handle:
+        handle.write("x\n" * lines)
+    git_as(repository, email, "commit", "-qam", message)
+
+
+def merge_branch(repository: Path, email: str, branch: str, lines: int,
+                 message: str, into: str = "main") -> None:
+    git_as(repository, email, "switch", "-qc", branch, into)
+    change_and_commit(repository, email, lines, f"work on {branch}")
+    git_as(repository, email, "switch", "-q", into)
+    git_as(repository, email, "merge", "-q", "--no-ff", branch, "-m", message)
+
+
+def test_contributions() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        repository = Path(directory)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repository, check=True)
+        subprocess.run(["git", "config", "core.autocrlf", "false"], cwd=repository, check=True)
+        write(repository, "f.txt", "start\n")
+        write(repository, "other.txt", "start\n")
+        git_as(repository, "base@x", "add", "-A")
+        git_as(repository, "base@x", "commit", "-qm", "base")
+        base = git_revision(repository, "HEAD")
+
+        merge_branch(repository, "alice@x", "a", 10, "Merged PR 1: alice")
+        merge_branch(repository, "bob@x", "b", 3, "Merge pull request #2 from x/b")
+        change_and_commit(repository, "dave@x", 2, "Add thing (#3)")
+        change_and_commit(repository, "carol@x", 1, "fix typo")
+        write(repository, "other.txt", "unrelated\n")
+        git_as(repository, "zed@x", "commit", "-qam", "Merged PR 8: unrelated file")
+        # A sync PR that brings dev (holding PR 4) into main credits PR 4, not PR 9.
+        git_as(repository, "erin@x", "branch", "dev", "main")
+        merge_branch(repository, "erin@x", "e", 4, "Merged PR 4: erin", into="dev")
+        git_as(repository, "sync@x", "merge", "-q", "--no-ff", "dev", "-m", "Merged PR 9: sync")
+        head = git_revision(repository, "HEAD")
+
+        patterns = [*DEFAULT_MERGE_PATTERNS["ado"], *DEFAULT_MERGE_PATTERNS["github"]]
+        git = Git(repository, base, head, Conventions({"merge_commit_patterns": patterns}))
+        got = [
+            ({k: v for k, v in item.items() if k not in ("sha", "order")}, item["order"])
+            for item in git.contributions("f.txt")
+        ]
+        assert got == [
+            ({"pr": "4", "lines": 4}, 0),
+            ({"email": "carol@x", "lines": 1}, 1),
+            ({"pr": "3", "lines": 2}, 2),
+            ({"pr": "2", "lines": 3}, 3),
+            ({"pr": "1", "lines": 10}, 4),
+        ], got
+
+
+class IdentityProvider(Provider):
+    def __init__(self, authors: dict[str, str | None]) -> None:
+        self.authors = authors
+        self.lookups = 0
+
+    def fetch_pr(self, pr_id: str) -> dict:
+        self.lookups += 1
+        if pr_id not in self.authors:
+            raise ProviderError(f"PR {pr_id} not found")
+        return {"author": self.authors[pr_id]}
+
+    def commit_identity(self, sha: str, email: str) -> str | None:
+        return {"c1": "carol"}.get(sha)
+
+
+def test_choose_assignee() -> None:
+    provider = IdentityProvider({"1": "alice", "2": "bob", "3": "alice"})
+    cache: dict = {}
+    most = [
+        {"pr": "1", "lines": 4, "order": 2},
+        {"pr": "2", "lines": 7, "order": 1},
+        {"pr": "3", "lines": 4, "order": 0},
+    ]
+    assert choose_assignee(provider, most, cache) == ("alice", "")
+    assert provider.lookups == 3
+    assert choose_assignee(provider, most, cache) == ("alice", "")
+    assert provider.lookups == 3, "identities are looked up once per run"
+
+    tie = [{"pr": "1", "lines": 5, "order": 1}, {"pr": "2", "lines": 5, "order": 0}]
+    assert choose_assignee(provider, tie, {}) == ("bob", ""), "a tie goes to the newest"
+
+    direct = [{"sha": "c1", "email": "carol@x", "lines": 1, "order": 0},
+              {"pr": "404", "lines": 50, "order": 1}]
+    assert choose_assignee(provider, direct, {}) == ("carol", "")
+
+    who, reason = choose_assignee(provider, [{"pr": "404", "lines": 1, "order": 0}], {})
+    assert who is None and "PR 404" in reason, reason
+    assert choose_assignee(provider, [], {}) == (None, "no contributions")
+
+
+class AssigningProvider(FakeProvider):
+    can_assign = True
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+        self.assigned: list[tuple[str, str]] = []
+        self.checked: list[tuple[str, str]] = []
+
+    def fetch_pr(self, pr_id: str) -> dict:
+        if pr_id == self.pr["id"]:
+            return super().fetch_pr(pr_id)
+        return {"author": {"11": "alice@x", "12": "bob@x"}[pr_id]}
+
+    def validate_child(self, parent_id: str, task: dict) -> None:
+        super().validate_child(parent_id, task)
+        self.checked.append((task["task_key"], task.get("assignee")))
+
+    def validate_assignee(self, item_id: str, identity: str) -> None:
+        self.checked.append((item_id, identity))
+
+    def set_assignee(self, item_id: str, identity: str) -> str:
+        self.assigned.append((item_id, identity))
+        return "rev 9"
+
+    def create_child(self, parent_id: str, task: dict) -> dict:
+        self.assigned.append((task["task_key"], task.get("assignee")))
+        return super().create_child(parent_id, task)
+
+
+def assignment_evidence() -> dict:
+    value = evidence()
+    value["tasks"]["solution/models/Sales.SemanticModel"]["contributions"] = [
+        {"pr": "11", "lines": 2, "order": 1}, {"pr": "12", "lines": 9, "order": 0}]
+    value["tasks"]["solution/reports/Sales.Report"]["contributions"] = [
+        {"pr": "11", "lines": 5, "order": 0}]
+    return value
+
+
+def test_assignment_plan() -> None:
+    provider = AssigningProvider("1", "100", "RepoA")
+    pair = build_pair_plan(
+        provider, config("RepoA"), "1", "100", assignment_evidence(),
+        descriptions(), repository_root(), False,
+    )
+    actions = {action["task_key"]: action for action in pair["actions"]}
+    model = actions["solution/models/Sales.SemanticModel"]
+    report = actions["solution/reports/Sales.Report"]
+    assert model["operation"] == "create" and model["assignee"] == "bob@x"
+    assert report["operation"] == "reuse" and report["assignee"] == "alice@x"
+    assert ("1000", "alice@x") in provider.checked
+    assert ("solution/models/Sales.SemanticModel", "bob@x") in provider.checked
+
+    release = compose_release("rel-1", [pair])
+    with tempfile.TemporaryDirectory() as directory:
+        output_root = Path(directory)
+        apply_release(
+            release, output_root / "result.json",
+            lambda _pair: (repository_root(), config("RepoA"), provider),
+            lambda slug, plan, tasks: write_pair_artifact(slug, plan, tasks, output_root),
+        )
+    assert sorted(provider.assigned) == [
+        ("1000", "alice@x"), ("solution/models/Sales.SemanticModel", "bob@x"),
+    ], provider.assigned
+    assert provider.children[-1]["id"] == "1001"
+
+    owned = AssigningProvider("1", "100", "RepoA")
+    owned.children[0]["assigned_to"] = "someone@x"
+    pair = build_pair_plan(
+        owned, config("RepoA"), "1", "100", assignment_evidence(),
+        descriptions(), repository_root(), False,
+    )
+    report = next(a for a in pair["actions"] if a["operation"] == "reuse")
+    assert report["assignee"] is None and report["assignee_note"] == "keep assignee"
+
+
+class PublishProvider(Provider):
+    can_assign = True
+
+    def __init__(self) -> None:
+        self.current = {"1": "", "2": "owner", "3": ""}
+        self.assigned: list[tuple[str, str]] = []
+
+    def fetch_assignees(self, ids: list[str]) -> dict[str, str]:
+        return {i: self.current[i] for i in ids}
+
+    def fetch_pr(self, pr_id: str) -> dict:
+        return {"author": "alice"}
+
+    def validate_assignee(self, item_id: str, identity: str) -> None:
+        pass
+
+    def set_assignee(self, item_id: str, identity: str) -> str:
+        self.assigned.append((item_id, identity))
+        return "ok"
+
+
+def test_publish_assigns() -> None:
+    contributions = [{"pr": "5", "lines": 3, "order": 0}]
+    publish_evidence = {"tasks": {
+        "1": {"contributions": contributions},
+        "2": {"contributions": contributions},
+        "3": {"contributions": []},
+    }}
+    provider = PublishProvider()
+    assign_items(provider, ["1", "2", "3"], publish_evidence, apply=False)
+    assert provider.assigned == [], "dry run writes nothing"
+    assign_items(provider, ["1", "2", "3"], publish_evidence, apply=True)
+    assert provider.assigned == [("1", "alice")], provider.assigned
+
+
+def test_assignment_payloads() -> None:
+    ado = AdoProvider("contoso", "Project")
+    task = {"title": "T", "description": "D"}
+    paths = [op["path"] for op in ado._child_patch("1", task)]
+    assert "/fields/System.AssignedTo" not in paths
+    patch = ado._child_patch("1", {**task, "assignee": "alice@x"})
+    assert {"op": "add", "path": "/fields/System.AssignedTo", "value": "alice@x"} in patch
+
+    calls: list[tuple[list[str], str | None]] = []
+
+    def fake_run_json(args: list[str], *, stdin: str | None = None) -> dict:
+        calls.append((args, stdin))
+        return {"assignees": [{"login": "alice"}]}
+
+    original = providers.run_json
+    providers.run_json = fake_run_json
+    try:
+        github = GitHubProvider("acme", "data")
+        assert github.set_assignee("42", "alice") == "assigned alice"
+        assert github.fetch_assignees(["42"]) == {"42": "alice"}
+    finally:
+        providers.run_json = original
+    args, stdin = calls[0]
+    assert "/repos/acme/data/issues/42/assignees" in args and "POST" in args
+    assert json.loads(stdin) == {"assignees": ["alice"]}
+
+
+def apply_in_temp(release: dict, provider: FakeProvider) -> dict:
+    with tempfile.TemporaryDirectory() as directory:
+        output_root = Path(directory)
+        return apply_release(
+            release, output_root / "result.json",
+            lambda _pair: (repository_root(), config("RepoA"), provider),
+            lambda slug, plan, tasks: write_pair_artifact(slug, plan, tasks, output_root),
+        )
+
+
+def test_compare_mode_plan() -> None:
+    provider = FakeProvider("1", "100", "RepoA")
+    pair = build_pair_plan(provider, config("RepoA"), None, "100", evidence(),
+                           descriptions(), repository_root(), False)
+    head = git_revision(repository_root(), "HEAD")
+    assert pair["source"]["pull_request"] is None
+    assert source_identity(pair)[-1] == f"{head}..{head}"
+    assert artifact_name(pair) == "repoa-head-head-100.json"
+    apply_in_temp(compose_release("rel-1", [pair]), provider)
+    assert provider.created == ["solution/models/Sales.SemanticModel"]
+
+    drifted = copy.deepcopy(pair)
+    drifted["source"]["head_commit"] = "0" * 40
+    drifted["plan_id"] = plan_hash(drifted)
+    assert_raises(lambda: apply_in_temp(compose_release("rel-1", [drifted]),
+                                        FakeProvider("1", "100", "RepoA")),
+                  "git ref drift")
+
+
+class OriginalProvider(FakeProvider):
+    """Links PR 11 to US 801 (and a Feature), PR 12 to US 802, PR 13 to nothing."""
+
+    links = {"11": ["801", "555"], "12": ["802"], "13": []}
+
+    def fetch_pr(self, pr_id: str) -> dict:
+        return super().fetch_pr(pr_id)
+
+    def fetch_pr_parents(self, pr_id: str) -> list[str]:
+        return self.links[pr_id]
+
+    def fetch_item(self, item_id: str) -> dict:
+        kind = "Feature" if item_id == "555" else "User Story"
+        return {**copy.deepcopy(self.parent), "id": item_id, "type": kind,
+                "url": self.item_url(item_id)}
+
+    def fetch_children(self, parent_ids: list[str], child_types: list[str]) -> list[dict]:
+        return []
+
+    def validate_child(self, parent_id: str, task: dict) -> None:
+        self.validated.append((parent_id, task["task_key"]))
+
+
+def original_evidence() -> tuple[dict, dict]:
+    value = evidence()
+    tasks = value["tasks"]
+    tasks["solution/models/Sales.SemanticModel"]["contributions"] = [
+        {"pr": "12", "lines": 9, "order": 0}, {"pr": "11", "lines": 2, "order": 1}]
+    tasks["solution/reports/Sales.Report"]["contributions"] = [
+        {"pr": "11", "lines": 5, "order": 0},
+        {"sha": "abc", "email": "carol@x", "lines": 50, "order": 1}]
+    tasks["solution/flows/Load.Dataflow"] = {
+        "task_key": "solution/flows/Load.Dataflow",
+        "folder": "solution/flows/Load.Dataflow",
+        "title": "Dataflow: Load",
+        "contributions": [{"pr": "13", "lines": 4, "order": 0}],
+    }
+    texts = {**descriptions(), "solution/flows/Load.Dataflow": "<p>Flow</p>"}
+    return value, texts
+
+
+def test_original_parents() -> None:
+    provider = OriginalProvider("1", "100", "RepoA")
+    value, texts = original_evidence()
+
+    def plan(fallback: str | None) -> list[dict]:
+        return plan_release_pairs(provider, config("RepoA"), "1", value, texts,
+                                  repository_root(), False, fallback_parent_id=fallback)
+
+    assert_raises(lambda: plan(None), "no linked User Story for: Dataflow: Load")
+    pairs = plan("900")
+    placed = {
+        pair["target"]["parent"]["id"]: [a["task_key"] for a in pair["actions"]]
+        for pair in pairs
+    }
+    assert placed == {
+        "801": ["solution/reports/Sales.Report"],
+        "802": ["solution/models/Sales.SemanticModel"],
+        "900": ["solution/flows/Load.Dataflow"],
+    }, placed
+
+    release = compose_release("rel-1", pairs)
+    assert len(release["pairs"]) == 3
+    assert_raises(lambda: compose_release("rel-1", [pairs[0], pairs[0]]),
+                  "duplicate PR/User Story pair")
+    both = [
+        plan_release_pairs(provider, config("RepoA"), "1", value, texts,
+                           repository_root(), False, parent_id=parent)[0]
+        for parent in ("801", "802")
+    ]
+    assert_raises(lambda: compose_release("rel-1", both), "planned twice")
+
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        print_release_plan(release)
+    table = output.getvalue()
+    assert "| Task | Operation | Parent | PR(s) | Assignee |" in table, table
+    assert ("| Model: Sales | create | User Story 802 | #12, #11 | "
+            "none (assignment not supported) |") in table, table
+    assert "| Report: Sales | create | User Story 801 | #11, direct commit |" in table, table
+
+
+def test_github_create_child() -> None:
+    calls: list[tuple[list[str], dict | None]] = []
+    fail_link = False
+
+    def fake_run_json(args: list[str], *, stdin: str | None = None) -> dict:
+        calls.append((args, json.loads(stdin) if stdin else None))
+        if args[-1].endswith("/sub_issues") or "sub_issues" in " ".join(args):
+            if fail_link:
+                raise ProviderError("gh api failed: 422")
+            return {}
+        return {"number": 7, "id": 9001, "title": "Model: Sales",
+                "html_url": "https://github.com/acme/data/issues/7"}
+
+    original = providers.run_json
+    providers.run_json = fake_run_json
+    try:
+        github = GitHubProvider("acme", "data")
+        task = {"title": "Model: Sales", "description": "Body", "assignee": "alice"}
+        created = github.create_child("3", task)
+        assert created["id"] == "7" and created["url"].endswith("/issues/7")
+        (create_args, create_body), (link_args, link_body) = calls
+        assert "/repos/acme/data/issues" in create_args and "POST" in create_args
+        assert create_body == {"title": "Model: Sales", "body": "Body", "assignees": ["alice"]}
+        assert "/repos/acme/data/issues/3/sub_issues" in link_args
+        assert link_body == {"sub_issue_id": 9001}
+
+        fail_link = True
+        try:
+            github.create_child("3", task)
+        except ProviderError as exc:
+            assert "created issue #7" in str(exc), str(exc)
+        else:
+            raise AssertionError("expected a failed link to name the orphaned issue")
+    finally:
+        providers.run_json = original
+
+
+def test_asset_rule_discovery() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        repository = Path(directory)
+        subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+        for key, value in (
+            ("user.email", "test@example.invalid"),
+            ("user.name", "Release Test"),
+            ("core.autocrlf", "false"),
+        ):
+            subprocess.run(["git", "config", key, value], cwd=repository, check=True)
+        models = "data_solution/foo/transformation/models"
+        write(repository, f"{models}/curated/sales/sales.sql", "select 1 as amount\n")
+        write(repository, f"{models}/clean/orders/orders.sql", "select 1 as id\n")
+        write(repository, f"{models}/clean/legacy/legacy.sql", "select 1 as id\n")
+        write(repository, "data_solution/foo/source_configs/crm.yaml", "type: rest_api\n")
+        write(repository, "data_solution/foo/adapters/crm.py", "VALUE = 1\n")
+        write(repository, "data_solution/foo/config.yml", "database: foo\n")
+        base = commit_all(repository, "test: base")
+
+        write(repository, f"{models}/curated/sales/sales.sql", "select 2 as amount\n")
+        (repository / f"{models}/clean/area").mkdir(parents=True)
+        subprocess.run(
+            ["git", "mv", f"{models}/clean/orders", f"{models}/clean/area/orders"],
+            cwd=repository, check=True,
+        )
+        (repository / f"{models}/clean/legacy/legacy.sql").unlink()
+        write(repository, "data_solution/foo/source_configs/crm.yaml", "type: sharepoint\n")
+        write(repository, "data_solution/foo/adapters/crm.py", "VALUE = 2\n")
+        write(repository, "data_solution/foo/config.yml", "database: bar\n")
+        write(
+            repository, "data_solution/foo/transformation/tests/assert_sales.sql",
+            "select * from {{ ref('sales') }} where amount < 0\n",
+        )
+        write(
+            repository, "data_solution/foo/transformation/tests/assert_join.sql",
+            "select * from {{ ref('sales') }} join {{ ref('orders') }} on true\n",
+        )
+        head = commit_all(repository, "test: release")
+
+        conventions = Conventions({**config("Repo"), "asset_rules": ASSET_RULES})
+        git = Git(repository, base, head, conventions)
+        assets = assign_assets(git, conventions, git.changed())
+        files = {
+            key: sorted(path for _, path, _ in asset["files"])
+            for key, asset in assets.items()
+        }
+        assert sorted(files) == [
+            "data_solution/foo/model/legacy",
+            "data_solution/foo/model/orders",
+            "data_solution/foo/model/sales",
+            "data_solution/foo/source/crm",
+        ], files
+        assert assets["data_solution/foo/model/sales"]["title"] == "Model: foo/sales"
+        assert files["data_solution/foo/model/sales"] == [
+            f"{models}/curated/sales/sales.sql",
+            "data_solution/foo/transformation/tests/assert_sales.sql",
+        ]
+        assert files["data_solution/foo/source/crm"] == [
+            "data_solution/foo/adapters/crm.py",
+            "data_solution/foo/source_configs/crm.yaml",
+        ]
+        (status, _, old), = assets["data_solution/foo/model/orders"]["files"]
+        assert status.startswith("R") and old == f"{models}/clean/orders/orders.sql"
+        assert assets["data_solution/foo/model/legacy"]["files"][0][0] == "D"
+
+        claimed = {path for paths in files.values() for path in paths}
+        leftover = sorted(
+            path for _, path, _ in git.changed() if path not in claimed
+        )
+        assert leftover == [
+            "data_solution/foo/config.yml",
+            "data_solution/foo/transformation/tests/assert_join.sql",
+        ], leftover
+
+        titles = {key: asset["title"] for key, asset in assets.items()}
+        mapping, problems = map_tasks(
+            [{"id": "7", "title": "Model: foo/sales"}], set(assets), conventions, titles
+        )
+        assert mapping == {"7": "data_solution/foo/model/sales"} and not problems
+
+        # End to end through main(): asset files leave the folder Task, and an
+        # asset never borrows another solution's Task by its leaf name.
+        subprocess.run(
+            ["git", "remote", "add", "origin",
+             "https://dev.azure.com/contoso/Project/_git/Repo"],
+            cwd=repository, check=True,
+        )
+        write(repository, ".claude/release-notes.config.json",
+              json.dumps({"asset_rules": ASSET_RULES}))
+        script = Path(__file__).with_name("collect_evidence.py")
+
+        def collect(tasks: list[dict]) -> subprocess.CompletedProcess:
+            (repository / "tasks.json").write_text(json.dumps(tasks))
+            return subprocess.run(
+                [sys.executable, str(script), "--repo", str(repository),
+                 "--base", base, "--head", head, "--config",
+                 "--tasks", str(repository / "tasks.json"),
+                 "--out", str(repository / "evidence.json")],
+                capture_output=True, text=True,
+            )
+
+        run = collect([
+            {"id": "1", "title": "Source: foo/crm", "type": "Task"},
+            {"id": "2", "title": "foo", "type": "Task"},
+        ])
+        assert run.returncode == 0, run.stdout + run.stderr
+        tasks = json.loads((repository / "evidence.json").read_text())["tasks"]
+        assert tasks["1"]["folder"] == "data_solution/foo/source/crm"
+        assert tasks["1"]["asset"] is True
+        assert tasks["2"]["folder"] == "data_solution/foo"
+        assert tasks["2"]["asset"] is False
+        assert tasks["2"]["paths"] == leftover, tasks["2"]["paths"]
+
+        run = collect([{"id": "3", "title": "Source: bar/crm", "type": "Task"}])
+        assert run.returncode == 2, run.stdout + run.stderr
+        assert "3 'Source: bar/crm' -> no match" in run.stdout, run.stdout
+
+
+def test_asset_title_collision() -> None:
+    conventions = Conventions({"asset_rules": [{
+        "kind": "Model",
+        "pattern": r"^(?P<root>[^/]+/dbt)/models/(?P<asset>[^/]+)\.sql$",
+    }]})
+
+    class Unused:
+        pass
+
+    changed = [
+        ("M", "team_a/dbt/models/sales.sql", None),
+        ("M", "team_b/dbt/models/sales.sql", None),
+    ]
+    try:
+        assign_assets(Unused(), conventions, changed)
+    except SystemExit as exc:
+        assert "same title 'Model: dbt/sales'" in str(exc), str(exc)
+    else:
+        raise AssertionError("expected colliding asset titles to fail")
+
+
+def test_asset_task_never_reuses_leaf_match() -> None:
+    provider = FakeProvider("1", "100", "Repo")
+    provider.children[0]["title"] = "Source: bar/crm"
+    provider.children[0]["description"] = "<p>bar</p>"
+    key = "data_solution/foo/source/crm"
+    asset_evidence = {
+        "base": "HEAD",
+        "head": "HEAD",
+        "unclaimed_folders": [],
+        "tasks": {key: {"task_key": key, "folder": key,
+                        "title": "Source: foo/crm", "asset": True}},
+    }
+    plan = build_pair_plan(
+        provider, config("Repo"), "1", "100", asset_evidence,
+        {key: "<p>foo</p>"}, repository_root(), True,
+    )
+    (action,) = plan["actions"]
+    assert action["operation"] == "create", action
+
+
+def test_asset_rule_validation() -> None:
+    assert asset_rule_problems(None) == []
+    assert asset_rule_problems(ASSET_RULES) == []
+    problems = asset_rule_problems(
+        [
+            {"kind": "", "pattern": r"^(?P<root>a)/(?P<asset>b)$"},
+            {"kind": "Model", "pattern": r"^(?P<asset>b)$"},
+            {"kind": "Model", "pattern": "("},
+            {"kind": "Model", "pattern": r"^(?P<root>a)$", "resolve": "unknown"},
+        ]
+    )
+    assert len(problems) == 4, problems
+    try:
+        Conventions({"asset_rules": [{"kind": "Model", "pattern": "("}]})
+    except SystemExit as exc:
+        assert "invalid asset_rules" in str(exc)
+    else:
+        raise AssertionError("expected invalid asset_rules to fail")
+
+
 def test_multi_pair_release_and_merge() -> None:
     provider_a = FakeProvider("1", "100", "RepoA")
     provider_b = FakeProvider("2", "200", "RepoB")
@@ -334,9 +945,9 @@ def test_multi_pair_release_and_merge() -> None:
         assert provider_c.updated == ["3000"]
         assert len(result["artifacts"]) == 3
         assert {Path(path).name for path in result["artifacts"]} == {
-            "repoa-pr-1.json",
-            "repoa-pr-3.json",
-            "repob-pr-2.json",
+            "repoa-pr-1-100.json",
+            "repoa-pr-3-300.json",
+            "repob-pr-2-200.json",
         }
 
         apply_release(release, result_path, runtime_factory, writer)
@@ -509,6 +1120,18 @@ def main() -> int:
         test_unique_titles,
         test_ado_child_payload,
         test_id_free_evidence_discovery,
+        test_contributions,
+        test_choose_assignee,
+        test_assignment_plan,
+        test_publish_assigns,
+        test_assignment_payloads,
+        test_compare_mode_plan,
+        test_original_parents,
+        test_github_create_child,
+        test_asset_rule_discovery,
+        test_asset_rule_validation,
+        test_asset_title_collision,
+        test_asset_task_never_reuses_leaf_match,
         test_multi_pair_release_and_merge,
         test_all_pairs_preflight_before_write,
         test_populated_description_is_preserved,

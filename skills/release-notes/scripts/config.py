@@ -550,6 +550,44 @@ def effective_config(repo: Path) -> dict:
 
 # -------------------------------------------------------------------- validate
 
+ASSET_RULE_RESOLVERS = ("dbt_ref",)
+
+
+def asset_rule_problems(rules: object) -> list[str]:
+    """Check optional `asset_rules`: each needs a kind and a pattern naming root and asset.
+
+    A rule turns one changed file into an asset-level task key, so a solution
+    folder holding many independently testable assets yields one task per asset
+    instead of one task for the whole folder.
+    """
+    if rules is None:
+        return []
+    if not isinstance(rules, list):
+        return ["asset_rules must be a list"]
+    problems: list[str] = []
+    for index, rule in enumerate(rules):
+        where = f"asset_rules[{index}]"
+        if not isinstance(rule, dict):
+            problems.append(f"{where} must be an object")
+            continue
+        if not str(rule.get("kind") or "").strip():
+            problems.append(f"{where} needs a non-empty kind")
+        resolve = rule.get("resolve")
+        if resolve is not None and resolve not in ASSET_RULE_RESOLVERS:
+            problems.append(
+                f"{where} resolve must be one of {list(ASSET_RULE_RESOLVERS)}")
+        try:
+            groups = re.compile(str(rule.get("pattern") or "")).groupindex
+        except re.error as exc:
+            problems.append(f"{where} pattern does not compile: {exc}")
+            continue
+        if not rule.get("pattern"):
+            problems.append(f"{where} needs a pattern")
+        elif "root" not in groups or (resolve is None and "asset" not in groups):
+            problems.append(f"{where} pattern needs named groups root and asset")
+    return problems
+
+
 def check_cli(provider: str) -> list[str]:
     """Verify the provider CLI is present and authenticated. Read-only."""
     problems: list[str] = []
@@ -591,6 +629,7 @@ def validate(repo: Path) -> int:
             f"no draft mechanism is supported on {sys.platform}; "
             "the skill will produce the subject and HTML only"
         )
+    problems += asset_rule_problems(cfg.get("asset_rules"))
     problems += check_cli(cfg["provider"])
 
     print(json.dumps(cfg, ensure_ascii=False, indent=2))

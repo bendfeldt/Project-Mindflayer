@@ -85,9 +85,9 @@ checkboxes in the parent body instead. `providers.py` does not parse those — i
 `fetch_children` returns nothing for a parent that visibly has children, this is
 why. Say so plainly rather than guessing at the list.
 
-### Planning and creating Azure DevOps child Tasks
+### Planning and creating child Tasks
 
-Discover candidates without existing IDs, then create a saved dry-run plan:
+Child items are Tasks on Azure DevOps and sub-issues on GitHub. Discover candidates without existing IDs, then create a saved dry-run plan:
 
 ```bash
 python3 "$SKILL_DIR/scripts/collect_evidence.py" \
@@ -100,9 +100,22 @@ python3 "$SKILL_DIR/scripts/manage_tasks.py" plan \
   --out pair-plan.json
 ```
 
-`descriptions.json` maps each evidence `task_key` to an HTML description. Pair planning fetches PR and User Story state, verifies the evidence refs, reuses one unambiguous child match, and calls the Azure DevOps create endpoint with `validateOnly=true` for every missing Task. It writes no work items.
+`descriptions.json` maps each evidence `task_key` to a description in the provider's body format: HTML for Azure DevOps, Markdown for GitHub. Pair planning fetches the PR and parent state, verifies the evidence refs, reuses one unambiguous child match, and validates every missing child. Azure DevOps uses its create endpoint with `validateOnly=true`. GitHub has no validate-only create, so it checks the title, the parent, and the assignee. Planning writes no work items.
 
-Run those commands separately for every PR/User Story pair, then compose the only applicable plan type:
+**Release source.**
+- **A PR:** pass `--pr-id`. The evidence refs must match the PR's target and source branches.
+- **No PR:** pass `--compare` instead. The plan pins the evidence's `base` and `head` commits, apply refuses to run if either ref has moved, and the release is identified by `base..head`.
+
+**Parent.**
+- **Named parent:** `--parent-id` puts every Task under that User Story or Issue.
+- **Original parents:** `--original-parents` puts each Task under the User Story linked to its PRs.
+  - **Links:** Azure DevOps uses `az repos pr work-item list`; GitHub uses the PR's `closingIssuesReferences`.
+  - **Which links count:** a PR counts only when it links exactly one item of an allowed `parent_types`.
+  - **Choosing the parent:** each Task goes to the parent holding most of its PR lines, and a tie goes to the newest merge. This matches the assignee rule.
+  - **No usable link:** planning stops and lists Tasks whose PRs link no parent (or several) until `--fallback-parent-id <id>` places them.
+  - **Output:** the plan file then holds a list with one pair per parent.
+
+Compose every plan file into the only applicable plan type:
 
 ```bash
 python3 "$SKILL_DIR/scripts/manage_tasks.py" compose \
@@ -112,21 +125,73 @@ python3 "$SKILL_DIR/scripts/manage_tasks.py" compose \
   --out release-plan.json
 ```
 
-Composition enforces a strict contextual 1:1 relationship: a PR and a User Story may each appear only once. Pairs may come from different repositories. If two PRs change the same deployable folder, each paired User Story keeps its own child Task.
+**Composition rules:**
+- A User Story takes Tasks from one source only.
+- A source may feed several User Stories, which is how `--original-parents` works.
+- A Task key appears once per source.
+- Pairs may come from different repositories. If two PRs change the same deployable folder, each paired User Story keeps its own child Task.
 
-After the user reviews the printed actions and explicitly approves them:
+**Summary table.** Before anything changes, the compose dry run prints one row per Task. Show it to the user together with every unresolved item:
+
+| Task | Operation | Parent | PR(s) | Assignee |
+| --- | --- | --- | --- | --- |
+| Model: foo/sales | create | User Story 812 | #12, #11 | bob@contoso.com |
+| Report: Sales | reuse 1000 (skip description) | User Story 812 | #11, direct commit | none (keep assignee) |
+
+After the user reviews the table and explicitly approves it:
 
 ```bash
 python3 "$SKILL_DIR/scripts/manage_tasks.py" apply --plan release-plan.json
 ```
 
-Apply rejects pair plans. It verifies the composed plan and every embedded pair, preflights all repositories, PRs, User Stories, and child Tasks before the first write, then applies pairs sequentially with resumable result state. New Tasks inherit the parent Area Path and Iteration Path; Azure DevOps process defaults set state and assignee.
+Apply rejects pair plans. It verifies the composed plan and every embedded pair, preflights all repositories, PRs, parents, and child items before the first write, then applies pairs sequentially with resumable result state. New Azure DevOps Tasks inherit the parent Area Path and Iteration Path, and the Azure DevOps process defaults set their state. The assignee follows the rule under [Assignee](#assignee).
 
-Each applied pair writes `<repo>-pr-<id>.json` under the release run directory. `merge_release.py` groups these artifacts by pair and links both the PR and User Story, including when several PRs belong to one repository.
+Each applied pair writes `<repo>-<pr-id or base..head>-<parent>.json` under the release run directory. `merge_release.py` groups these artifacts by pair and links both the PR (when there is one) and the parent.
 
-The create call uses Azure DevOps REST 7.1 JSON Patch with `System.Title`, `System.Description`, `System.AreaPath`, `System.IterationPath`, and a `System.LinkTypes.Hierarchy-Reverse` parent relation. GitHub child creation is not implemented; existing GitHub description behavior is unchanged.
+**Create calls:**
+- **Azure DevOps:** REST 7.1 JSON Patch with `System.Title`, `System.Description`, `System.AreaPath`, `System.IterationPath`, the optional `System.AssignedTo`, and a `System.LinkTypes.Hierarchy-Reverse` parent relation.
+- **GitHub:**
+  1. `POST /repos/{owner}/{repo}/issues` with the title, body and optional assignee.
+  2. `POST /repos/{owner}/{repo}/issues/{parent}/sub_issues` with the new issue's `id`.
+
+  If the second call fails, the error names the created issue. Link it by hand before re-running, so the rerun reuses it instead of creating a duplicate.
 
 The default allowed parent type is `User Story`. Teams using another Azure DevOps process must set `parent_types` explicitly in repository config. Override generated title labels with the suffix-to-prefix `task_title_prefixes` mapping; parsing of existing titles continues to use `title_prefixes`.
+
+#### Asset-level tasks
+
+When one deployable folder holds many independently testable assets (dbt models, ingestion sources), add `asset_rules` to the repository config. Each rule has a `kind` and a regex `pattern` with named groups `root` and `asset` (optionally `solution`); the first rule matching a file's new path, or its old path for a move or delete, sends that file to the Task `<kind>: <solution>/<asset>` with key `<root>/<kind lowercased>/<asset>`. A rule with `"resolve": "dbt_ref"` needs only `root` and attaches the file to the single model its `ref()` names. Files no rule claims stay with their folder-level Task. An existing Task is reused for an asset only when its title matches exactly, never by its last name segment, because asset names repeat across solutions. Two assets that would get the same title stop the run; add a `solution` group to tell them apart. Without `asset_rules`, grouping is unchanged.
+
+```json
+"asset_rules": [
+  {"kind": "Model", "pattern": "^(?P<root>data_solution/(?P<solution>[^/]+))/transformation/models/(?:.+/)?(?P<asset>[^/]+)/(?P=asset)\\.(?:sql|yml)$"},
+  {"kind": "Model", "pattern": "^(?P<root>data_solution/(?P<solution>[^/]+))/transformation/tests/.+\\.sql$", "resolve": "dbt_ref"}
+]
+```
+
+`config.py --validate` reports malformed rules.
+
+#### Assignee
+
+Each Task or sub-issue goes to the developer who changed the most lines (added plus deleted) in its files during the release range. `collect_evidence.py` records each item's `contributions`:
+
+- **Credit for PRs:** a PR merge or squash commit on the first-parent history counts its whole diff for the PR author.
+- **Branch syncs:** a merge that brings in other PR merges, such as a dev-to-release sync, is opened up, so the inner PRs get the credit instead.
+- **Direct commits:** a commit without a PR counts for its commit author.
+- **Ties:** a tie goes to the developer whose change merged last.
+
+Items that already have an assignee keep it. Assignment never replaces one.
+
+| | Azure DevOps | GitHub |
+| --- | --- | --- |
+| PR author | `createdBy.uniqueName` | `author.login` |
+| Direct commit | commit email | the login linked to the commit, if any |
+| Check | `validateOnly` patch on `System.AssignedTo` | `GET /repos/{owner}/{repo}/assignees/{login}`; the login must be assignable |
+| Write | patch `System.AssignedTo` | `POST /repos/{owner}/{repo}/issues/{n}/assignees` |
+
+- **Azure DevOps:** `manage_tasks.py` plans the assignee for new Tasks and for unassigned reused Tasks, and shows it in the dry run.
+- **Both providers:** for existing items, `publish_descriptions.py --evidence evidence.json` shows the assignee in its dry run and sets it with `--apply`.
+- **No assignee:** if no contributor can be resolved, the item stays unassigned and the dry run says why.
 
 ### Writing a description
 

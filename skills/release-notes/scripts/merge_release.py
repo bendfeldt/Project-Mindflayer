@@ -108,9 +108,13 @@ def load_artifacts(slug: str) -> list[dict]:
 def artifact_label(artifact: dict) -> str:
     pull_request = artifact.get("pull_request") or {}
     parent = artifact.get("parent") or {}
-    if pull_request and parent:
+    if parent:
+        source = (
+            f"PR {pull_request['id']}" if pull_request
+            else f"{artifact.get('base')}..{artifact.get('head')}"
+        )
         return (
-            f"{artifact['repo']} — PR {pull_request['id']} → "
+            f"{artifact['repo']} — {source} → "
             f"{parent.get('type') or 'User Story'} {parent['id']}"
         )
     return artifact["repo"]
