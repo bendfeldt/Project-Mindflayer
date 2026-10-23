@@ -406,6 +406,84 @@ def test_asset_rule_discovery() -> None:
         )
         assert mapping == {"7": "data_solution/foo/model/sales"} and not problems
 
+        # End to end through main(): asset files leave the folder Task, and an
+        # asset never borrows another solution's Task by its leaf name.
+        subprocess.run(
+            ["git", "remote", "add", "origin",
+             "https://dev.azure.com/contoso/Project/_git/Repo"],
+            cwd=repository, check=True,
+        )
+        write(repository, ".claude/release-notes.config.json",
+              json.dumps({"asset_rules": ASSET_RULES}))
+        script = Path(__file__).with_name("collect_evidence.py")
+
+        def collect(tasks: list[dict]) -> subprocess.CompletedProcess:
+            (repository / "tasks.json").write_text(json.dumps(tasks))
+            return subprocess.run(
+                [sys.executable, str(script), "--repo", str(repository),
+                 "--base", base, "--head", head, "--config",
+                 "--tasks", str(repository / "tasks.json"),
+                 "--out", str(repository / "evidence.json")],
+                capture_output=True, text=True,
+            )
+
+        run = collect([
+            {"id": "1", "title": "Source: foo/crm", "type": "Task"},
+            {"id": "2", "title": "foo", "type": "Task"},
+        ])
+        assert run.returncode == 0, run.stdout + run.stderr
+        tasks = json.loads((repository / "evidence.json").read_text())["tasks"]
+        assert tasks["1"]["folder"] == "data_solution/foo/source/crm"
+        assert tasks["1"]["asset"] is True
+        assert tasks["2"]["folder"] == "data_solution/foo"
+        assert tasks["2"]["asset"] is False
+        assert tasks["2"]["paths"] == leftover, tasks["2"]["paths"]
+
+        run = collect([{"id": "3", "title": "Source: bar/crm", "type": "Task"}])
+        assert run.returncode == 2, run.stdout + run.stderr
+        assert "3 'Source: bar/crm' -> no match" in run.stdout, run.stdout
+
+
+def test_asset_title_collision() -> None:
+    conventions = Conventions({"asset_rules": [{
+        "kind": "Model",
+        "pattern": r"^(?P<root>[^/]+/dbt)/models/(?P<asset>[^/]+)\.sql$",
+    }]})
+
+    class Unused:
+        pass
+
+    changed = [
+        ("M", "team_a/dbt/models/sales.sql", None),
+        ("M", "team_b/dbt/models/sales.sql", None),
+    ]
+    try:
+        assign_assets(Unused(), conventions, changed)
+    except SystemExit as exc:
+        assert "same title 'Model: dbt/sales'" in str(exc), str(exc)
+    else:
+        raise AssertionError("expected colliding asset titles to fail")
+
+
+def test_asset_task_never_reuses_leaf_match() -> None:
+    provider = FakeProvider("1", "100", "Repo")
+    provider.children[0]["title"] = "Source: bar/crm"
+    provider.children[0]["description"] = "<p>bar</p>"
+    key = "data_solution/foo/source/crm"
+    asset_evidence = {
+        "base": "HEAD",
+        "head": "HEAD",
+        "unclaimed_folders": [],
+        "tasks": {key: {"task_key": key, "folder": key,
+                        "title": "Source: foo/crm", "asset": True}},
+    }
+    plan = build_pair_plan(
+        provider, config("Repo"), "1", "100", asset_evidence,
+        {key: "<p>foo</p>"}, repository_root(), True,
+    )
+    (action,) = plan["actions"]
+    assert action["operation"] == "create", action
+
 
 def test_asset_rule_validation() -> None:
     assert asset_rule_problems(None) == []
@@ -648,6 +726,8 @@ def main() -> int:
         test_id_free_evidence_discovery,
         test_asset_rule_discovery,
         test_asset_rule_validation,
+        test_asset_title_collision,
+        test_asset_task_never_reuses_leaf_match,
         test_multi_pair_release_and_merge,
         test_all_pairs_preflight_before_write,
         test_populated_description_is_preserved,

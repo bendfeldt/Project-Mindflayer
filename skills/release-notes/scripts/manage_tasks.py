@@ -127,10 +127,12 @@ def match_children(
             for child in children
             if normalized(child.get("title")) == normalized(candidate["title"])
         ]
+        # Asset Tasks match by exact title only; their leaf names repeat across solutions.
         possible = exact or [
             child
             for child in children
-            if is_legacy_match(child, candidate, conventions)
+            if not candidate.get("asset")
+            and is_legacy_match(child, candidate, conventions)
         ]
         if len(possible) > 1:
             ids = ", ".join(str(child["id"]) for child in possible)
@@ -183,6 +185,7 @@ def candidates_from_evidence(evidence: dict, descriptions: dict) -> list[dict]:
                 "task_key": task_key,
                 "folder": str(folder),
                 "title": str(title),
+                "asset": bool(task.get("asset")),
                 "description": description,
             }
         )

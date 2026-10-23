@@ -230,11 +230,13 @@ def assign_assets(git: Git, conv: Conventions,
     or deleted, so removals and renames still land on the asset they belonged
     to. A `dbt_ref` rule attaches the file to the single model it `ref()`s;
     with no ref, or several, the file stays with its folder-level task.
+    Two assets with the same title stop the run: their Tasks would collide.
 
     Returns:
         task key -> {"title", "files"} for every asset with at least one file.
     """
     assets: dict[str, dict] = {}
+    keys_by_title: dict[str, str] = {}
     for status, path, old in changed:
         found = conv.match_asset(path, old)
         if found is None:
@@ -249,6 +251,12 @@ def assign_assets(git: Git, conv: Conventions,
         else:
             asset = match.group("asset")
         key, title = conv.asset_task(rule, match, asset)
+        other = keys_by_title.setdefault(title.casefold(), key)
+        if other != key:
+            raise SystemExit(
+                f"asset_rules give {other} and {key} the same title '{title}'; "
+                "add a (?P<solution>...) group that tells them apart"
+            )
         entry = assets.setdefault(key, {"title": title, "files": []})
         entry["files"].append((status, path, old))
     return assets
@@ -495,9 +503,8 @@ def main() -> None:
             titles = {**conv.task_titles(item_folders), **asset_titles}
         except SystemExit:
             titles = asset_titles
-        mapping, problems = map_tasks(
-            tasks, (item_folders or folders) | set(assets), conv, titles
-        )
+        # Assets match by exact title only; their leaf names repeat across solutions.
+        mapping, problems = map_tasks(tasks, item_folders or folders, conv, titles)
         claimed = set(mapping.values())
         unclaimed = sorted((folders | set(assets)) - claimed)
     else:
@@ -555,6 +562,7 @@ def main() -> None:
         ev = {
             **task,
             "folder": folder,
+            "asset": folder in assets,
             "paths": paths,
             "file_count": len(files),
             "status_counts": dict(Counter(s[0] for s, _, _ in files)),

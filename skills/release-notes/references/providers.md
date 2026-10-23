@@ -130,7 +130,7 @@ The default allowed parent type is `User Story`. Teams using another Azure DevOp
 
 #### Asset-level tasks
 
-When one deployable folder holds many independently testable assets (dbt models, ingestion sources), add `asset_rules` to the repository config. Each rule has a `kind` and a regex `pattern` with named groups `root` and `asset` (optionally `solution`); the first rule matching a file's new path, or its old path for a move or delete, sends that file to the Task `<kind>: <solution>/<asset>` with key `<root>/<kind lowercased>/<asset>`. A rule with `"resolve": "dbt_ref"` needs only `root` and attaches the file to the single model its `ref()` names. Files no rule claims stay with their folder-level Task. Without `asset_rules`, grouping is unchanged.
+When one deployable folder holds many independently testable assets (dbt models, ingestion sources), add `asset_rules` to the repository config. Each rule has a `kind` and a regex `pattern` with named groups `root` and `asset` (optionally `solution`); the first rule matching a file's new path, or its old path for a move or delete, sends that file to the Task `<kind>: <solution>/<asset>` with key `<root>/<kind lowercased>/<asset>`. A rule with `"resolve": "dbt_ref"` needs only `root` and attaches the file to the single model its `ref()` names. Files no rule claims stay with their folder-level Task. An existing Task is reused for an asset only when its title matches exactly, never by its last name segment, because asset names repeat across solutions. Two assets that would get the same title stop the run; add a `solution` group to tell them apart. Without `asset_rules`, grouping is unchanged.
 
 ```json
 "asset_rules": [
