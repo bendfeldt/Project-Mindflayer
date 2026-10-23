@@ -80,11 +80,11 @@ skills/release-notes/references/providers.md	skill-resource	2.4.0	global,project
 skills/release-notes/references/templates.md	skill-resource	2.5.0	global,project:skills	managed-tree	linux,macos,windows
 skills/release-notes/scripts/collect_evidence.py	skill-resource	2.4.0	global,project:skills	managed-tree	linux,macos,windows
 skills/release-notes/scripts/config.py	skill-resource	2.6.0	global,project:skills	managed-tree	linux,macos,windows
-skills/release-notes/scripts/manage_tasks.py	skill-resource	2.4.1	global,project:skills	managed-tree	linux,macos,windows
+skills/release-notes/scripts/manage_tasks.py	skill-resource	2.5.0	global,project:skills	managed-tree	linux,macos,windows
 skills/release-notes/scripts/make_email_draft.py	skill-resource	2.4.0	global,project:skills	managed-tree	linux,macos,windows
 skills/release-notes/scripts/merge_release.py	skill-resource	2.4.0	global,project:skills	managed-tree	linux,macos,windows
-skills/release-notes/scripts/providers.py	skill-resource	2.3.0	global,project:skills	managed-tree	linux,macos,windows
-skills/release-notes/scripts/publish_descriptions.py	skill-resource	2.4.0	global,project:skills	managed-tree	linux,macos,windows
+skills/release-notes/scripts/providers.py	skill-resource	2.4.0	global,project:skills	managed-tree	linux,macos,windows
+skills/release-notes/scripts/publish_descriptions.py	skill-resource	2.5.0	global,project:skills	managed-tree	linux,macos,windows
 skills/setup-repo/SKILL.md	skill	2.7.0	global,project:skills	managed-tree	linux,macos,windows
 skills/setup-repo/agents/openai.yaml	skill-resource	2.3.0	global,project:skills	managed-tree	linux,macos,windows
 skills/smart-commit/SKILL.md	skill	2.0.0	global,project:skills	managed-tree	linux,macos,windows

@@ -16,7 +16,7 @@ Invoke them with `python3` on Linux and macOS, and with `python` on native Windo
 6. Run `scripts/manage_tasks.py compose` with every pair plan, including a single pair. Review the complete composed dry run. Pair plans are never directly applicable.
 7. Ask for explicit approval, then run `scripts/manage_tasks.py apply --plan <release-plan>`. Apply must consume the reviewed release plan, preflight every pair before writing, and stop on integrity, git, PR, parent, or child drift.
 8. Run `scripts/merge_release.py` using an absolute path derived from the skill directory; verify every PR and User Story link is present.
-9. Keep `publish_descriptions.py` for description-only updates to existing items. It dry-runs by default and refuses overwrite unless explicitly authorized.
+9. Keep `publish_descriptions.py` for description-only updates to existing items. It dry-runs by default and refuses overwrite unless explicitly authorized. With `--evidence`, it also assigns unassigned items to their top contributor; both dry runs show the planned assignee (see [provider behavior](references/providers.md#assignee)).
 10. Resolve `email.tool` from the effective config, which reconciles the
     recorded tool with the platform running it: `outlook-macos` on macOS, `eml`
     on Linux, native Windows, and on macOS without Outlook; no draft mechanism

@@ -40,6 +40,7 @@ from config import (  # noqa: E402
     write_json,
 )
 
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 _DBT_REF = re.compile(r"""\bref\(\s*(?:['"][^'"]+['"]\s*,\s*)?['"]([^'"]+)['"]""")
 
 
@@ -209,6 +210,47 @@ class Git:
             pr, text = self.conv.match_merge(subject)
             rows.append({"sha": sha[:8], "subject": subject, "pr": pr, "text": text})
         return rows
+
+    def contributions(self, *paths: str) -> list[dict]:
+        """Changed lines in `paths`, credited to the PR (or direct commit) that brought them.
+
+        Walks first-parent history, so a PR merge or squash counts once with
+        its whole diff. A merge whose second parent holds other PR merges (a
+        branch sync) is opened up, so the inner PRs get the credit instead.
+
+        Returns:
+            [{"pr": N} or {"sha", "email"}, plus "lines" and "order"], where
+            order 0 is the newest change.
+        """
+        out: list[dict] = []
+        self._credit(f"{self.base}..{self.head}", paths, out, depth=0)
+        return out
+
+    def _credit(self, rng: str, paths: tuple[str, ...], out: list[dict], depth: int) -> None:
+        log = self.run("log", "--first-parent", "--format=%H\x1f%P\x1f%ae\x1f%s",
+                       rng, "--", *paths)
+        for line in log.splitlines():
+            if not line.strip():
+                continue
+            sha, parents, email, subject = line.split("\x1f", 3)
+            parents = parents.split()
+            # shortcut: sync merges open up 3 levels deep; raise it if releases nest deeper.
+            if len(parents) == 2 and depth < 3 and any(
+                self.conv.match_merge(s)[0]
+                for s in self.run("log", "--first-parent", "--format=%s",
+                                  f"{parents[0]}..{parents[1]}", "--", *paths).splitlines()
+            ):
+                self._credit(f"{parents[0]}..{parents[1]}", paths, out, depth + 1)
+                continue
+            first = parents[0] if parents else EMPTY_TREE
+            lines = 0
+            for row in self.run("diff", "--numstat", "-M", first, sha,
+                                "--", *paths).splitlines():
+                added, deleted = row.split("\t")[:2]
+                lines += sum(int(n) for n in (added, deleted) if n.isdigit())
+            pr = self.conv.match_merge(subject)[0]
+            who = {"pr": pr} if pr else {"sha": sha, "email": email}
+            out.append({**who, "lines": lines, "order": len(out)})
 
     def diff(self, *paths: str) -> str:
         return self.run("diff", "-M", self.range, "--", *paths)
@@ -567,6 +609,7 @@ def main() -> None:
             "file_count": len(files),
             "status_counts": dict(Counter(s[0] for s, _, _ in files)),
             "commits": git.commits(*paths) if paths else [],
+            "contributions": git.contributions(*paths) if paths else [],
             "files": [{"status": s, "path": p, "old": o} for s, p, o in files][:400],
         }
         if folder.endswith(".SemanticModel"):

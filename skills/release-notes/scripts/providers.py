@@ -12,8 +12,8 @@ The two important asymmetries:
     hold Tasks, User Stories and Features and only Tasks are testable units.
     GitHub sub-issues carry no type, so every child qualifies.
 
-Reads are unrestricted. Description updates and child creation are explicit
-write paths used only by the dry-run-gated command scripts.
+Reads are unrestricted. Description updates, assignment and child creation
+are explicit write paths used only by the dry-run-gated command scripts.
 """
 from __future__ import annotations
 
@@ -49,6 +49,48 @@ def run_json(args: list[str], *, stdin: str | None = None) -> dict | list:
         raise ProviderError(f"{args[0]} returned non-JSON output: {exc}")
 
 
+def choose_assignee(provider: "Provider", contributions: list[dict],
+                    cache: dict) -> tuple[str | None, str]:
+    """Pick the developer with the most changed lines; a tie goes to the newest change.
+
+    Each PR counts for its author and each direct commit for its committer.
+    `cache` holds one identity lookup per PR or commit for the whole run.
+
+    Returns:
+        (identity, "") or (None, why nobody can be assigned).
+    """
+    lines: dict[str, int] = {}
+    newest: dict[str, int] = {}
+    skipped: list[str] = []
+    for item in contributions:
+        key = f"pr:{item['pr']}" if item.get("pr") else f"sha:{item['sha']}"
+        if key not in cache:
+            try:
+                cache[key] = (
+                    provider.fetch_pr(item["pr"]).get("author") if item.get("pr")
+                    else provider.commit_identity(item["sha"], item.get("email") or "")
+                )
+            except ProviderError:
+                cache[key] = None
+        who = cache[key]
+        if not who:
+            skipped.append(f"PR {item['pr']}" if item.get("pr") else f"commit {item['sha'][:8]}")
+            continue
+        lines[who] = lines.get(who, 0) + int(item["lines"])
+        newest[who] = min(newest.get(who, item["order"]), item["order"])
+    if not lines:
+        reason = "no contributions" if not skipped else f"no identity for {', '.join(skipped)}"
+        return None, reason
+    return min(lines, key=lambda who: (-lines[who], newest[who])), ""
+
+
+def _ado_identity(value) -> str:
+    """System.AssignedTo is an identity object in REST responses."""
+    if isinstance(value, dict):
+        return str(value.get("uniqueName") or "")
+    return str(value or "")
+
+
 def strip_ref(ref: str) -> str:
     """'refs/heads/releases/rel_1' -> 'releases/rel_1'."""
     return ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
@@ -59,6 +101,7 @@ class Provider:
 
     body_format = "markdown"
     can_create_children = False
+    can_assign = False
 
     def fetch_pr(self, pr_id: str) -> dict:
         """Return normalized PR metadata, including repository and project."""
@@ -90,12 +133,27 @@ class Provider:
     def item_url(self, item_id: str) -> str:
         raise NotImplementedError
 
+    def commit_identity(self, sha: str, email: str) -> str | None:
+        """The tracker identity of a commit's author."""
+        return email or None
+
+    def fetch_assignees(self, ids: list[str]) -> dict[str, str]:
+        """-> {id: assignee identity, or "" when unassigned}."""
+        raise NotImplementedError
+
+    def validate_assignee(self, item_id: str, identity: str) -> None:
+        raise ProviderError("provider does not support assignment")
+
+    def set_assignee(self, item_id: str, identity: str) -> str:
+        raise ProviderError("provider does not support assignment")
+
 
 # ----------------------------------------------------------------- Azure DevOps
 
 class AdoProvider(Provider):
     body_format = "html"
     can_create_children = True
+    can_assign = True
 
     def __init__(self, org: str, project: str) -> None:
         if not project:
@@ -144,6 +202,10 @@ class AdoProvider(Provider):
                 "value": task["description"],
             },
         ]
+        if task.get("assignee"):
+            patch.append(
+                {"op": "add", "path": "/fields/System.AssignedTo", "value": task["assignee"]}
+            )
         for field in ("System.AreaPath", "System.IterationPath"):
             if task.get(field):
                 patch.append(
@@ -178,6 +240,7 @@ class AdoProvider(Provider):
             "target": strip_ref(data.get("targetRefName") or ""),
             "repository": repository_name,
             "project": project_name,
+            "author": (data.get("createdBy") or {}).get("uniqueName"),
             "url": f"{self.org_url}/{quote(project_name)}/_git/"
                    f"{quote(repository_name)}"
                    f"/pullrequest/{pr_id}",
@@ -221,6 +284,7 @@ class AdoProvider(Provider):
                 "type": item_type,
                 "state": f.get("System.State"),
                 "description": (f.get("System.Description") or "").strip(),
+                "assigned_to": _ado_identity(f.get("System.AssignedTo")),
                 "url": self.item_url(wid),
             }
         return sorted(seen.values(), key=lambda t: int(t["id"]))
@@ -279,11 +343,31 @@ class AdoProvider(Provider):
     def item_url(self, item_id: str) -> str:
         return f"{self.org_url}/{quote(self.project)}/_workitems/edit/{item_id}"
 
+    def fetch_assignees(self, ids: list[str]) -> dict[str, str]:
+        return {
+            str(item["id"]): _ado_identity(item["fields"].get("System.AssignedTo"))
+            for item in self._batch(list(ids), fields="System.Id,System.AssignedTo")
+        }
+
+    def _assign(self, item_id: str, identity: str, validate_only: bool) -> dict:
+        patch = [{"op": "add", "path": "/fields/System.AssignedTo", "value": identity}]
+        check = "validateOnly=true&" if validate_only else ""
+        return self._json_patch(
+            f"{self._wit}/workitems/{item_id}?{check}api-version=7.1", patch, "patch"
+        )
+
+    def validate_assignee(self, item_id: str, identity: str) -> None:
+        self._assign(item_id, identity, validate_only=True)
+
+    def set_assignee(self, item_id: str, identity: str) -> str:
+        return f"rev {self._assign(item_id, identity, validate_only=False).get('rev', '?')}"
+
 
 # ------------------------------------------------------------------------ GitHub
 
 class GitHubProvider(Provider):
     body_format = "markdown"
+    can_assign = True
 
     # Sub-issues were still versioned at the time of writing; pin the header so
     # a future default cannot change the response shape underneath us.
@@ -317,7 +401,7 @@ class GitHubProvider(Provider):
     def fetch_pr(self, pr_id: str) -> dict:
         data = run_json([
             "gh", "pr", "view", str(pr_id), "--repo", self.slug,
-            "--json", "number,title,state,headRefName,baseRefName,url",
+            "--json", "number,title,state,headRefName,baseRefName,url,author",
         ])
         return {
             "id": str(data.get("number", pr_id)),
@@ -327,6 +411,7 @@ class GitHubProvider(Provider):
             "target": data.get("baseRefName"),
             "repository": self.repo,
             "project": None,
+            "author": (data.get("author") or {}).get("login"),
             "url": data.get("url"),
         }
 
@@ -346,6 +431,7 @@ class GitHubProvider(Provider):
                     "type": "sub-issue",
                     "state": issue.get("state"),
                     "description": (issue.get("body") or "").strip(),
+                    "assigned_to": _first_login(issue),
                     "url": issue.get("html_url") or self.item_url(num),
                 }
         return sorted(seen.values(), key=lambda t: int(t["id"]))
@@ -364,6 +450,33 @@ class GitHubProvider(Provider):
 
     def item_url(self, item_id: str) -> str:
         return f"https://{self.host}/{self.slug}/issues/{item_id}"
+
+    def commit_identity(self, sha: str, email: str) -> str | None:
+        # A commit email maps to a login only when it is linked to an account.
+        try:
+            return (self._api(f"/repos/{self.slug}/commits/{sha}").get("author") or {}).get("login")
+        except ProviderError:
+            return None
+
+    def fetch_assignees(self, ids: list[str]) -> dict[str, str]:
+        return {
+            str(num): _first_login(self._api(f"/repos/{self.slug}/issues/{num}"))
+            for num in ids
+        }
+
+    def validate_assignee(self, item_id: str, identity: str) -> None:
+        # 204 when the login may be assigned in this repository, 404 otherwise.
+        self._api(f"/repos/{self.slug}/assignees/{quote(identity)}")
+
+    def set_assignee(self, item_id: str, identity: str) -> str:
+        issue = self._api(f"/repos/{self.slug}/issues/{item_id}/assignees",
+                          method="POST", payload={"assignees": [identity]})
+        return f"assigned {_first_login(issue) or identity}"
+
+
+def _first_login(issue: dict) -> str:
+    assignees = issue.get("assignees") or []
+    return str(assignees[0].get("login") or "") if assignees else ""
 
 
 def from_config(cfg: dict) -> Provider:

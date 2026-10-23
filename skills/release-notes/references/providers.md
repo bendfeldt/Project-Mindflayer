@@ -120,7 +120,7 @@ After the user reviews the printed actions and explicitly approves them:
 python3 "$SKILL_DIR/scripts/manage_tasks.py" apply --plan release-plan.json
 ```
 
-Apply rejects pair plans. It verifies the composed plan and every embedded pair, preflights all repositories, PRs, User Stories, and child Tasks before the first write, then applies pairs sequentially with resumable result state. New Tasks inherit the parent Area Path and Iteration Path; Azure DevOps process defaults set state and assignee.
+Apply rejects pair plans. It verifies the composed plan and every embedded pair, preflights all repositories, PRs, User Stories, and child Tasks before the first write, then applies pairs sequentially with resumable result state. New Tasks inherit the parent Area Path and Iteration Path; Azure DevOps process defaults set state. The assignee follows the rule under [Assignee](#assignee).
 
 Each applied pair writes `<repo>-pr-<id>.json` under the release run directory. `merge_release.py` groups these artifacts by pair and links both the PR and User Story, including when several PRs belong to one repository.
 
@@ -140,6 +140,28 @@ When one deployable folder holds many independently testable assets (dbt models,
 ```
 
 `config.py --validate` reports malformed rules.
+
+#### Assignee
+
+Each Task or sub-issue goes to the developer who changed the most lines (added plus deleted) in its files during the release range. `collect_evidence.py` records each item's `contributions`:
+
+- **Credit for PRs:** a PR merge or squash commit on the first-parent history counts its whole diff for the PR author.
+- **Branch syncs:** a merge that brings in other PR merges, such as a dev-to-release sync, is opened up, so the inner PRs get the credit instead.
+- **Direct commits:** a commit without a PR counts for its commit author.
+- **Ties:** a tie goes to the developer whose change merged last.
+
+Items that already have an assignee keep it. Assignment never replaces one.
+
+| | Azure DevOps | GitHub |
+| --- | --- | --- |
+| PR author | `createdBy.uniqueName` | `author.login` |
+| Direct commit | commit email | the login linked to the commit, if any |
+| Check | `validateOnly` patch on `System.AssignedTo` | `GET /repos/{owner}/{repo}/assignees/{login}`; the login must be assignable |
+| Write | patch `System.AssignedTo` | `POST /repos/{owner}/{repo}/issues/{n}/assignees` |
+
+- **Azure DevOps:** `manage_tasks.py` plans the assignee for new Tasks and for unassigned reused Tasks, and shows it in the dry run.
+- **Both providers:** for existing items, `publish_descriptions.py --evidence evidence.json` shows the assignee in its dry run and sets it with `--apply`.
+- **No assignee:** if no contributor can be resolved, the item stays unassigned and the dry run says why.
 
 ### Writing a description
 

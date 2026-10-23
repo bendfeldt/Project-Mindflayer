@@ -35,7 +35,7 @@ from config import (  # noqa: E402
     slugify,
     write_json,
 )
-from providers import Provider, from_config  # noqa: E402
+from providers import Provider, choose_assignee, from_config  # noqa: E402
 
 
 SCHEMA_VERSION = 2
@@ -186,6 +186,7 @@ def candidates_from_evidence(evidence: dict, descriptions: dict) -> list[dict]:
                 "folder": str(folder),
                 "title": str(title),
                 "asset": bool(task.get("asset")),
+                "contributions": list(task.get("contributions") or []),
                 "description": description,
             }
         )
@@ -249,18 +250,29 @@ def build_pair_plan(
     existing = match_children(candidates, children, conventions)
 
     actions: list[dict] = []
+    identities: dict = {}
     for candidate in candidates:
+        contributions = candidate.pop("contributions")
+        child = existing.get(candidate["task_key"])
+        assignee, reason = None, "assignment not supported"
+        if provider.can_assign and child and child.get("assigned_to"):
+            reason = "keep assignee"
+        elif provider.can_assign:
+            assignee, reason = choose_assignee(provider, contributions, identities)
         task = {
             **candidate,
+            "assignee": assignee,
+            "assignee_note": reason,
             "System.AreaPath": parent.get("System.AreaPath"),
             "System.IterationPath": parent.get("System.IterationPath"),
         }
-        child = existing.get(candidate["task_key"])
         if child is None:
             provider.validate_child(parent_id, task)
             actions.append({**task, "operation": "create"})
             continue
 
+        if assignee:
+            provider.validate_assignee(str(child["id"]), assignee)
         current = child.get("description") or ""
         if current == candidate["description"]:
             description_action = "unchanged"
@@ -408,6 +420,8 @@ def print_pair_plan(plan: dict) -> None:
             detail = (
                 f"reuse {action['item_id']}; {action['description_action']} description"
             )
+        who = action.get("assignee")
+        detail += f"; assign {who}" if who else f"; {action.get('assignee_note') or 'no assignee'}"
         print(f"  [{detail}] {action['title']} <- {action['folder']}")
     if pull_request.get("state") not in (None, "active", "OPEN"):
         print(f"warning: PR state is {pull_request['state']}")
@@ -590,11 +604,14 @@ def apply_pair(
             marker = None
             if action["description_action"] == "update":
                 marker = provider.set_description(item_id, action["description"])
+            if action.get("assignee"):
+                provider.set_assignee(item_id, action["assignee"])
             completed[task_key] = {
                 "item_id": item_id,
                 "operation": "reuse",
                 "description_action": action["description_action"],
                 "marker": marker,
+                "assigned": action.get("assignee"),
             }
 
         applied_description = action["description"]

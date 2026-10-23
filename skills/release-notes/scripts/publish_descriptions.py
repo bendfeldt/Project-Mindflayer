@@ -17,6 +17,10 @@ Provider, org and project are resolved from the repo's release-notes config;
 texts.json maps item id to body. The body must be HTML for Azure DevOps and
 Markdown for GitHub — check `provider.body_format` before generating it.
 
+With --evidence, unassigned items are also assigned to the developer with the
+most changed lines in the item's files (dry run shows who; --apply assigns).
+Items that already have an assignee keep it.
+
 With --run, a per-repo artifact is written under
 ~/.ai-toolkit/release-notes/runs/<slug>/ so merge_release.py can later combine
 several repos into one test email.
@@ -37,7 +41,9 @@ from config import (  # noqa: E402
     resolve_run_directory,
     write_json,
 )
-from providers import AdoProvider, GitHubProvider, from_config  # noqa: E402
+from providers import (  # noqa: E402
+    AdoProvider, GitHubProvider, choose_assignee, from_config,
+)
 
 
 def build_provider(args, cfg: dict):
@@ -84,6 +90,28 @@ def write_artifact(slug: str, cfg: dict, provider, texts: dict[str, str],
     return path
 
 
+def assign_items(provider, ids: list[str], evidence: dict, apply: bool) -> None:
+    """Assign each unassigned item to its top contributor; never replace an assignee."""
+    ev_tasks = evidence.get("tasks", {})
+    current = provider.fetch_assignees(ids)
+    identities: dict = {}
+    print()
+    for item_id in ids:
+        if current.get(item_id):
+            print(f"keep assignee {item_id} ({current[item_id]})")
+            continue
+        who, reason = choose_assignee(
+            provider, ev_tasks.get(item_id, {}).get("contributions") or [], identities)
+        if not who:
+            print(f"no assignee {item_id} ({reason})")
+            continue
+        provider.validate_assignee(item_id, who)
+        if not apply:
+            print(f"[dry run] assign {item_id} -> {who}")
+            continue
+        print(f"OK assign {item_id} -> {who} ({provider.set_assignee(item_id, who)})")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -100,7 +128,7 @@ def main() -> None:
     ap.add_argument("--run", default=None,
                     help="release slug; writes a run artifact for merge_release.py")
     ap.add_argument("--evidence", type=Path, default=None,
-                    help="evidence.json, used to enrich the run artifact with titles")
+                    help="evidence.json: assigns unassigned items and enriches the run artifact")
     args = ap.parse_args()
     configure_stdio()
 
@@ -137,11 +165,14 @@ def main() -> None:
     if skipped:
         print(f"skipped (already has a description): {skipped}")
         print("pass --overwrite to replace them")
+    evidence = read_json(args.evidence) if args.evidence else None
+    if evidence and provider.can_assign:
+        assign_items(provider, ids, evidence, args.apply)
+
     if not args.apply:
         print("this was a dry run — add --apply to write to the tracker")
 
     if args.run:
-        evidence = read_json(args.evidence) if args.evidence else None
         path = write_artifact(args.run, cfg, provider, texts, evidence, args.apply)
         print(f"run artifact: {path}")
 

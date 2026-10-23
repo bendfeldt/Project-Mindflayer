@@ -12,6 +12,7 @@ from pathlib import Path
 
 from collect_evidence import Conventions, Git, assign_assets, map_tasks
 from config import (
+    DEFAULT_MERGE_PATTERNS,
     ConfigError,
     asset_rule_problems,
     configure_stdio,
@@ -27,7 +28,11 @@ from manage_tasks import (
     write_pair_artifact,
 )
 from merge_release import STRINGS, load_artifacts, render_md
-from providers import AdoProvider, Provider
+import providers
+from providers import (
+    AdoProvider, GitHubProvider, Provider, ProviderError, choose_assignee,
+)
+from publish_descriptions import assign_items
 from publish_descriptions import write_artifact as write_description_artifact
 
 
@@ -324,6 +329,242 @@ def write(repository: Path, relative: str, text: str) -> None:
     path = repository / relative
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
+
+
+def git_as(repository: Path, email: str, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", f"user.email={email}", "-c", "user.name=Dev", *args],
+        cwd=repository, check=True, capture_output=True,
+    )
+
+
+def change_and_commit(repository: Path, email: str, lines: int, message: str) -> None:
+    with (repository / "f.txt").open("a") as handle:
+        handle.write("x\n" * lines)
+    git_as(repository, email, "commit", "-qam", message)
+
+
+def merge_branch(repository: Path, email: str, branch: str, lines: int,
+                 message: str, into: str = "main") -> None:
+    git_as(repository, email, "switch", "-qc", branch, into)
+    change_and_commit(repository, email, lines, f"work on {branch}")
+    git_as(repository, email, "switch", "-q", into)
+    git_as(repository, email, "merge", "-q", "--no-ff", branch, "-m", message)
+
+
+def test_contributions() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        repository = Path(directory)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repository, check=True)
+        subprocess.run(["git", "config", "core.autocrlf", "false"], cwd=repository, check=True)
+        write(repository, "f.txt", "start\n")
+        write(repository, "other.txt", "start\n")
+        git_as(repository, "base@x", "add", "-A")
+        git_as(repository, "base@x", "commit", "-qm", "base")
+        base = git_revision(repository, "HEAD")
+
+        merge_branch(repository, "alice@x", "a", 10, "Merged PR 1: alice")
+        merge_branch(repository, "bob@x", "b", 3, "Merge pull request #2 from x/b")
+        change_and_commit(repository, "dave@x", 2, "Add thing (#3)")
+        change_and_commit(repository, "carol@x", 1, "fix typo")
+        write(repository, "other.txt", "unrelated\n")
+        git_as(repository, "zed@x", "commit", "-qam", "Merged PR 8: unrelated file")
+        # A sync PR that brings dev (holding PR 4) into main credits PR 4, not PR 9.
+        git_as(repository, "erin@x", "branch", "dev", "main")
+        merge_branch(repository, "erin@x", "e", 4, "Merged PR 4: erin", into="dev")
+        git_as(repository, "sync@x", "merge", "-q", "--no-ff", "dev", "-m", "Merged PR 9: sync")
+        head = git_revision(repository, "HEAD")
+
+        patterns = [*DEFAULT_MERGE_PATTERNS["ado"], *DEFAULT_MERGE_PATTERNS["github"]]
+        git = Git(repository, base, head, Conventions({"merge_commit_patterns": patterns}))
+        got = [
+            ({k: v for k, v in item.items() if k not in ("sha", "order")}, item["order"])
+            for item in git.contributions("f.txt")
+        ]
+        assert got == [
+            ({"pr": "4", "lines": 4}, 0),
+            ({"email": "carol@x", "lines": 1}, 1),
+            ({"pr": "3", "lines": 2}, 2),
+            ({"pr": "2", "lines": 3}, 3),
+            ({"pr": "1", "lines": 10}, 4),
+        ], got
+
+
+class IdentityProvider(Provider):
+    def __init__(self, authors: dict[str, str | None]) -> None:
+        self.authors = authors
+        self.lookups = 0
+
+    def fetch_pr(self, pr_id: str) -> dict:
+        self.lookups += 1
+        if pr_id not in self.authors:
+            raise ProviderError(f"PR {pr_id} not found")
+        return {"author": self.authors[pr_id]}
+
+    def commit_identity(self, sha: str, email: str) -> str | None:
+        return {"c1": "carol"}.get(sha)
+
+
+def test_choose_assignee() -> None:
+    provider = IdentityProvider({"1": "alice", "2": "bob", "3": "alice"})
+    cache: dict = {}
+    most = [
+        {"pr": "1", "lines": 4, "order": 2},
+        {"pr": "2", "lines": 7, "order": 1},
+        {"pr": "3", "lines": 4, "order": 0},
+    ]
+    assert choose_assignee(provider, most, cache) == ("alice", "")
+    assert provider.lookups == 3
+    assert choose_assignee(provider, most, cache) == ("alice", "")
+    assert provider.lookups == 3, "identities are looked up once per run"
+
+    tie = [{"pr": "1", "lines": 5, "order": 1}, {"pr": "2", "lines": 5, "order": 0}]
+    assert choose_assignee(provider, tie, {}) == ("bob", ""), "a tie goes to the newest"
+
+    direct = [{"sha": "c1", "email": "carol@x", "lines": 1, "order": 0},
+              {"pr": "404", "lines": 50, "order": 1}]
+    assert choose_assignee(provider, direct, {}) == ("carol", "")
+
+    who, reason = choose_assignee(provider, [{"pr": "404", "lines": 1, "order": 0}], {})
+    assert who is None and "PR 404" in reason, reason
+    assert choose_assignee(provider, [], {}) == (None, "no contributions")
+
+
+class AssigningProvider(FakeProvider):
+    can_assign = True
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+        self.assigned: list[tuple[str, str]] = []
+        self.checked: list[tuple[str, str]] = []
+
+    def fetch_pr(self, pr_id: str) -> dict:
+        if pr_id == self.pr["id"]:
+            return super().fetch_pr(pr_id)
+        return {"author": {"11": "alice@x", "12": "bob@x"}[pr_id]}
+
+    def validate_child(self, parent_id: str, task: dict) -> None:
+        super().validate_child(parent_id, task)
+        self.checked.append((task["task_key"], task.get("assignee")))
+
+    def validate_assignee(self, item_id: str, identity: str) -> None:
+        self.checked.append((item_id, identity))
+
+    def set_assignee(self, item_id: str, identity: str) -> str:
+        self.assigned.append((item_id, identity))
+        return "rev 9"
+
+    def create_child(self, parent_id: str, task: dict) -> dict:
+        self.assigned.append((task["task_key"], task.get("assignee")))
+        return super().create_child(parent_id, task)
+
+
+def assignment_evidence() -> dict:
+    value = evidence()
+    value["tasks"]["solution/models/Sales.SemanticModel"]["contributions"] = [
+        {"pr": "11", "lines": 2, "order": 1}, {"pr": "12", "lines": 9, "order": 0}]
+    value["tasks"]["solution/reports/Sales.Report"]["contributions"] = [
+        {"pr": "11", "lines": 5, "order": 0}]
+    return value
+
+
+def test_assignment_plan() -> None:
+    provider = AssigningProvider("1", "100", "RepoA")
+    pair = build_pair_plan(
+        provider, config("RepoA"), "1", "100", assignment_evidence(),
+        descriptions(), repository_root(), False,
+    )
+    actions = {action["task_key"]: action for action in pair["actions"]}
+    model = actions["solution/models/Sales.SemanticModel"]
+    report = actions["solution/reports/Sales.Report"]
+    assert model["operation"] == "create" and model["assignee"] == "bob@x"
+    assert report["operation"] == "reuse" and report["assignee"] == "alice@x"
+    assert ("1000", "alice@x") in provider.checked
+    assert ("solution/models/Sales.SemanticModel", "bob@x") in provider.checked
+
+    release = compose_release("rel-1", [pair])
+    with tempfile.TemporaryDirectory() as directory:
+        output_root = Path(directory)
+        apply_release(
+            release, output_root / "result.json",
+            lambda _pair: (repository_root(), config("RepoA"), provider),
+            lambda slug, plan, tasks: write_pair_artifact(slug, plan, tasks, output_root),
+        )
+    assert sorted(provider.assigned) == [
+        ("1000", "alice@x"), ("solution/models/Sales.SemanticModel", "bob@x"),
+    ], provider.assigned
+    assert provider.children[-1]["id"] == "1001"
+
+    owned = AssigningProvider("1", "100", "RepoA")
+    owned.children[0]["assigned_to"] = "someone@x"
+    pair = build_pair_plan(
+        owned, config("RepoA"), "1", "100", assignment_evidence(),
+        descriptions(), repository_root(), False,
+    )
+    report = next(a for a in pair["actions"] if a["operation"] == "reuse")
+    assert report["assignee"] is None and report["assignee_note"] == "keep assignee"
+
+
+class PublishProvider(Provider):
+    can_assign = True
+
+    def __init__(self) -> None:
+        self.current = {"1": "", "2": "owner", "3": ""}
+        self.assigned: list[tuple[str, str]] = []
+
+    def fetch_assignees(self, ids: list[str]) -> dict[str, str]:
+        return {i: self.current[i] for i in ids}
+
+    def fetch_pr(self, pr_id: str) -> dict:
+        return {"author": "alice"}
+
+    def validate_assignee(self, item_id: str, identity: str) -> None:
+        pass
+
+    def set_assignee(self, item_id: str, identity: str) -> str:
+        self.assigned.append((item_id, identity))
+        return "ok"
+
+
+def test_publish_assigns() -> None:
+    contributions = [{"pr": "5", "lines": 3, "order": 0}]
+    publish_evidence = {"tasks": {
+        "1": {"contributions": contributions},
+        "2": {"contributions": contributions},
+        "3": {"contributions": []},
+    }}
+    provider = PublishProvider()
+    assign_items(provider, ["1", "2", "3"], publish_evidence, apply=False)
+    assert provider.assigned == [], "dry run writes nothing"
+    assign_items(provider, ["1", "2", "3"], publish_evidence, apply=True)
+    assert provider.assigned == [("1", "alice")], provider.assigned
+
+
+def test_assignment_payloads() -> None:
+    ado = AdoProvider("contoso", "Project")
+    task = {"title": "T", "description": "D"}
+    paths = [op["path"] for op in ado._child_patch("1", task)]
+    assert "/fields/System.AssignedTo" not in paths
+    patch = ado._child_patch("1", {**task, "assignee": "alice@x"})
+    assert {"op": "add", "path": "/fields/System.AssignedTo", "value": "alice@x"} in patch
+
+    calls: list[tuple[list[str], str | None]] = []
+
+    def fake_run_json(args: list[str], *, stdin: str | None = None) -> dict:
+        calls.append((args, stdin))
+        return {"assignees": [{"login": "alice"}]}
+
+    original = providers.run_json
+    providers.run_json = fake_run_json
+    try:
+        github = GitHubProvider("acme", "data")
+        assert github.set_assignee("42", "alice") == "assigned alice"
+        assert github.fetch_assignees(["42"]) == {"42": "alice"}
+    finally:
+        providers.run_json = original
+    args, stdin = calls[0]
+    assert "/repos/acme/data/issues/42/assignees" in args and "POST" in args
+    assert json.loads(stdin) == {"assignees": ["alice"]}
 
 
 def test_asset_rule_discovery() -> None:
@@ -724,6 +965,11 @@ def main() -> int:
         test_unique_titles,
         test_ado_child_payload,
         test_id_free_evidence_discovery,
+        test_contributions,
+        test_choose_assignee,
+        test_assignment_plan,
+        test_publish_assigns,
+        test_assignment_payloads,
         test_asset_rule_discovery,
         test_asset_rule_validation,
         test_asset_title_collision,
