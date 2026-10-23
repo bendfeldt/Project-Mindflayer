@@ -950,9 +950,10 @@ try {
         Assert-Success -Result (& $run @('-Mode', 'Sync')) -Message 'Deselection sync'
         Assert-PathNotExists -Path (Join-Path $context.Project '.claude/skills/kimball-model') -Message 'Deselection removed empty skill directories'
 
+        & $setLine '- **skills:** adr, kimball-model'
+        Assert-Success -Result (& $run @('-Mode', 'Sync')) -Message 'Reselection sync'
+
         if (-not $IsWindows) {
-            & $setLine '- **skills:** adr, kimball-model'
-            Assert-Success -Result (& $run @('-Mode', 'Sync')) -Message 'Reselection sync'
             $outside = Join-Path $context.Root 'outside'
             New-Item -ItemType Directory -Path $outside -Force | Out-Null
             $skillDirectory = Join-Path $context.Project '.claude/skills/kimball-model'
