@@ -49,6 +49,16 @@ def run_json(args: list[str], *, stdin: str | None = None) -> dict | list:
         raise ProviderError(f"{args[0]} returned non-JSON output: {exc}")
 
 
+def top_contributor(entries: list[tuple[str, int, int]]) -> str | None:
+    """The key with the most lines over (key, lines, order); a tie goes to the lowest order."""
+    lines: dict[str, int] = {}
+    newest: dict[str, int] = {}
+    for key, count, order in entries:
+        lines[key] = lines.get(key, 0) + count
+        newest[key] = min(newest.get(key, order), order)
+    return min(lines, key=lambda key: (-lines[key], newest[key])) if lines else None
+
+
 def choose_assignee(provider: "Provider", contributions: list[dict],
                     cache: dict) -> tuple[str | None, str]:
     """Pick the developer with the most changed lines; a tie goes to the newest change.
@@ -59,8 +69,7 @@ def choose_assignee(provider: "Provider", contributions: list[dict],
     Returns:
         (identity, "") or (None, why nobody can be assigned).
     """
-    lines: dict[str, int] = {}
-    newest: dict[str, int] = {}
+    entries: list[tuple[str, int, int]] = []
     skipped: list[str] = []
     for item in contributions:
         key = f"pr:{item['pr']}" if item.get("pr") else f"sha:{item['sha']}"
@@ -76,12 +85,11 @@ def choose_assignee(provider: "Provider", contributions: list[dict],
         if not who:
             skipped.append(f"PR {item['pr']}" if item.get("pr") else f"commit {item['sha'][:8]}")
             continue
-        lines[who] = lines.get(who, 0) + int(item["lines"])
-        newest[who] = min(newest.get(who, item["order"]), item["order"])
-    if not lines:
+        entries.append((who, int(item["lines"]), int(item["order"])))
+    if not entries:
         reason = "no contributions" if not skipped else f"no identity for {', '.join(skipped)}"
         return None, reason
-    return min(lines, key=lambda who: (-lines[who], newest[who])), ""
+    return top_contributor(entries), ""
 
 
 def _ado_identity(value) -> str:
@@ -136,6 +144,10 @@ class Provider:
     def commit_identity(self, sha: str, email: str) -> str | None:
         """The tracker identity of a commit's author."""
         return email or None
+
+    def fetch_pr_parents(self, pr_id: str) -> list[str]:
+        """Ids of the work items (User Stories, Issues) the PR is linked to."""
+        raise NotImplementedError
 
     def fetch_assignees(self, ids: list[str]) -> dict[str, str]:
         """-> {id: assignee identity, or "" when unassigned}."""
@@ -343,6 +355,13 @@ class AdoProvider(Provider):
     def item_url(self, item_id: str) -> str:
         return f"{self.org_url}/{quote(self.project)}/_workitems/edit/{item_id}"
 
+    def fetch_pr_parents(self, pr_id: str) -> list[str]:
+        items = run_json([
+            "az", "repos", "pr", "work-item", "list", "--id", str(pr_id),
+            "--org", self.org_url, "-o", "json",
+        ])
+        return [str(item["id"]) for item in items or []]
+
     def fetch_assignees(self, ids: list[str]) -> dict[str, str]:
         return {
             str(item["id"]): _ado_identity(item["fields"].get("System.AssignedTo"))
@@ -368,6 +387,7 @@ class AdoProvider(Provider):
 class GitHubProvider(Provider):
     body_format = "markdown"
     can_assign = True
+    can_create_children = True
 
     # Sub-issues were still versioned at the time of writing; pin the header so
     # a future default cannot change the response shape underneath us.
@@ -425,6 +445,7 @@ class GitHubProvider(Provider):
                 num = str(issue["number"])
                 seen[num] = {
                     "id": num,
+                    "rev": issue.get("updated_at"),
                     "title": issue.get("title"),
                     # Sub-issues have no work-item type; report a stable label
                     # so downstream logging reads the same for both providers.
@@ -450,6 +471,53 @@ class GitHubProvider(Provider):
 
     def item_url(self, item_id: str) -> str:
         return f"https://{self.host}/{self.slug}/issues/{item_id}"
+
+    def fetch_item(self, item_id: str) -> dict:
+        issue = self._api(f"/repos/{self.slug}/issues/{item_id}")
+        return {
+            "id": str(issue.get("number", item_id)),
+            "rev": issue.get("updated_at"),
+            "title": issue.get("title"),
+            "type": "Issue",
+            "state": issue.get("state"),
+            "url": issue.get("html_url") or self.item_url(str(item_id)),
+        }
+
+    def fetch_pr_parents(self, pr_id: str) -> list[str]:
+        data = run_json([
+            "gh", "pr", "view", str(pr_id), "--repo", self.slug,
+            "--json", "closingIssuesReferences",
+        ])
+        return [str(issue["number"]) for issue in data.get("closingIssuesReferences") or []]
+
+    def validate_child(self, parent_id: str, task: dict) -> None:
+        # GitHub has no validate-only create, so check what a create would need.
+        if not str(task.get("title") or "").strip():
+            raise ProviderError("sub-issue needs a title")
+        self.fetch_item(parent_id)
+        if task.get("assignee"):
+            self.validate_assignee(parent_id, task["assignee"])
+
+    def create_child(self, parent_id: str, task: dict) -> dict:
+        payload = {"title": task["title"], "body": task["description"]}
+        if task.get("assignee"):
+            payload["assignees"] = [task["assignee"]]
+        issue = self._api(f"/repos/{self.slug}/issues", method="POST", payload=payload)
+        num = str(issue["number"])
+        try:
+            self._api(f"/repos/{self.slug}/issues/{parent_id}/sub_issues", method="POST",
+                      payload={"sub_issue_id": issue["id"]})
+        except ProviderError as exc:
+            raise ProviderError(
+                f"created issue #{num} but could not link it under #{parent_id}: {exc}; "
+                "link it by hand before re-running") from None
+        return {
+            "id": num,
+            "rev": issue.get("updated_at"),
+            "title": issue.get("title", task["title"]),
+            "description": task["description"],
+            "url": issue.get("html_url") or self.item_url(num),
+        }
 
     def commit_identity(self, sha: str, email: str) -> str | None:
         # A commit email maps to a login only when it is linked to an account.

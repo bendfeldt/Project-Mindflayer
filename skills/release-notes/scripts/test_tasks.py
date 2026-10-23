@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import json
 import subprocess
 import sys
@@ -22,8 +24,13 @@ from config import (
 from manage_tasks import (
     TaskPlanError,
     apply_release,
+    artifact_name,
     build_pair_plan,
     compose_release,
+    plan_hash,
+    plan_release_pairs,
+    print_release_plan,
+    source_identity,
     verify_release_plan,
     write_pair_artifact,
 )
@@ -567,6 +574,154 @@ def test_assignment_payloads() -> None:
     assert json.loads(stdin) == {"assignees": ["alice"]}
 
 
+def apply_in_temp(release: dict, provider: FakeProvider) -> dict:
+    with tempfile.TemporaryDirectory() as directory:
+        output_root = Path(directory)
+        return apply_release(
+            release, output_root / "result.json",
+            lambda _pair: (repository_root(), config("RepoA"), provider),
+            lambda slug, plan, tasks: write_pair_artifact(slug, plan, tasks, output_root),
+        )
+
+
+def test_compare_mode_plan() -> None:
+    provider = FakeProvider("1", "100", "RepoA")
+    pair = build_pair_plan(provider, config("RepoA"), None, "100", evidence(),
+                           descriptions(), repository_root(), False)
+    head = git_revision(repository_root(), "HEAD")
+    assert pair["source"]["pull_request"] is None
+    assert source_identity(pair)[-1] == f"{head}..{head}"
+    assert artifact_name(pair) == "repoa-head-head-100.json"
+    apply_in_temp(compose_release("rel-1", [pair]), provider)
+    assert provider.created == ["solution/models/Sales.SemanticModel"]
+
+    drifted = copy.deepcopy(pair)
+    drifted["source"]["head_commit"] = "0" * 40
+    drifted["plan_id"] = plan_hash(drifted)
+    assert_raises(lambda: apply_in_temp(compose_release("rel-1", [drifted]),
+                                        FakeProvider("1", "100", "RepoA")),
+                  "git ref drift")
+
+
+class OriginalProvider(FakeProvider):
+    """Links PR 11 to US 801 (and a Feature), PR 12 to US 802, PR 13 to nothing."""
+
+    links = {"11": ["801", "555"], "12": ["802"], "13": []}
+
+    def fetch_pr(self, pr_id: str) -> dict:
+        return super().fetch_pr(pr_id)
+
+    def fetch_pr_parents(self, pr_id: str) -> list[str]:
+        return self.links[pr_id]
+
+    def fetch_item(self, item_id: str) -> dict:
+        kind = "Feature" if item_id == "555" else "User Story"
+        return {**copy.deepcopy(self.parent), "id": item_id, "type": kind,
+                "url": self.item_url(item_id)}
+
+    def fetch_children(self, parent_ids: list[str], child_types: list[str]) -> list[dict]:
+        return []
+
+    def validate_child(self, parent_id: str, task: dict) -> None:
+        self.validated.append((parent_id, task["task_key"]))
+
+
+def original_evidence() -> tuple[dict, dict]:
+    value = evidence()
+    tasks = value["tasks"]
+    tasks["solution/models/Sales.SemanticModel"]["contributions"] = [
+        {"pr": "12", "lines": 9, "order": 0}, {"pr": "11", "lines": 2, "order": 1}]
+    tasks["solution/reports/Sales.Report"]["contributions"] = [
+        {"pr": "11", "lines": 5, "order": 0},
+        {"sha": "abc", "email": "carol@x", "lines": 50, "order": 1}]
+    tasks["solution/flows/Load.Dataflow"] = {
+        "task_key": "solution/flows/Load.Dataflow",
+        "folder": "solution/flows/Load.Dataflow",
+        "title": "Dataflow: Load",
+        "contributions": [{"pr": "13", "lines": 4, "order": 0}],
+    }
+    texts = {**descriptions(), "solution/flows/Load.Dataflow": "<p>Flow</p>"}
+    return value, texts
+
+
+def test_original_parents() -> None:
+    provider = OriginalProvider("1", "100", "RepoA")
+    value, texts = original_evidence()
+
+    def plan(fallback: str | None) -> list[dict]:
+        return plan_release_pairs(provider, config("RepoA"), "1", value, texts,
+                                  repository_root(), False, fallback_parent_id=fallback)
+
+    assert_raises(lambda: plan(None), "no linked User Story for: Dataflow: Load")
+    pairs = plan("900")
+    placed = {
+        pair["target"]["parent"]["id"]: [a["task_key"] for a in pair["actions"]]
+        for pair in pairs
+    }
+    assert placed == {
+        "801": ["solution/reports/Sales.Report"],
+        "802": ["solution/models/Sales.SemanticModel"],
+        "900": ["solution/flows/Load.Dataflow"],
+    }, placed
+
+    release = compose_release("rel-1", pairs)
+    assert len(release["pairs"]) == 3
+    assert_raises(lambda: compose_release("rel-1", [pairs[0], pairs[0]]),
+                  "duplicate PR/User Story pair")
+    both = [
+        plan_release_pairs(provider, config("RepoA"), "1", value, texts,
+                           repository_root(), False, parent_id=parent)[0]
+        for parent in ("801", "802")
+    ]
+    assert_raises(lambda: compose_release("rel-1", both), "planned twice")
+
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        print_release_plan(release)
+    table = output.getvalue()
+    assert "| Task | Operation | Parent | PR(s) | Assignee |" in table, table
+    assert ("| Model: Sales | create | User Story 802 | #12, #11 | "
+            "none (assignment not supported) |") in table, table
+    assert "| Report: Sales | create | User Story 801 | #11, direct commit |" in table, table
+
+
+def test_github_create_child() -> None:
+    calls: list[tuple[list[str], dict | None]] = []
+    fail_link = False
+
+    def fake_run_json(args: list[str], *, stdin: str | None = None) -> dict:
+        calls.append((args, json.loads(stdin) if stdin else None))
+        if args[-1].endswith("/sub_issues") or "sub_issues" in " ".join(args):
+            if fail_link:
+                raise ProviderError("gh api failed: 422")
+            return {}
+        return {"number": 7, "id": 9001, "title": "Model: Sales",
+                "html_url": "https://github.com/acme/data/issues/7"}
+
+    original = providers.run_json
+    providers.run_json = fake_run_json
+    try:
+        github = GitHubProvider("acme", "data")
+        task = {"title": "Model: Sales", "description": "Body", "assignee": "alice"}
+        created = github.create_child("3", task)
+        assert created["id"] == "7" and created["url"].endswith("/issues/7")
+        (create_args, create_body), (link_args, link_body) = calls
+        assert "/repos/acme/data/issues" in create_args and "POST" in create_args
+        assert create_body == {"title": "Model: Sales", "body": "Body", "assignees": ["alice"]}
+        assert "/repos/acme/data/issues/3/sub_issues" in link_args
+        assert link_body == {"sub_issue_id": 9001}
+
+        fail_link = True
+        try:
+            github.create_child("3", task)
+        except ProviderError as exc:
+            assert "created issue #7" in str(exc), str(exc)
+        else:
+            raise AssertionError("expected a failed link to name the orphaned issue")
+    finally:
+        providers.run_json = original
+
+
 def test_asset_rule_discovery() -> None:
     with tempfile.TemporaryDirectory() as directory:
         repository = Path(directory)
@@ -790,9 +945,9 @@ def test_multi_pair_release_and_merge() -> None:
         assert provider_c.updated == ["3000"]
         assert len(result["artifacts"]) == 3
         assert {Path(path).name for path in result["artifacts"]} == {
-            "repoa-pr-1.json",
-            "repoa-pr-3.json",
-            "repob-pr-2.json",
+            "repoa-pr-1-100.json",
+            "repoa-pr-3-300.json",
+            "repob-pr-2-200.json",
         }
 
         apply_release(release, result_path, runtime_factory, writer)
@@ -970,6 +1125,9 @@ def main() -> int:
         test_assignment_plan,
         test_publish_assigns,
         test_assignment_payloads,
+        test_compare_mode_plan,
+        test_original_parents,
+        test_github_create_child,
         test_asset_rule_discovery,
         test_asset_rule_validation,
         test_asset_title_collision,

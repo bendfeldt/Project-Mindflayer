@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
-"""Plan PR/User Story pairs, compose a release, and apply child Tasks.
+"""Plan source/User Story pairs, compose a release, and apply child Tasks.
+
+A release source is a PR (--pr-id) or a plain comparison of the evidence's
+base and head (--compare). Tasks go under one named parent (--parent-id) or
+under the User Story linked to each Task's top-contributing PR
+(--original-parents), which yields one pair per parent.
 
 Pair planning is non-mutating. Composition creates the only applicable plan
 type, so one reviewed release plan is the approval boundary for every pair.
 
 Usage:
-  manage_tasks.py plan --pr-id 123 --parent-id 456 --evidence evidence.json \
-    --descriptions descriptions.json --out pair-plan.json [--repo .]
+  manage_tasks.py plan (--pr-id 123 | --compare) \
+    (--parent-id 456 | --original-parents [--fallback-parent-id 789]) \
+    --evidence evidence.json --descriptions descriptions.json \
+    --out pair-plan.json [--repo .]
   manage_tasks.py compose --release rel_1 --pair-plan pair-a.json \
     --pair-plan pair-b.json --out release-plan.json
   manage_tasks.py apply --plan release-plan.json [--result result.json]
@@ -35,7 +42,9 @@ from config import (  # noqa: E402
     slugify,
     write_json,
 )
-from providers import Provider, choose_assignee, from_config  # noqa: E402
+from providers import (  # noqa: E402
+    Provider, choose_assignee, from_config, top_contributor,
+)
 
 
 SCHEMA_VERSION = 2
@@ -48,19 +57,32 @@ class TaskPlanError(SystemExit):
     """Actionable plan, mapping, or drift failure."""
 
 
-def read_object(path: Path) -> dict:
+def read_value(path: Path) -> dict | list:
     try:
-        value = read_json(path)
+        return read_json(path)
     except FileNotFoundError:
         raise TaskPlanError(f"file not found: {path}")
     except json.JSONDecodeError as exc:
         raise TaskPlanError(f"malformed JSON in {path}: {exc}")
+
+
+def read_object(path: Path) -> dict:
+    value = read_value(path)
     if not isinstance(value, dict):
         raise TaskPlanError(f"expected a JSON object in {path}")
     return value
 
 
-def write_object(path: Path, value: dict) -> None:
+def read_pair_plans(path: Path) -> list[dict]:
+    """A plan file holds one pair, or a list of pairs from --original-parents."""
+    value = read_value(path)
+    pairs = value if isinstance(value, list) else [value]
+    if not all(isinstance(pair, dict) for pair in pairs):
+        raise TaskPlanError(f"expected pair plan objects in {path}")
+    return pairs
+
+
+def write_object(path: Path, value: dict | list) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     write_json(path, value)
 
@@ -180,13 +202,18 @@ def candidates_from_evidence(evidence: dict, descriptions: dict) -> list[dict]:
         if not isinstance(description, str) or not description.strip():
             raise TaskPlanError(f"missing non-empty description for {task_key}")
         used_description_keys.add(description_key)
+        contributions = sorted(task.get("contributions") or [],
+                               key=lambda item: item.get("order", 0))
+        prs = list(dict.fromkeys(str(c["pr"]) for c in contributions if c.get("pr")))
         candidates.append(
             {
                 "task_key": task_key,
                 "folder": str(folder),
                 "title": str(title),
                 "asset": bool(task.get("asset")),
-                "contributions": list(task.get("contributions") or []),
+                "contributions": contributions,
+                "prs": prs,
+                "direct_commits": any(not c.get("pr") for c in contributions),
                 "description": description,
             }
         )
@@ -222,30 +249,97 @@ def validate_evidence_refs(evidence: dict, pull_request: dict) -> None:
         )
 
 
+def original_parent(
+    provider: Provider, config: dict, contributions: list[dict], cache: dict
+) -> str | None:
+    """The User Story holding most of a Task's PR lines; a tie goes to the newest.
+
+    A PR counts only when it links exactly one allowed parent; direct commits
+    and PRs with no (or several) linked parents are left for the fallback.
+    """
+    allowed = config.get("parent_types") or []
+    entries = []
+    for item in contributions:
+        if not item.get("pr"):
+            continue
+        pr = str(item["pr"])
+        if pr not in cache:
+            linked = [
+                parent_id for parent_id in provider.fetch_pr_parents(pr)
+                if not allowed or provider.fetch_item(parent_id).get("type") in allowed
+            ]
+            cache[pr] = linked[0] if len(linked) == 1 else None
+        if cache[pr]:
+            entries.append((cache[pr], int(item["lines"]), int(item["order"])))
+    return top_contributor(entries)
+
+
+def plan_release_pairs(
+    provider: Provider,
+    config: dict,
+    pr_id: str | None,
+    evidence: dict,
+    descriptions: dict,
+    repo: Path,
+    overwrite: bool,
+    parent_id: str | None = None,
+    fallback_parent_id: str | None = None,
+) -> list[dict]:
+    """One pair for a named parent, or one pair per original User Story."""
+    if parent_id:
+        return [build_pair_plan(provider, config, pr_id, parent_id, evidence,
+                                descriptions, repo, overwrite)]
+    groups: dict[str, set[str]] = {}
+    unresolved: list[str] = []
+    cache: dict = {}
+    for candidate in candidates_from_evidence(evidence, descriptions):
+        parent = original_parent(provider, config, candidate["contributions"], cache)
+        parent = parent or fallback_parent_id
+        if parent is None:
+            unresolved.append(candidate["title"])
+            continue
+        groups.setdefault(parent, set()).add(candidate["task_key"])
+    if unresolved:
+        raise TaskPlanError(
+            "no linked User Story for: " + "; ".join(unresolved)
+            + " — pass --fallback-parent-id <id> to place them"
+        )
+    return [
+        build_pair_plan(provider, config, pr_id, parent, evidence, descriptions,
+                        repo, overwrite, only=keys)
+        for parent, keys in sorted(groups.items())
+    ]
+
+
 def build_pair_plan(
     provider: Provider,
     config: dict,
-    pr_id: str,
+    pr_id: str | None,
     parent_id: str,
     evidence: dict,
     descriptions: dict,
     repo: Path,
     overwrite: bool,
+    only: set[str] | None = None,
 ) -> dict:
     if not provider.can_create_children:
         raise TaskPlanError(
             f"provider {config['provider']} does not support planned child creation"
         )
-    if provider.body_format != "html":
-        raise TaskPlanError("Azure DevOps task descriptions must be HTML")
 
-    pull_request = provider.fetch_pr(pr_id)
-    validate_evidence_refs(evidence, pull_request)
+    pull_request = provider.fetch_pr(pr_id) if pr_id else None
+    if pull_request:
+        validate_evidence_refs(evidence, pull_request)
+    elif not evidence.get("base") or not evidence.get("head"):
+        raise TaskPlanError("evidence needs base and head refs")
     parent = provider.fetch_item(parent_id)
     validate_parent(parent, config.get("parent_types") or [])
 
     conventions = Conventions(config)
-    candidates = candidates_from_evidence(evidence, descriptions)
+    candidates = [
+        candidate for candidate in candidates_from_evidence(evidence, descriptions)
+        if only is None or candidate["task_key"] in only
+    ]
     children = provider.fetch_children([parent_id], config.get("child_types") or [])
     existing = match_children(candidates, children, conventions)
 
@@ -328,15 +422,25 @@ def verify_pair_plan(plan: dict) -> None:
         raise TaskPlanError("pair plan content does not match its plan_id")
 
 
-def pr_identity(pair: dict) -> tuple[str, ...]:
-    pull_request = pair["source"]["pull_request"]
+def source_identity(pair: dict) -> tuple[str, ...]:
+    """The release source: a PR, or the pinned commits of a comparison."""
+    source = pair["source"]
+    pull_request = source["pull_request"] or {}
     return (
         pair["provider"],
         pair["target"]["org"],
         str(pull_request.get("project") or ""),
-        str(pull_request.get("repository") or pair["source"]["repo"]),
-        str(pull_request["id"]),
+        str(pull_request.get("repository") or source["repo"]),
+        f"pr {pull_request['id']}" if pull_request
+        else f"{source['base_commit']}..{source['head_commit']}",
     )
+
+
+def source_label(pair: dict) -> str:
+    source = pair["source"]
+    if source["pull_request"]:
+        return f"PR {source['pull_request']['id']}"
+    return f"{source['base']}..{source['head']}"
 
 
 def parent_identity(pair: dict) -> tuple[str, ...]:
@@ -348,8 +452,13 @@ def parent_identity(pair: dict) -> tuple[str, ...]:
 
 
 def artifact_name(pair: dict) -> str:
-    pull_request = pair["source"]["pull_request"]
-    return f"{slugify(pair['source']['repo'])}-pr-{pull_request['id']}.json"
+    source = pair["source"]
+    label = (
+        f"pr-{source['pull_request']['id']}" if source["pull_request"]
+        else slugify(f"{source['base']}..{source['head']}")
+    )
+    parent = pair["target"]["parent"]["id"]
+    return f"{slugify(source['repo'])}-{label}-{parent}.json"
 
 
 def compose_release(release: str, pair_plans: list[dict]) -> dict:
@@ -360,29 +469,37 @@ def compose_release(release: str, pair_plans: list[dict]) -> dict:
     if not pair_plans:
         raise TaskPlanError("at least one --pair-plan is required")
 
-    seen_prs: set[tuple[str, ...]] = set()
+    # A source may feed several User Stories (--original-parents), but each
+    # User Story takes one source, and each Task key appears once per source.
+    seen_pairs: set[tuple] = set()
     seen_parents: set[tuple[str, ...]] = set()
+    seen_tasks: set[tuple] = set()
     seen_artifacts: set[str] = set()
     languages: set[str] = set()
     for pair in pair_plans:
         verify_pair_plan(pair)
-        pr_key = pr_identity(pair)
+        source_key = source_identity(pair)
         parent_key = parent_identity(pair)
-        if pr_key in seen_prs:
-            raise TaskPlanError(f"duplicate PR in release: {pr_key}")
+        if (source_key, parent_key) in seen_pairs:
+            raise TaskPlanError(f"duplicate PR/User Story pair in release: {source_key}")
         if parent_key in seen_parents:
             raise TaskPlanError(f"duplicate User Story in release: {parent_key}")
+        for action in pair["actions"]:
+            task = (source_key, action["task_key"])
+            if task in seen_tasks:
+                raise TaskPlanError(f"Task {action['task_key']} planned twice for {source_key}")
+            seen_tasks.add(task)
         filename = artifact_name(pair)
         if filename in seen_artifacts:
             raise TaskPlanError(f"pair artifact filename collision: {filename}")
-        seen_prs.add(pr_key)
+        seen_pairs.add((source_key, parent_key))
         seen_parents.add(parent_key)
         seen_artifacts.add(filename)
         languages.add(pair.get("language", "en"))
     if len(languages) != 1:
         raise TaskPlanError(f"pair plans disagree on language: {sorted(languages)}")
 
-    ordered = sorted(pair_plans, key=pr_identity)
+    ordered = sorted(pair_plans, key=lambda pair: (source_identity(pair), parent_identity(pair)))
     plan = {
         "schema_version": SCHEMA_VERSION,
         "kind": RELEASE_PLAN,
@@ -406,43 +523,68 @@ def verify_release_plan(plan: dict) -> None:
         raise TaskPlanError("release plan pairs are not in canonical order")
 
 
+def summary_rows(pairs: list[dict]) -> list[list[str]]:
+    """Task | Operation | Parent | PR(s) | Assignee, one row per planned action."""
+    rows = []
+    for pair in pairs:
+        parent = pair["target"]["parent"]
+        for action in pair["actions"]:
+            if action["operation"] == "create":
+                operation = "create"
+            else:
+                operation = (f"reuse {action['item_id']} "
+                             f"({action['description_action']} description)")
+            prs = [f"#{pr}" for pr in action.get("prs") or []]
+            if action.get("direct_commits"):
+                prs.append("direct commit")
+            who = action.get("assignee")
+            rows.append([
+                action["title"],
+                operation,
+                f"{parent.get('type') or 'parent'} {parent['id']}",
+                ", ".join(prs) or "—",
+                who or f"none ({action.get('assignee_note') or 'no contributions'})",
+            ])
+    return rows
+
+
+def print_summary(pairs: list[dict]) -> None:
+    header = ["Task", "Operation", "Parent", "PR(s)", "Assignee"]
+    print("| " + " | ".join(header) + " |")
+    print("|" + "---|" * len(header))
+    for row in summary_rows(pairs):
+        print("| " + " | ".join(cell.replace("|", "\\|") for cell in row) + " |")
+
+
 def print_pair_plan(plan: dict) -> None:
-    pull_request = plan["source"]["pull_request"]
+    pull_request = plan["source"]["pull_request"] or {}
     parent = plan["target"]["parent"]
     print(
-        f"pair plan {plan['plan_id']}: PR {pull_request['id']} -> "
-        f"{parent['type']} {parent['id']}"
+        f"pair plan {plan['plan_id']}: {source_label(plan)} -> "
+        f"{parent['type']} {parent['id']}\n"
     )
-    for action in plan["actions"]:
-        if action["operation"] == "create":
-            detail = "create"
-        else:
-            detail = (
-                f"reuse {action['item_id']}; {action['description_action']} description"
-            )
-        who = action.get("assignee")
-        detail += f"; assign {who}" if who else f"; {action.get('assignee_note') or 'no assignee'}"
-        print(f"  [{detail}] {action['title']} <- {action['folder']}")
+    print_summary([plan])
     if pull_request.get("state") not in (None, "active", "OPEN"):
         print(f"warning: PR state is {pull_request['state']}")
-    print("pair dry run only; compose a release plan before apply")
+    print("\npair dry run only; compose a release plan before apply")
 
 
 def print_release_plan(plan: dict) -> None:
     tasks = sum(len(pair["actions"]) for pair in plan["pairs"])
-    repos = {pr_identity(pair)[:-1] for pair in plan["pairs"]}
+    repos = {source_identity(pair)[:-1] for pair in plan["pairs"]}
     print(
-        f"release plan {plan['plan_id']}: {len(plan['pairs'])} PR/User Story "
+        f"release plan {plan['plan_id']}: {len(plan['pairs'])} source/User Story "
         f"pairs, {len(repos)} repositories, {tasks} Tasks"
     )
     for pair in plan["pairs"]:
-        pull_request = pair["source"]["pull_request"]
         parent = pair["target"]["parent"]
         print(
-            f"  {pair['source']['repo']}: PR {pull_request['id']} -> "
+            f"  {pair['source']['repo']}: {source_label(pair)} -> "
             f"{parent['type']} {parent['id']}"
         )
-    print("dry run: no work-item writes applied")
+    print()
+    print_summary(plan["pairs"])
+    print("\ndry run: no work-item writes applied")
 
 
 def result_path_for(plan_path: Path) -> Path:
@@ -500,6 +642,8 @@ def assert_pair_context(
         raise TaskPlanError(f"git ref drift detected: {source['head']}")
 
     expected_pr = source["pull_request"]
+    if not expected_pr:
+        return
     current_pr = provider.fetch_pr(str(expected_pr["id"]))
     for field in ("id", "source", "target", "repository", "project"):
         if normalized_ref(str(current_pr.get(field) or "")) != normalized_ref(
@@ -645,7 +789,8 @@ def write_pair_artifact(
         "repo": pair["source"]["repo"],
         "provider": pair["provider"],
         "org": pair["target"]["org"],
-        "project": pair["source"]["pull_request"].get("project"),
+        "project": (pair["source"]["pull_request"] or {}).get("project")
+        or pair["target"].get("project"),
         "language": pair.get("language", "en"),
         "body_format": pair["body_format"],
         "applied": True,
@@ -708,10 +853,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
-    plan = commands.add_parser("plan", help="generate one PR/User Story pair plan")
+    plan = commands.add_parser("plan", help="generate source/User Story pair plans")
     plan.add_argument("--repo", type=Path, default=None)
-    plan.add_argument("--pr-id", required=True)
-    plan.add_argument("--parent-id", required=True)
+    source = plan.add_mutually_exclusive_group(required=True)
+    source.add_argument("--pr-id", help="the PR the release notes cover")
+    source.add_argument("--compare", action="store_true",
+                        help="no PR: cover the evidence's base..head comparison")
+    parent = plan.add_mutually_exclusive_group(required=True)
+    parent.add_argument("--parent-id", help="put every Task under this User Story")
+    parent.add_argument("--original-parents", action="store_true",
+                        help="put each Task under the User Story linked to its top PR")
+    plan.add_argument("--fallback-parent-id",
+                      help="with --original-parents: parent for Tasks with no linked one")
     plan.add_argument("--evidence", required=True, type=Path)
     plan.add_argument("--descriptions", required=True, type=Path)
     plan.add_argument("--out", required=True, type=Path)
@@ -739,24 +892,29 @@ def main() -> None:
         repo = repo_root(args.repo)
         config = effective_config(repo)
         provider = from_config(config)
-        pair = build_pair_plan(
+        if args.fallback_parent_id and not args.original_parents:
+            raise TaskPlanError("--fallback-parent-id needs --original-parents")
+        pairs = plan_release_pairs(
             provider,
             config,
             args.pr_id,
-            args.parent_id,
             read_object(args.evidence),
             read_object(args.descriptions),
             repo,
             args.overwrite,
+            parent_id=args.parent_id,
+            fallback_parent_id=args.fallback_parent_id,
         )
-        write_object(args.out, pair)
-        print_pair_plan(pair)
+        write_object(args.out, pairs if args.original_parents else pairs[0])
+        for pair in pairs:
+            print_pair_plan(pair)
         print(f"pair plan artifact: {args.out}")
         return
 
     if args.command == "compose":
         release = compose_release(
-            args.release, [read_object(path) for path in args.pair_plan]
+            args.release,
+            [pair for path in args.pair_plan for pair in read_pair_plans(path)],
         )
         write_object(args.out, release)
         print_release_plan(release)
