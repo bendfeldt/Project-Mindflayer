@@ -22,7 +22,7 @@ PACKAGE_RELEASE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = PACKAGE_RELEASE
 SPEC.loader.exec_module(PACKAGE_RELEASE)
 
-RELEASE_VERSION = "3.8.0"
+RELEASE_VERSION = "3.9.0"
 
 
 class ReleasePackageTests(unittest.TestCase):
@@ -210,7 +210,7 @@ function Get-FileHash {
 }
 function Expand-Archive {
     param([string]$LiteralPath, [string]$DestinationPath)
-    $bundleRoot = Join-Path $DestinationPath 'project-mindflayer-3.8.0-windows'
+    $bundleRoot = Join-Path $DestinationPath 'project-mindflayer-3.9.0-windows'
     [void](New-Item -ItemType Directory -Path $bundleRoot)
     $installer = @'
 param([switch]$Project, [string]$Tools, [switch]$Force, [switch]$Local, [string[]]$Skills, [switch]$SkillsStatus)

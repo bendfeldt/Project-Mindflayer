@@ -23,7 +23,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:Version = '3.8.0'
+$script:Version = '3.9.0'
 $script:CosignVersion = '2.4.1'
 $script:Repository = 'bendfeldt/Project-Mindflayer'
 $script:StagingDirectory = Join-Path ([IO.Path]::GetTempPath()) "project-mindflayer-$([guid]::NewGuid().ToString('N'))"
@@ -92,10 +92,11 @@ try {
         throw 'verified release does not contain install.ps1'
     }
     & $installer @PSBoundParameters
+    $installerExitCode = $LASTEXITCODE
     # Exit status 2 means the install completed but files with local changes need
     # migration; the installer has already printed what to do.
-    if ($LASTEXITCODE -notin 0, 2) {
-        throw "installer failed with exit code $LASTEXITCODE"
+    if ($installerExitCode -notin 0, 2) {
+        throw "installer failed with exit code $installerExitCode"
     }
 }
 finally {
@@ -103,3 +104,5 @@ finally {
         Remove-Item -LiteralPath $script:StagingDirectory -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
+# Pass status 2 on, as bootstrap.sh does, so automation sees pending migration.
+exit $installerExitCode

@@ -123,7 +123,7 @@ Windows PowerShell:
 
 The Bash wrapper supports Linux and macOS on amd64 and arm64. The PowerShell wrapper supports Windows AMD64 and ARM64; both use Sigstore's amd64 Windows Cosign binary, with x64 emulation on ARM64. Bootstrap downloads and extraction use a temporary directory and do not write into the caller's working directory.
 
-The streamed wrapper is trusted through HTTPS and the repository's immutable-release policy. It downloads the pinned v3.8.0 platform bundle, verifies its published SHA-256 checksum and Sigstore identity, and only then invokes the bundled installer with the supplied flags. A separately authorized v3.8.0 release publication is required before the `releases/latest` commands resolve to this interface.
+The streamed wrapper is trusted through HTTPS and the repository's immutable-release policy. It downloads the pinned v3.9.0 platform bundle, verifies its published SHA-256 checksum and Sigstore identity, and only then invokes the bundled installer with the supplied flags. A separately authorized v3.9.0 release publication is required before the `releases/latest` commands resolve to this interface.
 
 ## Post-install verification
 

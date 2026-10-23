@@ -107,7 +107,7 @@ backup() {
 remove_recorded() {
   local path="$1" kind="$2" proof="$3"
   if [ "$kind" = line ]; then
-    [ -f "$path" ] || return
+    [ -f "$path" ] || return 0
     if [ "$CONFIRM" -eq 1 ]; then
       temporary="$(mktemp "${path}.mindflayer.tmp.XXXXXX")"
       chmod 600 "$temporary"
@@ -120,8 +120,10 @@ remove_recorded() {
     fi
     REMOVED=$((REMOVED + 1)); return
   elif [ "$kind" = directory ]; then
-    [ -d "$path" ] || return
+    [ -d "$path" ] || return 0
     if [ -n "$(find "$path" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+      # A skill root only marks where skills go; the user's own skills stay.
+      [ "$proof" != skill-root ] || return 0
       printf ' preserve: %s (not empty)\n' "$path"; PRESERVED=$((PRESERVED + 1)); return
     fi
     if [ "$CONFIRM" -eq 1 ]; then rmdir "$path"; printf ' removed: %s\n' "$path"; else printf ' would remove: %s\n' "$path"; fi
@@ -131,7 +133,7 @@ remove_recorded() {
       printf ' preserve: %s (symlink target changed)\n' "$path"; PRESERVED=$((PRESERVED + 1)); return
     fi
   elif [ "$kind" = file ]; then
-    [ -f "$path" ] || return
+    [ -f "$path" ] || return 0
     if [ "$(fingerprint "$path")" != "$proof" ]; then
       if [ "$FORCE" -ne 1 ]; then printf ' preserve: %s (modified)\n' "$path"; PRESERVED=$((PRESERVED + 1)); return; fi
       [ "$CONFIRM" -ne 1 ] || backup "$path"

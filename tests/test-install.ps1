@@ -673,6 +673,8 @@ try {
         $bundle = Join-Path $context.Root 'invalid bundle'
         New-Item -ItemType Directory -Path $bundle -Force | Out-Null
         Copy-Item -LiteralPath (Join-Path $Root 'install.ps1') -Destination (Join-Path $bundle 'install.ps1')
+        New-Item -ItemType Directory -Path (Join-Path $bundle 'tools') -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $Root 'tools/skill-state.ps1') -Destination (Join-Path $bundle 'tools/skill-state.ps1')
         [IO.File]::WriteAllText(
             (Join-Path $bundle 'manifest.tsv'),
             "../outside.txt`tdocument`t1.0.0`tproject`tmanaged-file`twindows`n",
@@ -901,6 +903,86 @@ try {
         Assert-TextContains -Text ([IO.File]::ReadAllText((Join-Path $context.Project 'AGENTS.md'))) -Expected '- **skills:** adr, kimball-model' -Message '-Add selection recorded'
         Assert-PathExists -Path (Join-Path $context.Project '.claude/skills/kimball-model/references/modeling.md') -Message '-Add installed skill'
         Assert-PathExists -Path (Join-Path $context.Project '.claude/skills/adr/SKILL.md') -Message '-Add kept existing selection'
+    }
+
+    Invoke-Test -Name 'portable lifecycle edge cases' -Test {
+        $context = New-TestContext -Name 'portable lifecycle edge cases'
+        $install = Invoke-Installer -Arguments @(
+            '-Project', '-Tools', 'claude,codex', '-ProjectTypes', 'infrastructure', '-Technologies', 'terraform',
+            '-Client', 'Client', '-Skills', 'none', '-Local'
+        ) -WorkingDirectory $context.Project -HomePath $context.Home
+        Assert-Success -Result $install -Message 'Install without skills'
+        $records = [IO.File]::ReadAllLines((Join-Path $context.Project '.mindflayer-managed.tsv'))
+        Assert-Equal -Actual (@($records[0..1] | Sort-Object) -join '|') -Expected ".agents/skills`tdirectory`tskill-root|.claude/skills`tdirectory`tskill-root" -Message 'Skill roots recorded first'
+
+        $environment = @{ MINDFLAYER_HOME = $Root; MINDFLAYER_NONINTERACTIVE = '1' }
+        $lifecycle = Join-Path $Root 'tools/skill-lifecycle.ps1'
+        $run = {
+            param([string[]]$Arguments)
+            Invoke-PowerShellFile -FilePath $lifecycle -Arguments (@($Arguments) + '-Local') -WorkingDirectory $context.Project -HomePath $context.Home -Environment $environment
+        }
+        $agents = Join-Path $context.Project 'AGENTS.md'
+        $setLine = {
+            param([string]$Line)
+            $text = [IO.File]::ReadAllText($agents) -replace '(?m)^- \*\*skills:\*\*.*$', $Line
+            [IO.File]::WriteAllText($agents, $text, [Text.UTF8Encoding]::new($false))
+        }
+
+        Assert-Success -Result (& $run @('-Mode', 'Check')) -Message 'Check with no skills installed'
+        Assert-Success -Result (& $run @('-Mode', 'Sync', '-AddSkills', 'adr,kimball-model')) -Message 'Add after selecting none'
+        Assert-PathExists -Path (Join-Path $context.Project '.agents/skills/kimball-model/SKILL.md') -Message 'Add installed into every recorded root'
+
+        & $setLine '- **skills:** adr, kimbal-model'
+        $typo = & $run @('-Mode', 'Sync')
+        Assert-Equal -Actual $typo.ExitCode -Expected 2 -Message 'Misspelled skill sync status'
+        Assert-PathExists -Path (Join-Path $context.Project '.claude/skills/kimball-model/references/modeling.md') -Message 'Misspelled skill kept'
+        Assert-TextContains -Text $typo.StandardOutput -Expected 'The skills line in AGENTS.md is invalid' -Message 'Invalid line explained'
+        $invalidCheck = & $run @('-Mode', 'Check')
+        Assert-Equal -Actual $invalidCheck.ExitCode -Expected 1 -Message 'Invalid selection check status'
+        Assert-True -Condition ($invalidCheck.StandardOutput -match '(?m)^AGENTS\.md +INVALID SELECTION') -Message 'Invalid selection reported'
+        Assert-Failure -Result (& $run @('-Mode', 'Sync', '-AddSkills', 'smart-pr')) -Message 'Add refused with an invalid selection'
+        & $setLine '- **skills:**'
+        $empty = & $run @('-Mode', 'Sync')
+        Assert-Equal -Actual $empty.ExitCode -Expected 2 -Message 'Empty skills line sync status'
+        Assert-PathExists -Path (Join-Path $context.Project '.claude/skills/adr/SKILL.md') -Message 'Empty skills line removed nothing'
+
+        & $setLine '- **skills:** adr'
+        Assert-Success -Result (& $run @('-Mode', 'Sync')) -Message 'Deselection sync'
+        Assert-PathNotExists -Path (Join-Path $context.Project '.claude/skills/kimball-model') -Message 'Deselection removed empty skill directories'
+
+        if (-not $IsWindows) {
+            & $setLine '- **skills:** adr, kimball-model'
+            Assert-Success -Result (& $run @('-Mode', 'Sync')) -Message 'Reselection sync'
+            $outside = Join-Path $context.Root 'outside'
+            New-Item -ItemType Directory -Path $outside -Force | Out-Null
+            $skillDirectory = Join-Path $context.Project '.claude/skills/kimball-model'
+            Remove-Item -LiteralPath $skillDirectory -Recurse -Force
+            New-Item -ItemType SymbolicLink -Path $skillDirectory -Target $outside | Out-Null
+            $linked = & $run @('-Mode', 'Sync')
+            Assert-Equal -Actual $linked.ExitCode -Expected 2 -Message 'Linked skill directory sync status'
+            Assert-TextContains -Text $linked.StandardOutput -Expected 'a link or file replaces the skill directory' -Message 'Linked skill directory reported'
+            Assert-Equal -Actual @(Get-ChildItem -LiteralPath $outside -Recurse -File).Count -Expected 0 -Message 'Sync wrote through a skill link'
+            $linkedInstall = Invoke-Installer -Arguments @('-Project', '-Tools', 'claude,codex', '-Local') -WorkingDirectory $context.Project -HomePath $context.Home
+            Assert-Equal -Actual $linkedInstall.ExitCode -Expected 2 -Message 'Install keeps a linked skill for migration'
+            Assert-Equal -Actual @(Get-ChildItem -LiteralPath $outside -Recurse -File).Count -Expected 0 -Message 'Install wrote through a skill link'
+            Assert-Success -Result (& $run @('-Mode', 'Sync', '-Force')) -Message 'Forced sync replaces a linked skill'
+            $replaced = Get-Item -LiteralPath $skillDirectory -Force
+            Assert-True -Condition ($replaced.PSIsContainer -and -not ($replaced.Attributes -band [IO.FileAttributes]::ReparsePoint)) -Message 'Forced sync installs a real skill directory'
+            Assert-Equal -Actual @(Get-ChildItem -LiteralPath $outside -Recurse -File).Count -Expected 0 -Message 'Forced sync changed the link target'
+            Get-ChildItem -LiteralPath (Join-Path $context.Project '.claude/skills') -Filter 'kimball-model.bak.*' -Force | Remove-Item -Force
+        }
+
+        $text = [IO.File]::ReadAllText($agents).Replace("`r`n", "`n").Replace("`n", "`r`n")
+        [IO.File]::WriteAllText($agents, $text, [Text.UTF8Encoding]::new($false))
+        Assert-Success -Result (& $run @('-Mode', 'Sync', '-AddSkills', 'smart-pr')) -Message 'Add to a CRLF AGENTS.md'
+        $crlf = [IO.File]::ReadAllText($agents)
+        Assert-True -Condition (-not ($crlf -match "[^`r]`n")) -Message 'Add kept CRLF line endings'
+        Assert-TextContains -Text $crlf -Expected '- **skills:** adr, kimball-model, smart-pr' -Message 'Add recorded the selection in a CRLF file'
+    }
+
+    Invoke-Test -Name 'bootstrap passes the installer migration status through' -Test {
+        $bootstrap = [IO.File]::ReadAllText((Join-Path $Root 'bootstrap.ps1'))
+        Assert-TextContains -Text $bootstrap -Expected 'exit $installerExitCode' -Message 'bootstrap.ps1 exits with the installer status'
     }
 
     Invoke-Test -Name 'portable interactive skill picker' -Test {
